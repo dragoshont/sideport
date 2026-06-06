@@ -48,6 +48,7 @@ public static class DeveloperApiServiceCollectionExtensions
 
         services.AddSingleton<IAppleDeveloperPortal>(sp =>
             new AppleDeveloperPortal(sp.GetRequiredService<GrandSlamClient>()));
+        services.AddSingleton<ISigningIdentityProvider, PortalSigningIdentityProvider>();
         return services;
     }
 }

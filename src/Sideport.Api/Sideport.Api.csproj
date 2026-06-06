@@ -5,6 +5,7 @@
     <ProjectReference Include="..\Sideport.GrandSlam\Sideport.GrandSlam.csproj" />
     <ProjectReference Include="..\Sideport.DeveloperApi\Sideport.DeveloperApi.csproj" />
     <ProjectReference Include="..\Sideport.Devices\Sideport.Devices.csproj" />
+    <ProjectReference Include="..\Sideport.Orchestrator\Sideport.Orchestrator.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

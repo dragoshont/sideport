@@ -1,6 +1,7 @@
 using Sideport.Core;
 using Sideport.DeveloperApi;
 using Sideport.Devices;
+using Sideport.Orchestrator;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,6 +28,10 @@ builder.Services.AddSingleton<IDeviceController, NetimobiledeviceController>();
 var allowInsecureTls = builder.Configuration.GetValue("Sideport:Apple:AllowInsecureTls", false);
 builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, allowInsecureTls);
 
+// Refresh orchestrator + scheduler (P6): the single-flight re-sign loop.
+var runScheduler = builder.Configuration.GetValue("Sideport:Scheduler:Enabled", true);
+builder.Services.AddRefreshOrchestrator(runScheduler: runScheduler);
+
 var app = builder.Build();
 
 // --- Public API skeleton (design §2 stable contract) -----------------------
@@ -46,6 +51,44 @@ app.MapGet("/api/anisette/info", async (IAnisetteProvider anisette, Cancellation
 // Device plane (design §8 phase 1) — wired to the seam, implementation pending.
 app.MapGet("/api/devices", async (IDeviceController devices, CancellationToken ct) =>
     Results.Ok(await devices.ListDevicesAsync(ct)));
+
+// Refresh orchestration (P6).
+app.MapGet("/api/apps", async (IAppRegistry registry, RefreshOrchestrator orchestrator, CancellationToken ct) =>
+{
+    var apps = await registry.ListAsync(ct);
+    var now = DateTimeOffset.UtcNow;
+    return Results.Ok(apps.Select(a =>
+    {
+        var state = orchestrator.GetState(a.DeviceUdid, a.BundleId);
+        return new
+        {
+            a.BundleId,
+            a.DeviceUdid,
+            a.AppleId,
+            a.TeamId,
+            expiresAt = state?.ExpiresAt,
+            timeUntilExpiry = state?.TimeUntilExpiry(now),
+            lastSucceeded = state?.LastSucceeded,
+            lastError = state?.LastError,
+        };
+    }));
+});
+
+app.MapPost("/api/apps", async (AppRegistration registration, IAppRegistry registry, CancellationToken ct) =>
+{
+    await registry.UpsertAsync(registration, ct);
+    return Results.Created($"/api/apps/{registration.DeviceUdid}/{registration.BundleId}", registration);
+});
+
+app.MapDelete("/api/apps/{udid}/{bundleId}", async (string udid, string bundleId, IAppRegistry registry, CancellationToken ct) =>
+    await registry.RemoveAsync(udid, bundleId, ct) ? Results.NoContent() : Results.NotFound());
+
+app.MapPost("/api/apps/{udid}/{bundleId}/refresh",
+    async (string udid, string bundleId, IRefreshOrchestrator orchestrator, CancellationToken ct) =>
+{
+    var result = await orchestrator.RefreshAsync(udid, bundleId, ct);
+    return result.Success ? Results.Ok(result) : Results.UnprocessableEntity(result);
+});
 
 app.Run();
 
