@@ -8,9 +8,25 @@ namespace Sideport.Core;
 /// </summary>
 public interface IAppleDeveloperPortal
 {
-    /// <summary>Authenticate an Apple ID via GrandSlam (SRP-6a + anisette).</summary>
-    Task<AppleSession> AuthenticateAsync(
+    /// <summary>
+    /// Authenticate an Apple ID via GrandSlam (SRP-6a + anisette). The result is
+    /// either <see cref="AppleLoginResult.Success"/> (the device is already
+    /// trusted) or <see cref="AppleLoginResult.TwoFactorRequired"/>. In the 2FA
+    /// case, deliver the code via <see cref="SubmitTwoFactorCodeAsync"/> and then
+    /// call this method again with the same credentials.
+    /// </summary>
+    Task<AppleLoginResult> AuthenticateAsync(
         string appleId, string password, CancellationToken ct = default);
+
+    /// <summary>
+    /// Submit a trusted-device / SMS 2FA code for a pending
+    /// <see cref="AppleLoginChallenge"/>. On success, re-call
+    /// <see cref="AuthenticateAsync"/> to obtain the session (matching Apple's
+    /// re-authenticate-after-validation flow). The password is intentionally not
+    /// stored on the challenge, so the caller re-supplies it on the retry.
+    /// </summary>
+    Task SubmitTwoFactorCodeAsync(
+        AppleLoginChallenge challenge, string code, CancellationToken ct = default);
 
     /// <summary>List development teams visible to the session.</summary>
     Task<IReadOnlyList<AppleTeam>> ListTeamsAsync(
@@ -32,12 +48,52 @@ public interface IAppleDeveloperPortal
         CancellationToken ct = default);
 }
 
+/// <summary>The outcome of a GrandSlam authentication attempt.</summary>
+public abstract record AppleLoginResult
+{
+    private AppleLoginResult() { }
+
+    /// <summary>Authentication completed; <see cref="Session"/> is usable.</summary>
+    public sealed record Success(AppleSession Session) : AppleLoginResult;
+
+    /// <summary>
+    /// Apple requires a second factor. Deliver a code for
+    /// <see cref="Challenge"/> via
+    /// <see cref="IAppleDeveloperPortal.SubmitTwoFactorCodeAsync"/>, then retry.
+    /// </summary>
+    public sealed record TwoFactorRequired(AppleLoginChallenge Challenge) : AppleLoginResult;
+}
+
+/// <summary>
+/// A resumable 2FA challenge. Carries only the identifiers needed to request and
+/// validate the code (never the password), so it is safe to hold and pass around.
+/// </summary>
+public sealed record AppleLoginChallenge(string Adsid, string IdmsToken, TwoFactorKind Kind);
+
+/// <summary>The second-factor delivery channel Apple asked for.</summary>
+public enum TwoFactorKind
+{
+    /// <summary>Code pushed to a trusted Apple device.</summary>
+    TrustedDevice,
+
+    /// <summary>Code sent over SMS.</summary>
+    Sms,
+}
+
 /// <summary>An authenticated GrandSlam session (ADSID + session key material).</summary>
 public sealed record AppleSession(
     string AppleId,
     string Adsid,
     string AccountName,
-    byte[] SessionKey);
+    byte[] SessionKey)
+{
+    /// <summary>
+    /// The GrandSlam IDMS token (<c>GsIdmsToken</c>) from the login SPD, used
+    /// together with <see cref="Adsid"/> to build the <c>X-Apple-Identity-Token</c>
+    /// the developer-services endpoints require.
+    /// </summary>
+    public string IdmsToken { get; init; } = "";
+}
 
 /// <summary>An Apple Developer team.</summary>
 public sealed record AppleTeam(string TeamId, string Name, string Type);

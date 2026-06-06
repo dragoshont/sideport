@@ -7,6 +7,10 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Configuration ---------------------------------------------------------
 var anisetteBaseUrl = builder.Configuration["Sideport:Anisette:BaseUrl"]
     ?? "http://anisette:6969/";
+var deviceId = builder.Configuration["Sideport:Apple:DeviceId"]
+    ?? Environment.GetEnvironmentVariable("SIDEPORT_DEVICE_ID")
+    ?? throw new InvalidOperationException(
+        "Sideport:Apple:DeviceId (or SIDEPORT_DEVICE_ID) must be set to a stable UUID.");
 var signerOptions = new SignerOptions
 {
     SignerBinaryPath = builder.Configuration["Sideport:Signer:BinaryPath"]
@@ -14,13 +18,14 @@ var signerOptions = new SignerOptions
 };
 
 // --- Seams (design §4): IAnisetteProvider / ISigner / IDeviceController /
-//     IAppleDeveloperPortal. Stub implementations until the phases land. -----
+//     IAppleDeveloperPortal. -----------------------------------------------
 builder.Services.AddSingleton(signerOptions);
-builder.Services.AddHttpClient<IAnisetteProvider, ContainerAnisetteProvider>(
-    c => c.BaseAddress = new Uri(anisetteBaseUrl));
 builder.Services.AddSingleton<ISigner, ProcessSigner>();
 builder.Services.AddSingleton<IDeviceController, NetimobiledeviceController>();
-builder.Services.AddSingleton<IAppleDeveloperPortal, AppleDeveloperPortal>();
+
+// GrandSlam auth (P3) + developer portal, with their configured HttpClients.
+var allowInsecureTls = builder.Configuration.GetValue("Sideport:Apple:AllowInsecureTls", false);
+builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, allowInsecureTls);
 
 var app = builder.Build();
 

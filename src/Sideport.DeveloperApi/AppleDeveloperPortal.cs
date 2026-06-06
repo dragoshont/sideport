@@ -1,4 +1,5 @@
 using Sideport.Core;
+using Sideport.DeveloperApi.GrandSlam;
 
 namespace Sideport.DeveloperApi;
 
@@ -6,25 +7,35 @@ namespace Sideport.DeveloperApi;
 /// Clean-room <see cref="IAppleDeveloperPortal"/> over GrandSlam +
 /// <c>developerservices2.apple.com</c> (design §6/§8 phases 2-3). Reimplemented
 /// from Apple's documented endpoints + the pypush spec — never translated from
-/// AGPL AltSign source. Uses <see cref="IAnisetteProvider"/> for the required
-/// <c>X-Apple-I-MD*</c> headers.
+/// AGPL AltSign source. Authentication (P3) is delegated to
+/// <see cref="GrandSlamClient"/>; the developer-services resource methods land
+/// in P4.
 /// </summary>
-public sealed class AppleDeveloperPortal(IAnisetteProvider anisette) : IAppleDeveloperPortal
+public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
 {
-    private readonly IAnisetteProvider _anisette = anisette;
+    private readonly GrandSlamClient _grandSlam;
 
-    public Task<AppleSession> AuthenticateAsync(string appleId, string password, CancellationToken ct = default)
-        => throw new NotImplementedException("Phase 2: managed SRP-6a + s2k + anisette headers → ADSID/SPD/session.");
+    internal AppleDeveloperPortal(GrandSlamClient grandSlam)
+    {
+        _grandSlam = grandSlam;
+    }
+
+    public Task<AppleLoginResult> AuthenticateAsync(string appleId, string password, CancellationToken ct = default)
+        => _grandSlam.AuthenticateAsync(appleId, password, ct);
+
+    public Task SubmitTwoFactorCodeAsync(AppleLoginChallenge challenge, string code, CancellationToken ct = default)
+        => _grandSlam.SubmitTwoFactorCodeAsync(challenge, code, ct);
 
     public Task<IReadOnlyList<AppleTeam>> ListTeamsAsync(AppleSession session, CancellationToken ct = default)
-        => throw new NotImplementedException("Phase 3: listTeams.");
+        => throw new NotImplementedException("P4: listTeams.");
 
     public Task RegisterDeviceAsync(AppleSession session, string teamId, string udid, string name, CancellationToken ct = default)
-        => throw new NotImplementedException("Phase 3: addDevice.");
+        => throw new NotImplementedException("P4: addDevice.");
 
     public Task<SigningCertificate> EnsureCertificateAsync(AppleSession session, string teamId, byte[] csrDer, CancellationToken ct = default)
-        => throw new NotImplementedException("Phase 3: CSR → submitDevelopmentCSR.");
+        => throw new NotImplementedException("P4: CSR → submitDevelopmentCSR.");
 
     public Task<ProvisioningProfile> EnsureProfileAsync(AppleSession session, string teamId, string bundleId, CancellationToken ct = default)
-        => throw new NotImplementedException("Phase 3: ensure App ID + capabilities, fetch profile.");
+        => throw new NotImplementedException("P4: ensure App ID + capabilities, fetch profile.");
 }
+
