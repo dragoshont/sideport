@@ -1,0 +1,36 @@
+# Sideport deployment (design §4): the .NET brain + exactly two non-managed
+# sidecars. anisette is irreducible (Apple's closed per-arch Android .so);
+# the signer is a cross-platform, license-clean binary behind ISigner.
+#
+# IMPORTANT (design §5): the anisette ADI volume is effectively an Apple
+# trusted-device registration. Losing it burns a slot and forces re-2FA.
+# Keep `anisette-data` backed up and never re-provision casually. Pin the
+# anisette image by digest in production (replace the floating tag below).
+
+services:
+  sideport:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/dragoshont/sideport:dev
+    depends_on:
+      - anisette
+    environment:
+      Sideport__Anisette__BaseUrl: "http://anisette:6969/"
+      Sideport__Signer__BinaryPath: "/opt/sideport/zsign"
+    volumes:
+      # Signer binary sidecar (zsign now → rcodesign later), mounted read-only.
+      - ./signer:/opt/sideport:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  anisette:
+    # Pin by digest in production: dadoum/anisette-v3-server@sha256:...
+    image: dadoum/anisette-v3-server:latest
+    volumes:
+      - anisette-data:/home/Alcoholic/.config/anisette-v3/lib/
+    restart: unless-stopped
+
+volumes:
+  anisette-data:

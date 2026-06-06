@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sideport.Core\Sideport.Core.csproj" />
+    <ProjectReference Include="..\Sideport.GrandSlam\Sideport.GrandSlam.csproj" />
+    <ProjectReference Include="..\Sideport.DeveloperApi\Sideport.DeveloperApi.csproj" />
+    <ProjectReference Include="..\Sideport.Devices\Sideport.Devices.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
