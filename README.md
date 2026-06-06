@@ -72,7 +72,7 @@ map.
 |---|---|---|---|---|
 | **AltStore** | An **iOS app** users install; a personal store on the phone | iOS | ✅ Active (Riley Testut) | **We replace its UX.** We don't ship it. |
 | **AltServer** (desktop) | A **Mac/Windows app** that signs & pushes over USB | macOS / Windows | ✅ Active | Not used — desktop only, needs a Mac/PC running |
-| **AltServer-Linux** (NyaMisty fork) | A **headless Linux daemon** that does Apple-portal automation + signing | Linux | ⚠️ **Dead repo** (`v0.0.5`, Apr 2022) | **This is our engine.** We build on top of it. |
+| **AltServer-Linux** (NyaMisty fork) | A **headless Linux daemon** that does Apple-portal automation + signing | Linux | ⚠️ **Dead repo** (`v0.0.5`, Apr 2022) | **This is our engine** — now **vendored** into `dragoshont/*` (see [Longevity](#longevity--the-escape-hatch)). |
 | **SideStore** | An **iOS app** that signs **on the phone** via a local VPN trick | iOS | ✅ Very active | **Architecturally incompatible** (see below) — but its *libraries* are our escape hatch |
 | **Sideloadly** | A desktop sideloading GUI | macOS / Windows | ✅ Active | Not used — desktop only |
 | **zsign** | A cross-platform `codesign` replacement | Linux / macOS | ✅ Active | **Our actual code-signing step** |
@@ -246,6 +246,40 @@ only when the trigger fires** — i.e. AltServer-Linux's Apple auth actually
 breaks. "Abandoned but functional, behind an interface" beats "actively
 maintained but the wrong shape." The replacement is an **engine-only daemon
 swap** the control plane never notices.
+
+### Decision: vendor the engine, don't re-port it
+
+The upstream engine is dead (`NyaMisty/AltServer-Linux` + `NyaMisty/AltSign-Linux`,
+last release `v0.0.5`, Apr 2022) — a deletable account is **not** an acceptable
+dependency for a tool we want to keep running. Two options were weighed:
+
+- **Re-port from `AltServer` (Windows)** — *rejected.* AltServer-Linux is a thin
+  build-shim, not a rewrite: the Linux delta is just `musl` glue, a `getrandom`
+  polyfill, and corecrypto/libressl wiring. Re-porting re-solves only that easy
+  transport/crypto glue. The *valuable* part — Apple's developer-portal protocol
+  — lives in **AltSign** and is **OS-identical**, and the *durable* risk (Apple
+  auth / anisette rotation) is already externalized to `anisette-v3-server` + the
+  zsign swap. Re-porting buys nothing the fork doesn't.
+- **Fork & vendor (adopt)** — *chosen.* We hard-fork all three sources into
+  `dragoshont/*`, pin SHAs, repoint the **AltSign submodule** inside our
+  AltServer fork to our own fork, and build the image in **our own CI** (GHCR).
+  No build path resolves to an upstream account anyone else controls.
+
+| Source | Upstream (dead/uncontrolled) | Vendored fork | Pin |
+|---|---|---|---|
+| AltServer-Linux | `NyaMisty/AltServer-Linux` | `dragoshont/AltServer-Linux` | `9282aff` (master + `.gitmodules` repoint) |
+| AltSign-Linux | `NyaMisty/AltSign-Linux` | `dragoshont/AltSign-Linux` | `0daf107` |
+| zsign | `GLESign/zsign` | `dragoshont/zsign` | `fe1750d` (PR #391) |
+
+Residual upstream: the prebuilt Alpine **builder image**
+(`ghcr.io/nyamisty/altserver_builder_alpine_amd64`); if it ever disappears it can
+be rebuilt from the Dockerfiles in our AltServer fork. The full build/vendoring
+log lives in the homelab repo at
+`container-images/altserver-linux/` and `docs/altserver-linux-ios-sideload.md`.
+
+This decision is **independent** of the trigger-gated Provisioner-v2 swap above:
+vendoring keeps *today's* engine alive on our own terms; the Rust-crate path is
+the clean-room reimplementation we only execute if Apple breaks the portal auth.
 
 ---
 
