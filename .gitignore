@@ -1,0 +1,29 @@
+# .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userprefs
+.vs/
+[Dd]ebug/
+[Rr]elease/
+project.lock.json
+artifacts/
+
+# Blazor / WASM publish output
+wwwroot/_framework/
+publish/
+
+# macOS / editor noise
+.DS_Store
+*.swp
+.idea/
+
+# Local secrets / runtime
+*.env
+appsettings.*.Local.json
+*.p12
+*.mobileprovision
+ipa/
+*.ipa
