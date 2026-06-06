@@ -15,12 +15,52 @@ public interface ISigner
     Task<SignResult> SignAsync(SignRequest request, CancellationToken ct = default);
 }
 
-/// <summary>Inputs for a single re-sign operation.</summary>
-public sealed record SignRequest(
-    string InputIpaPath,
-    string OutputIpaPath,
-    string SigningCertificatePkcs12Path,
-    string ProvisioningProfilePath);
+/// <summary>
+/// Inputs for a single re-sign operation. The PKCS#12 password is carried here
+/// but excluded from <see cref="ToString"/> so it never leaks into logs.
+/// </summary>
+public sealed record SignRequest
+{
+    public SignRequest(
+        string inputIpaPath,
+        string outputIpaPath,
+        string signingCertificatePkcs12Path,
+        string provisioningProfilePath,
+        string signingCertificatePassword = "")
+    {
+        InputIpaPath = inputIpaPath;
+        OutputIpaPath = outputIpaPath;
+        SigningCertificatePkcs12Path = signingCertificatePkcs12Path;
+        ProvisioningProfilePath = provisioningProfilePath;
+        SigningCertificatePassword = signingCertificatePassword;
+    }
+
+    /// <summary>Path to the input (unsigned or stale) IPA.</summary>
+    public string InputIpaPath { get; init; }
+
+    /// <summary>Path the signed IPA is written to.</summary>
+    public string OutputIpaPath { get; init; }
+
+    /// <summary>Path to the signing identity as a PKCS#12 (.p12) file.</summary>
+    public string SigningCertificatePkcs12Path { get; init; }
+
+    /// <summary>Path to the provisioning profile (.mobileprovision).</summary>
+    public string ProvisioningProfilePath { get; init; }
+
+    /// <summary>Password protecting the PKCS#12 file (may be empty).</summary>
+    public string SigningCertificatePassword { get; init; }
+
+    // Redact the password from the record's generated ToString.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append($"{nameof(InputIpaPath)} = {InputIpaPath}, ");
+        builder.Append($"{nameof(OutputIpaPath)} = {OutputIpaPath}, ");
+        builder.Append($"{nameof(SigningCertificatePkcs12Path)} = {SigningCertificatePkcs12Path}, ");
+        builder.Append($"{nameof(ProvisioningProfilePath)} = {ProvisioningProfilePath}, ");
+        builder.Append($"{nameof(SigningCertificatePassword)} = ***");
+        return true;
+    }
+}
 
 /// <summary>Outcome of a re-sign operation.</summary>
 public sealed record SignResult(
