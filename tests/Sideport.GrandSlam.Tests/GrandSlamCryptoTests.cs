@@ -1,12 +1,12 @@
 using Sideport.GrandSlam;
+using Sideport.GrandSlam.Tests.Vectors;
 
 namespace Sideport.GrandSlam.Tests;
 
 /// <summary>
-/// Scaffold tests for the clean-room GrandSlam crypto. The keystone work
-/// (design §8 phase 2) is to assert the managed SRP-6a output byte-for-byte
-/// against the libgsa golden vectors — those vectors get imported here as an
-/// oracle (libgsa is a test-only dependency, never shipped at runtime).
+/// Tests for the GrandSlam crypto primitives. The SRP-6a keystone itself lives
+/// in <see cref="Srp.AppleSrpClientTests"/>; here we pin the s2k password-key
+/// derivation against the same libgsa golden vector.
 /// </summary>
 public class GrandSlamCryptoTests
 {
@@ -45,10 +45,12 @@ public class GrandSlamCryptoTests
         Assert.NotEqual(raw, fo);
     }
 
-    [Fact(Skip = "Phase 2 keystone: assert managed SRP-6a vs libgsa golden vectors.")]
-    public void Srp_MatchesLibgsaOracleVectors()
+    [Fact]
+    public void DerivePasswordKey_MatchesGoldenVector()
     {
-        // Import tests/vectors/apple_srp_vector.h equivalents (k,u,x,S,K,M1,M2)
-        // and assert the managed implementation reproduces them exactly.
+        byte[] key = GrandSlamCrypto.DerivePasswordKey(
+            AppleSrpVector.Password, AppleSrpVector.Salt, AppleSrpVector.Iterations);
+
+        Assert.Equal(AppleSrpVector.PasswordKey, key);
     }
 }
