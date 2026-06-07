@@ -389,20 +389,26 @@ AltStore/AltServer (or a second Sideport) sign with the **same Apple ID at the
 same time**, they **cancel each other's certificate** and your apps keep dying.
 **Pick one signer per Apple ID.** (Different Apple IDs do not conflict.)
 
-### Run it in a Kubernetes homelab (Flux / GitOps)
+### Run it on Kubernetes
 
 Sideport is one container and is built **GitOps-first**. A ready-made, hardened
-deployment — Deployment + Service + Ingress, a non-root user, health probes,
-secrets via SOPS, the anisette sidecar, and the host `usbmuxd` socket mounted —
-is maintained here:
+example — Deployment + Service + Ingress, a non-root user, health probes, the
+anisette sidecar, and the host `usbmuxd` socket mounted — lives in
+[`deploy/k8s/`](deploy/k8s/):
 
-- **[`homelab/apps/platform/sideport/`](https://github.com/dragoshont/homelab/tree/main/apps/platform/sideport)**
+```bash
+cp deploy/k8s/secret.example.yaml deploy/k8s/secret.yaml   # then edit the values
+kubectl create namespace sideport
+kubectl apply -n sideport -f deploy/k8s/secret.yaml
+kubectl apply -k deploy/k8s/
+```
 
 It ships **"staged but safe"**: the pod runs and serves the API with the
-**scheduler turned off**, so it does nothing destructive until you deliberately
-turn it on. The go-live steps (seed the anisette identity, confirm no other
-signer is active, then set `Sideport__Scheduler__Enabled: "true"`) are written
-into that folder's `kustomization.yaml`.
+**scheduler turned off** (`Sideport__Scheduler__Enabled: "false"`), so it does
+nothing destructive until you deliberately turn it on. Flip it to `"true"` only
+after you've (1) confirmed no other signer is active for the same Apple ID (see
+above) and (2) seeded the anisette identity to avoid a fresh 2FA —
+[`deploy/k8s/README.md`](deploy/k8s/README.md) has the go-live notes.
 
 ---
 

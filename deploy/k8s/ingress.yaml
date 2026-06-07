@@ -1,0 +1,30 @@
+# Generic ingress for Sideport. Adjust the host, TLS secret, and
+# ingressClassName to your cluster. This assumes an ingress controller plus a
+# certificate for the host — bring your own Issuer/cert (e.g. cert-manager) or a
+# wildcard TLS secret. Delete this file if you expose Sideport another way
+# (LoadBalancer, port-forward, a service mesh, etc.).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sideport
+  labels:
+    app: sideport
+  # annotations:
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  # ingressClassName: nginx        # or traefik, etc.
+  tls:
+    - hosts:
+        - sideport.example.com
+      secretName: sideport-tls
+  rules:
+    - host: sideport.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sideport
+                port:
+                  number: 8080

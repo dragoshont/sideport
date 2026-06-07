@@ -1,0 +1,176 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sideport
+  labels:
+    app: sideport
+spec:
+  # One replica, Recreate — never two Sideport pods at once. Two signers for one
+  # free-tier Apple ID certificate revoke each other (see the repo README).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sideport
+  template:
+    metadata:
+      labels:
+        app: sideport
+    spec:
+      # The device-install leg talks to the iPhone through the NODE's usbmuxd
+      # socket, so the pod must land on the node where the phone is paired (USB,
+      # or netmuxd for Wi-Fi). On a multi-node cluster, pin it:
+      #   nodeSelector: { kubernetes.io/hostname: <your-node> }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # Host usbmuxd socket — the device-install path. usbmuxd (and netmuxd
+        # for Wi-Fi) run on the NODE, not in the pod, so the pod stays
+        # non-privileged and only gets this one socket. Drop this volume + its
+        # mount + USBMUXD_SOCKET_ADDRESS below if you install over the network.
+        - name: usbmuxd
+          hostPath:
+            path: /var/run/usbmuxd
+            type: Socket
+        # anisette ADI (Apple machine identity). An emptyDir provisions a FRESH
+        # identity whenever the pod (re)starts, which triggers a one-time 2FA on
+        # the next login. To inherit existing trust (no 2FA) and survive
+        # restarts, back this with a PersistentVolumeClaim seeded from an
+        # already-trusted ADI:
+        #   - name: anisette-data
+        #     persistentVolumeClaim: { claimName: sideport-anisette }
+        - name: anisette-data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: sideport
+          # Pin a release tag (see the README "How it's distributed" table);
+          # :latest also works to start. The signer (zsign) is baked in.
+          image: ghcr.io/dragoshont/sideport:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            # ── SINGLE-SIGNER GUARD ──────────────────────────────────────────
+            # Keep the scheduler OFF until you've confirmed no other signer
+            # (AltStore/AltServer or a second Sideport) is active for this Apple
+            # ID. Flip to "true" to let Sideport keep your apps signed.
+            - name: Sideport__Scheduler__Enabled
+              value: "false"
+            # anisette sidecar (same pod, localhost).
+            - name: Sideport__Anisette__Url
+              value: "http://127.0.0.1:6969"
+            # Optional bearer token guarding /api/* (the refresh trigger). The
+            # /healthz + /readyz probes stay open. Make the secret key optional
+            # so the API can run open behind reverse-proxy auth if you omit it.
+            - name: Sideport__Api__AuthToken
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: SIDEPORT_API_TOKEN
+                  optional: true
+            - name: Sideport__Apple__DeviceId
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: SIDEPORT_DEVICE_ID
+            - name: Sideport__Apple__AppleId
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: APPLE_ID
+            # The orchestrator reads the Apple password from an env var whose
+            # name ENCODES the Apple ID: SIDEPORT_APPLE_PW_<APPLE_ID>, uppercased
+            # with every non-alphanumeric character replaced by '_'. RENAME this
+            # to match YOUR Apple ID — e.g. you@example.com -> _YOU_EXAMPLE_COM.
+            - name: SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: SIDEPORT_APPLE_PW
+            # Matches the host usbmuxd socket mounted above.
+            - name: USBMUXD_SOCKET_ADDRESS
+              value: "unix:/var/run/usbmuxd"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: usbmuxd
+              mountPath: /var/run/usbmuxd
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        # anisette v3 (Apple ADI provider) — the one closed-source sidecar.
+        # Multi-arch (amd64 + arm64). Pin a digest in production.
+        - name: anisette
+          image: dadoum/anisette-v3-server:latest
+          ports:
+            - name: anisette
+              containerPort: 6969
+              protocol: TCP
+          volumeMounts:
+            - name: anisette-data
+              mountPath: /home/Alcoholic/.config/anisette-v3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sideport
+  labels:
+    app: sideport
+spec:
+  type: ClusterIP
+  selector:
+    app: sideport
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

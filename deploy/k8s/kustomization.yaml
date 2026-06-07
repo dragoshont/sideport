@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sideport
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - ingress.yaml
+  # The Secret is intentionally NOT listed here. Create it out-of-band from
+  # secret.example.yaml (or via sealed-secrets / SOPS) so real credentials never
+  # get committed:
+  #   cp secret.example.yaml secret.yaml && $EDITOR secret.yaml
+  #   kubectl apply -n sideport -f secret.yaml
+  # - secret.yaml

@@ -9,7 +9,15 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    # The managed core is cross-platform — prove it on Linux AND macOS (incl.
+    # Apple Silicon). Windows is intentionally excluded: the password-less p12
+    # re-export hardening uses File.SetUnixFileMode (Unix-only), and the signer
+    # (zsign) is a Linux ELF, so Windows is not a runtime target.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -57,6 +65,11 @@ jobs:
           # zsign is a static amd64 ELF (baked from altserver-linux), so the
           # image is amd64 — the homelab node's arch.
           platforms: linux/amd64
+          # Single-platform image: skip the provenance/SBOM attestation
+          # manifests so the GHCR package lists just `linux/amd64` instead of an
+          # extra `unknown/unknown` entry.
+          provenance: false
+          sbom: false
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
