@@ -15,5 +15,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/probe-gsa-pinning/probe-gsa-pinning.csproj" />
+    <Project Path="tools/sideport-live-probe/sideport-live-probe.csproj" />
   </Folder>
 </Solution>

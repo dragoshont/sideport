@@ -25,6 +25,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Sideport.DeveloperApi.Tests" />
     <InternalsVisibleTo Include="probe-gsa-pinning" />
+    <InternalsVisibleTo Include="sideport-live-probe" />
   </ItemGroup>
 
 </Project>
