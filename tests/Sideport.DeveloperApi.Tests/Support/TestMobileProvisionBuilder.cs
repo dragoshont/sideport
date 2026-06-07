@@ -19,6 +19,7 @@ internal static class TestMobileProvisionBuilder
         IReadOnlyList<string>? devices = null,
         string teamName = "Test Team",
         string teamId = "ABCDE12345",
+        string? applicationIdentifier = null,
         bool wrapInCms = true)
     {
         DateTimeOffset exp = expiration ?? DateTimeOffset.UtcNow.AddDays(7);
@@ -29,6 +30,13 @@ internal static class TestMobileProvisionBuilder
         dict.Add("TeamName", teamName);
         dict.Add("ExpirationDate", new NSDate(exp.UtcDateTime));
         dict.Add("TeamIdentifier", new NSArray(new NSString(teamId)));
+
+        if (applicationIdentifier is not null)
+        {
+            var entitlements = new NSDictionary();
+            entitlements.Add("application-identifier", applicationIdentifier);
+            dict.Add("Entitlements", entitlements);
+        }
 
         if (devices is { Count: > 0 })
         {

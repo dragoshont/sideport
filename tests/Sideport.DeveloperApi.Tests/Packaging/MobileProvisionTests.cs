@@ -61,4 +61,25 @@ public class MobileProvisionTests
     {
         Assert.Throws<FormatException>(() => MobileProvision.Parse("not a profile"u8.ToArray()));
     }
+
+    [Theory]
+    [InlineData("TEAM123456.com.example.app", "com.example.app", true)]
+    [InlineData("TEAM123456.com.example.app", "com.example.other", false)]
+    [InlineData("TEAM123456.com.example.*", "com.example.app", true)]
+    [InlineData("TEAM123456.com.example.*", "com.other.app", false)]
+    [InlineData("TEAM123456.*", "literally.anything", true)]
+    public void CoversBundle_HonorsExplicitPrefixAndFullWildcard(string appId, string bundleId, bool expected)
+    {
+        byte[] profile = TestMobileProvisionBuilder.Build(applicationIdentifier: appId);
+        ProvisioningProfileInfo info = MobileProvision.Parse(profile);
+        Assert.Equal(expected, info.CoversBundle(bundleId));
+    }
+
+    [Fact]
+    public void ProfileBundlePattern_StripsTeamPrefix()
+    {
+        byte[] profile = TestMobileProvisionBuilder.Build(applicationIdentifier: "TEAM123456.com.example.app");
+        ProvisioningProfileInfo info = MobileProvision.Parse(profile);
+        Assert.Equal("com.example.app", info.ProfileBundlePattern);
+    }
 }

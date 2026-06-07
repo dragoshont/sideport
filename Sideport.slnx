@@ -9,6 +9,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Sideport.DeveloperApi.Tests/Sideport.DeveloperApi.Tests.csproj" />
+    <Project Path="tests/Sideport.Devices.Tests/Sideport.Devices.Tests.csproj" />
     <Project Path="tests/Sideport.GrandSlam.Tests/Sideport.GrandSlam.Tests.csproj" />
     <Project Path="tests/Sideport.Orchestrator.Tests/Sideport.Orchestrator.Tests.csproj" />
   </Folder>

@@ -2,6 +2,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sideport.Core\Sideport.Core.csproj" />
+    <ProjectReference Include="..\Sideport.DeveloperApi\Sideport.DeveloperApi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned exact (not floated): artehe/Netimobiledevice (MIT). The NuGet
+         listing tops out at 2.5.2; newer (v2.6.0) is GitHub-only. Exact-pin is
+         reproducible; bump deliberately, not automatically. -->
+    <PackageReference Include="Netimobiledevice" Version="[2.5.2]" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -9,5 +18,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sideport.Devices.Tests" />
+  </ItemGroup>
 
 </Project>

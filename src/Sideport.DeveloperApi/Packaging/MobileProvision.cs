@@ -13,13 +13,48 @@ public sealed record ProvisioningProfileInfo(
     string? AppIdName,
     DateTimeOffset ExpirationDate,
     IReadOnlyList<string> ProvisionedDeviceIds,
-    IReadOnlyList<string> TeamIdentifiers)
+    IReadOnlyList<string> TeamIdentifiers,
+    string? ApplicationIdentifier)
 {
     /// <summary>Whether the profile has already expired as of <paramref name="now"/>.</summary>
     public bool IsExpired(DateTimeOffset now) => ExpirationDate <= now;
 
     /// <summary>Time remaining until expiry (negative if already expired).</summary>
     public TimeSpan TimeUntilExpiry(DateTimeOffset now) => ExpirationDate - now;
+
+    /// <summary>
+    /// The bundle-id portion of <see cref="ApplicationIdentifier"/> with the
+    /// leading team/app-id prefix removed: <c>TEAMID.com.foo.bar</c> →
+    /// <c>com.foo.bar</c>, <c>TEAMID.*</c> → <c>*</c>. <see langword="null"/> when
+    /// no application-identifier is present.
+    /// </summary>
+    public string? ProfileBundlePattern
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(ApplicationIdentifier))
+                return null;
+            int dot = ApplicationIdentifier.IndexOf('.');
+            return dot < 0 ? ApplicationIdentifier : ApplicationIdentifier[(dot + 1)..];
+        }
+    }
+
+    /// <summary>
+    /// Whether this profile covers <paramref name="bundleId"/>, honoring the
+    /// explicit (<c>com.foo.bar</c>), prefix-wildcard (<c>com.foo.*</c>), and
+    /// full-wildcard (<c>*</c>) forms of the application-identifier.
+    /// </summary>
+    public bool CoversBundle(string bundleId)
+    {
+        string? pattern = ProfileBundlePattern;
+        if (string.IsNullOrEmpty(pattern))
+            return false;
+        if (pattern == "*")
+            return true;
+        if (pattern.EndsWith(".*", StringComparison.Ordinal))
+            return bundleId.StartsWith(pattern[..^1], StringComparison.Ordinal);
+        return string.Equals(pattern, bundleId, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>
@@ -64,8 +99,17 @@ public static class MobileProvision
         string? teamName = PlistCodec.GetStringOrNull(dict, "TeamName");
         IReadOnlyList<string> teamIds = GetStringArray(dict, "TeamIdentifier");
         IReadOnlyList<string> devices = GetStringArray(dict, "ProvisionedDevices");
+        string? appIdentifier = GetApplicationIdentifier(dict);
 
-        return new ProvisioningProfileInfo(name, teamName, appIdName, expiration, devices, teamIds);
+        return new ProvisioningProfileInfo(
+            name, teamName, appIdName, expiration, devices, teamIds, appIdentifier);
+    }
+
+    private static string? GetApplicationIdentifier(NSDictionary dict)
+    {
+        if (dict.ContainsKey("Entitlements") && dict["Entitlements"] is NSDictionary entitlements)
+            return PlistCodec.GetStringOrNull(entitlements, "application-identifier");
+        return null;
     }
 
     private static byte[]? ExtractPlistSpan(byte[] data)

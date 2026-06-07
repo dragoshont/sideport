@@ -22,7 +22,7 @@ var signerOptions = new SignerOptions
 //     IAppleDeveloperPortal. -----------------------------------------------
 builder.Services.AddSingleton(signerOptions);
 builder.Services.AddSingleton<ISigner, ProcessSigner>();
-builder.Services.AddSingleton<IDeviceController, NetimobiledeviceController>();
+builder.Services.AddDeviceController();
 
 // GrandSlam auth (P3) + developer portal, with their configured HttpClients.
 var allowInsecureTls = builder.Configuration.GetValue("Sideport:Apple:AllowInsecureTls", false);
