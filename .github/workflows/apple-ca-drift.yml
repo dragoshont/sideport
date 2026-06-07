@@ -1,0 +1,36 @@
+name: apple-ca-drift
+
+# Permanent, IaC version of the one-off pinning probe: catches Apple rotating
+# their GrandSlam server CA (which would silently break Sideport auth) by doing
+# a read-only TLS handshake to gsa.apple.com from a clean Linux runner — exactly
+# the environment where public-trust validation fails and pinning must succeed.
+# No Apple account, no auth, no developer-API calls; purely a cert check.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pinning-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # The mechanism tests (embedded-root SHA-256, anchor-specific accept/reject)
+      # run hermetically — no network — and fail loudly if the pinned root file
+      # was tampered with or replaced.
+      - name: Pinning mechanism tests
+        run: >
+          dotnet test tests/Sideport.DeveloperApi.Tests/Sideport.DeveloperApi.Tests.csproj
+          -c Release --filter "FullyQualifiedName~AppleCaPinning"
+
+      # The live drift check: on a clean Linux runner (no Apple root in the trust
+      # store), the embedded pin must still accept gsa.apple.com AND public trust
+      # must still reject it. If Apple rotates their root, the pinned handshake
+      # fails here and the job goes red — our early warning to re-pin.
+      - name: Live GSA pinning drift check
+        run: dotnet run -c Release --project tools/probe-gsa-pinning

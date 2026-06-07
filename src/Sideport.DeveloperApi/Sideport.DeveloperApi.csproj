@@ -12,6 +12,10 @@
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\AppleRootCA-G1.pem" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -20,6 +24,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Sideport.DeveloperApi.Tests" />
+    <InternalsVisibleTo Include="probe-gsa-pinning" />
   </ItemGroup>
 
 </Project>

@@ -34,17 +34,28 @@ public static class DeveloperApiServiceCollectionExtensions
         services.AddHttpClient<IAnisetteProvider, ContainerAnisetteProvider>(
             c => c.BaseAddress = anisetteBaseUrl);
 
-        // GrandSlam talks to gsa.apple.com directly over normal validated TLS.
-        // The insecure opt-out exists solely for proxy-based protocol debugging.
-        IHttpClientBuilder grandSlam = services.AddHttpClient<GrandSlamClient>();
-        if (allowInsecureTls)
-        {
-            grandSlam.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        // GrandSlam (gsa.apple.com) is served from Apple's PRIVATE PKI — its
+        // intermediate CA isn't publicly trusted, so ordinary validation fails.
+        // By default Sideport pins Apple's root CA and validates the chain
+        // against it (real server authentication, defeats MITM), rather than
+        // disabling verification like the rest of the ecosystem. The insecure
+        // opt-out exists only for proxy-based protocol debugging/capture.
+        services.AddHttpClient<GrandSlamClient>()
+            .ConfigurePrimaryHttpMessageHandler(() =>
             {
-                ServerCertificateCustomValidationCallback =
-                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+                var handler = new HttpClientHandler();
+                if (allowInsecureTls)
+                {
+                    handler.ServerCertificateCustomValidationCallback =
+                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+                }
+                else
+                {
+                    handler.ServerCertificateCustomValidationCallback =
+                        (_, cert, chain, _) => AppleCaPinning.Validate(cert, chain);
+                }
+                return handler;
             });
-        }
 
         services.AddSingleton<IAppleDeveloperPortal>(sp =>
             new AppleDeveloperPortal(sp.GetRequiredService<GrandSlamClient>()));
