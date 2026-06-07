@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "subframe@subframe": true
+  },
+  "extraKnownMarketplaces": {
+    "subframe": {
+      "source": {
+        "source": "github",
+        "repo": "SubframeApp/subframe"
+      }
+    }
+  }
+}
