@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
 
@@ -39,9 +40,16 @@ jobs:
         id: meta
         with:
           images: ghcr.io/dragoshont/sideport
+          # Tagging scheme:
+          #   release (git tag vX.Y.Z) -> X.Y.Z, X.Y, latest   <- the tags to pin
+          #   push to main             -> edge + sha-<short>    (bleeding edge / per-commit)
+          # `latest` tracks the newest non-prerelease release (metadata-action
+          # flavor default latest=auto), NOT every main push.
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=edge,branch=main
+            type=sha,format=short
       - uses: docker/build-push-action@v6
         with:
           context: .
