@@ -97,6 +97,18 @@ internal sealed class DeveloperServicesClient
     private void ApplyHeaders(
         HttpRequestMessage request, AppleSession session, AnisetteHeaders anisette, string accept)
     {
+        // Emit the EXACT developer-services header set Xcode/AltServer send, each
+        // header exactly once. Reusing GrandSlamHeaders.BuildHeaders here used to
+        // DOUBLE X-Apple-App-Info / X-Xcode-Version (set explicitly *and* by
+        // BuildHeaders) — the request then carried
+        // "X-Apple-App-Info: com.apple.gs.xcode.auth,com.apple.gs.xcode.auth",
+        // which no longer matched the app the X-Apple-GS-Token was minted for, so
+        // developer-services rejected every action with resultCode 1100 "session
+        // expired" even though the token + login were valid. It also leaked the
+        // cpd-only "loc" / "X-Apple-I-SRL-NO" headers the transport must not send.
+        string deviceId = string.IsNullOrEmpty(anisette.DeviceId) ? _options.DeviceId : anisette.DeviceId;
+        string clientInfo = string.IsNullOrEmpty(anisette.ClientInfo) ? GrandSlamHeaders.ClientInfo : anisette.ClientInfo;
+
         request.Headers.TryAddWithoutValidation("User-Agent", "Xcode");
         request.Headers.TryAddWithoutValidation("Accept", accept);
         request.Headers.TryAddWithoutValidation("Accept-Language", "en-us");
@@ -104,18 +116,34 @@ internal sealed class DeveloperServicesClient
         request.Headers.TryAddWithoutValidation("X-Xcode-Version", DeveloperServicesEndpoints.XcodeVersion);
 
         // Identity: the developer-services endpoints authenticate with the raw
-        // adsid + IDMS token (NOT the base64 X-Apple-Identity-Token the GSA 2FA
-        // path uses).
+        // adsid + app-specific GS token (NOT the base64 X-Apple-Identity-Token the
+        // GSA 2FA path uses).
         request.Headers.TryAddWithoutValidation("X-Apple-I-Identity-Id", session.Adsid);
         request.Headers.TryAddWithoutValidation("X-Apple-GS-Token", session.IdmsToken);
 
-        // The anisette / device header set (shared with GrandSlam).
-        foreach ((string key, object value) in
-                 GrandSlamHeaders.BuildHeaders(anisette, _options.DeviceId, includeClientInfo: true))
-        {
-            request.Headers.TryAddWithoutValidation(key, value.ToString());
-        }
+        // Anisette / device identity — the same instant the OTP was minted for,
+        // with a numeric-offset client-time (Xcode's strftime %z, not a 'Z').
+        request.Headers.TryAddWithoutValidation("X-Apple-I-MD-M", anisette.MachineId);
+        request.Headers.TryAddWithoutValidation("X-Apple-I-MD", anisette.OneTimePassword);
+        request.Headers.TryAddWithoutValidation("X-Apple-I-MD-LU", anisette.LocalUserId);
+        request.Headers.TryAddWithoutValidation(
+            "X-Apple-I-MD-RINFO",
+            string.IsNullOrEmpty(anisette.RoutingInfo) ? "17106176" : anisette.RoutingInfo);
+        request.Headers.TryAddWithoutValidation("X-Mme-Device-Id", deviceId);
+        request.Headers.TryAddWithoutValidation("X-Mme-Client-Info", clientInfo);
+        request.Headers.TryAddWithoutValidation("X-Apple-I-Client-Time", FormatClientTime(anisette.ClientTime));
+        request.Headers.TryAddWithoutValidation("X-Apple-Locale", "en_US");
+        request.Headers.TryAddWithoutValidation("X-Apple-I-TimeZone", "UTC");
     }
+
+    /// <summary>
+    /// Format the developer-services <c>X-Apple-I-Client-Time</c> exactly like
+    /// Xcode (<c>strftime "%FT%T%z"</c>): second precision with a numeric UTC
+    /// offset and no colon (e.g. <c>2026-06-07T19:06:03+0000</c>), for the same
+    /// instant the anisette OTP was minted for.
+    /// </summary>
+    private static string FormatClientTime(DateTimeOffset time) =>
+        time.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss") + "+0000";
 
     // --- response handling -------------------------------------------------
 

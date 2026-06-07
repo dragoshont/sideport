@@ -55,8 +55,12 @@ var gsaHttp = new HttpClient(new HttpClientHandler
 });
 var grandSlam = new GrandSlamClient(gsaHttp, anisette, options, loggerFactory.CreateLogger<GrandSlamClient>());
 
-// developerservices2 client (normal public-trust TLS).
-var devHttp = new HttpClient();
+// developerservices2 client (normal public-trust TLS). With SIDEPORT_PROBE_WIRE=1
+// the exact request headers + full response body are dumped (token/OTP redacted)
+// so the live wire format can be diffed against the AltServer/AltSign control.
+bool wire = Environment.GetEnvironmentVariable("SIDEPORT_PROBE_WIRE") == "1";
+HttpMessageHandler devInner = new HttpClientHandler();
+var devHttp = new HttpClient(wire ? new ProbeWireHandler(devInner) : devInner);
 var dev = new DeveloperServicesClient(devHttp, anisette, options, loggerFactory.CreateLogger<DeveloperServicesClient>());
 
 // ── 1. Authenticate ──────────────────────────────────────────────────────────
@@ -133,3 +137,59 @@ static string Sanitize(string value) =>
     string.IsNullOrEmpty(value) ? "(empty)"
     : value.Length <= 16 ? value[..2] + "…" + value[^2..]
     : value[..8] + "…" + value[^6..];
+
+// Dumps the developerservices2 request headers (sensitive ones redacted to a
+// length+shape so the wire format is comparable to the AltSign control without
+// leaking the token/OTP) and the full decompressed response body.
+sealed class ProbeWireHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
+{
+    private static readonly HashSet<string> Redact = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "X-Apple-GS-Token", "X-Apple-I-MD", "X-Apple-I-MD-M", "X-Apple-Identity-Token",
+    };
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"\n    ─── WIRE → {request.Method} {request.RequestUri}");
+        foreach (var h in request.Headers.OrderBy(h => h.Key))
+            Console.WriteLine($"        {h.Key}: {Shape(h.Key, string.Join(",", h.Value))}");
+        if (request.Content is not null)
+        {
+            foreach (var h in request.Content.Headers.OrderBy(h => h.Key))
+                Console.WriteLine($"        {h.Key}: {string.Join(",", h.Value)}");
+            byte[] reqBody = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            Console.WriteLine($"        [body {reqBody.Length}B]\n{Indent(System.Text.Encoding.UTF8.GetString(reqBody))}");
+        }
+
+        HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+
+        byte[] raw = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        byte[] body = raw.Length >= 2 && raw[0] == 0x1F && raw[1] == 0x8B ? Gunzip(raw) : raw;
+        Console.WriteLine($"    ─── WIRE ← {(int)response.StatusCode} {response.ReasonPhrase} ({raw.Length}B{(body.Length != raw.Length ? $" gz→{body.Length}B" : "")})");
+        Console.WriteLine(Indent(System.Text.Encoding.UTF8.GetString(body)));
+        // Re-wrap the consumed body so the caller can still read it.
+        var copy = new ByteArrayContent(raw);
+        foreach (var h in response.Content.Headers)
+            copy.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        response.Content = copy;
+        return response;
+    }
+
+    private static string Shape(string key, string value) =>
+        !Redact.Contains(key) ? value
+        : value.Length <= 12 ? $"<{value.Length}B>"
+        : $"<{value.Length}B {value[..6]}…{value[^4..]}>";
+
+    private static string Indent(string s) =>
+        "          " + s.Replace("\n", "\n          ");
+
+    private static byte[] Gunzip(byte[] data)
+    {
+        using var input = new MemoryStream(data);
+        using var gz = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        gz.CopyTo(output);
+        return output.ToArray();
+    }
+}

@@ -75,6 +75,37 @@ public class DeveloperServicesTests
     }
 
     [Fact]
+    public async Task Request_DevServicesHeaders_AreSingleValued_LikeXcodeControl()
+    {
+        // Regression for the dev-API 1100 "session expired": ApplyHeaders used to
+        // set X-Apple-App-Info / X-Xcode-Version explicitly AND again via
+        // GrandSlamHeaders.BuildHeaders, so each went out DOUBLED
+        // ("com.apple.gs.xcode.auth,com.apple.gs.xcode.auth"). Apple could no
+        // longer match the GS-Token's app and rejected every action with 1100.
+        // The header set must match Xcode/AltServer exactly: each header once, no
+        // cpd-only loc / X-Apple-I-SRL-NO, numeric-offset client-time.
+        (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, _) = Build();
+
+        await portal.ListTeamsAsync(Session());
+
+        FakeDeveloperServicesHandler.CapturedRequest req = Assert.Single(handler.Requests);
+        // Single-valued (the fake comma-joins duplicate header values).
+        Assert.Equal("com.apple.gs.xcode.auth", req.Headers["X-Apple-App-Info"]);
+        Assert.Equal("11.2 (11B41)", req.Headers["X-Xcode-Version"]);
+        // The cpd-only headers must NOT leak onto the developer-services request.
+        Assert.False(req.Headers.ContainsKey("loc"));
+        Assert.False(req.Headers.ContainsKey("X-Apple-I-SRL-NO"));
+        // Numeric UTC offset (Xcode strftime %z), not a 'Z', for the OTP instant.
+        Assert.Equal("1970-01-01T00:00:00+0000", req.Headers["X-Apple-I-Client-Time"]);
+        // The anisette device set is still present, each once.
+        Assert.Equal("TEST-OTP", req.Headers["X-Apple-I-MD"]);
+        Assert.Equal("TEST-MACHINE-ID", req.Headers["X-Apple-I-MD-M"]);
+        Assert.Equal("17106176", req.Headers["X-Apple-I-MD-RINFO"]);
+        Assert.True(req.Headers.ContainsKey("X-Mme-Device-Id"));
+        Assert.True(req.Headers.ContainsKey("X-Mme-Client-Info"));
+    }
+
+    [Fact]
     public async Task RegisterDevice_IsIdempotent()
     {
         (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, _) = Build();
