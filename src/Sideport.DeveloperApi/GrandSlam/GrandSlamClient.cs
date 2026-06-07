@@ -170,7 +170,11 @@ internal sealed class GrandSlamClient
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(GrandSlamEndpoints.PlistContentType);
         request.Headers.UserAgent.ParseAdd(GrandSlamEndpoints.AkdUserAgent);
         request.Headers.Accept.ParseAdd("*/*");
-        request.Headers.TryAddWithoutValidation("X-MMe-Client-Info", GrandSlamHeaders.ClientInfo);
+        // Mirror the anisette-provided client-info when present (trust inheritance),
+        // else the built-in Xcode client emulation.
+        request.Headers.TryAddWithoutValidation(
+            "X-MMe-Client-Info",
+            string.IsNullOrEmpty(anisette.ClientInfo) ? GrandSlamHeaders.ClientInfo : anisette.ClientInfo);
 
         using HttpResponseMessage response = await _http.SendAsync(request, ct);
         byte[] responseBody = await response.Content.ReadAsByteArrayAsync(ct);

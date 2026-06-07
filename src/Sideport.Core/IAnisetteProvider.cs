@@ -29,4 +29,11 @@ public sealed record AnisetteHeaders(
     string OneTimePassword,  // X-Apple-I-MD
     string RoutingInfo,      // X-Apple-I-MD-RINFO
     string LocalUserId,      // X-Apple-I-MD-LU
-    DateTimeOffset ClientTime);
+    DateTimeOffset ClientTime,
+    // The machine/device identity the anisette ADI is provisioned for. When the
+    // server supplies these (the flat "v1" GET / contract does), Sideport sends
+    // them verbatim so it presents the SAME device Apple already trusts —
+    // inheriting an existing anisette/AltServer trust and avoiding a fresh 2FA.
+    // Empty when the server does not provide them (then config/defaults apply).
+    string DeviceId = "",    // X-Mme-Device-Id
+    string ClientInfo = ""); // X-MMe-Client-Info

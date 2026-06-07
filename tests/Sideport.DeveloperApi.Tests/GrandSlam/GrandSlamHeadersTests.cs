@@ -50,6 +50,32 @@ public class GrandSlamHeadersTests
     }
 
     [Fact]
+    public void BuildHeaders_AnisetteDeviceId_OverridesConfiguredFallback()
+    {
+        // Trust inheritance: when anisette surfaces the device identity it is
+        // provisioned for, Sideport must send THAT (not the configured fallback)
+        // so Apple recognizes a trusted device and skips 2FA.
+        var anisette = Sample() with { DeviceId = "BAC92E5F-TRUSTED" };
+        var headers = GrandSlamHeaders.BuildHeaders(anisette, "config-fallback-id");
+        Assert.Equal("BAC92E5F-TRUSTED", headers["X-Mme-Device-Id"]);
+    }
+
+    [Fact]
+    public void BuildHeaders_NoAnisetteDeviceId_UsesConfiguredFallback()
+    {
+        var headers = GrandSlamHeaders.BuildHeaders(Sample(), "config-fallback-id");
+        Assert.Equal("config-fallback-id", headers["X-Mme-Device-Id"]);
+    }
+
+    [Fact]
+    public void BuildHeaders_AnisetteClientInfo_OverridesBuiltIn()
+    {
+        var anisette = Sample() with { ClientInfo = "<MacBookPro13,2> <macOS;13.1;22C65>" };
+        var headers = GrandSlamHeaders.BuildHeaders(anisette, "DEVICE-ID", includeClientInfo: true);
+        Assert.Equal("<MacBookPro13,2> <macOS;13.1;22C65>", headers["X-Mme-Client-Info"]);
+    }
+
+    [Fact]
     public void BuildCpd_IncludesBootstrapFlagsAndHeaders()
     {
         var cpd = GrandSlamHeaders.BuildCpd(Sample(), "DEVICE-ID");

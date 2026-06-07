@@ -29,6 +29,16 @@ internal static class GrandSlamHeaders
     public static Dictionary<string, object> BuildHeaders(
         AnisetteHeaders anisette, string deviceId, bool includeClientInfo = false)
     {
+        // Prefer the device identity the anisette ADI is provisioned for: sending
+        // the SAME X-Mme-Device-Id / client-info that anisette (and AltServer)
+        // already use means Apple sees a known, trusted device and does not demand
+        // a fresh 2FA. The configured deviceId / built-in client-info are the
+        // fallback for servers that don't surface them.
+        string effectiveDeviceId =
+            string.IsNullOrEmpty(anisette.DeviceId) ? deviceId : anisette.DeviceId;
+        string effectiveClientInfo =
+            string.IsNullOrEmpty(anisette.ClientInfo) ? ClientInfo : anisette.ClientInfo;
+
         var headers = new Dictionary<string, object>
         {
             ["X-Apple-I-Client-Time"] = FormatTimestamp(anisette.ClientTime),
@@ -41,13 +51,13 @@ internal static class GrandSlamHeaders
             ["X-Apple-I-MD-RINFO"] = string.IsNullOrEmpty(anisette.RoutingInfo)
                 ? RoutingInfo
                 : anisette.RoutingInfo,
-            ["X-Mme-Device-Id"] = deviceId,
+            ["X-Mme-Device-Id"] = effectiveDeviceId,
             ["X-Apple-I-SRL-NO"] = SerialNumber,
         };
 
         if (includeClientInfo)
         {
-            headers["X-Mme-Client-Info"] = ClientInfo;
+            headers["X-Mme-Client-Info"] = effectiveClientInfo;
             headers["X-Apple-App-Info"] = AppInfo;
             headers["X-Xcode-Version"] = XcodeVersion;
         }
