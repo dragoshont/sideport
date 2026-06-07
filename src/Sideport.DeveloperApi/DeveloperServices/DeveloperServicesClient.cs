@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Claunia.PropertyList;
 using Microsoft.Extensions.Logging;
 using Sideport.Core;
@@ -90,6 +91,55 @@ internal sealed class DeveloperServicesClient
             _logger.LogDebug("dev-api {Action} error response:\n{Xml}", action, parsed.ToXmlPropertyList());
         ThrowOnResultError(action, parsed);
         return parsed;
+    }
+
+    /// <summary>
+    /// Issue a request against the JSON (<c>application/vnd.api+json</c>) services
+    /// endpoints (<c>services/v1/{path}</c>) and return the parsed JSON root. The
+    /// HTTP verb is tunneled via <c>X-HTTP-Method-Override</c> (GET/DELETE) over a
+    /// POST, and the query (<c>teamId</c> first, then any filters) is sent in the
+    /// body as a single url-encoded <c>urlEncodedQueryParams</c> string — the
+    /// exact framing Apple's developer-services JSON API expects. Used for the
+    /// certificate list/revoke endpoints the plist "action" surface doesn't cover.
+    /// </summary>
+    public async Task<JsonElement> SendServicesRequestAsync(
+        string path,
+        string httpMethodOverride,
+        AppleSession session,
+        string teamId,
+        IReadOnlyDictionary<string, string>? query = null,
+        CancellationToken ct = default)
+    {
+        var pairs = new List<string> { "teamId=" + Uri.EscapeDataString(teamId) };
+        if (query is not null)
+            foreach ((string key, string value) in query)
+                pairs.Add(Uri.EscapeDataString(key) + "=" + Uri.EscapeDataString(value));
+
+        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(
+            new Dictionary<string, string> { ["urlEncodedQueryParams"] = string.Join("&", pairs) });
+        var uri = new Uri(DeveloperServicesEndpoints.JsonServiceBase + path);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, uri)
+        {
+            Content = new ByteArrayContent(payload),
+        };
+        request.Content.Headers.ContentType =
+            new MediaTypeHeaderValue(DeveloperServicesEndpoints.JsonContentType);
+        AnisetteHeaders anisette = await _anisette.GetHeadersAsync(ct);
+        ApplyHeaders(request, session, anisette, DeveloperServicesEndpoints.JsonContentType);
+        request.Headers.TryAddWithoutValidation("X-HTTP-Method-Override", httpMethodOverride);
+
+        _logger.LogDebug("dev-api services {Method} {Path} (team {Team})", httpMethodOverride, path, teamId);
+        using HttpResponseMessage response = await _http.SendAsync(request, ct);
+        byte[] raw = await response.Content.ReadAsByteArrayAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new DeveloperServicesException(
+                $"dev-api services {httpMethodOverride} {path} HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+
+        byte[] body = Inflate(raw);
+        if (body.Length == 0)
+            return default;
+        return JsonDocument.Parse(body).RootElement.Clone();
     }
 
     // --- header plumbing ---------------------------------------------------

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using Claunia.PropertyList;
 using Sideport.Core;
 using Sideport.DeveloperApi.DeveloperServices;
@@ -82,6 +83,15 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
     public async Task<SigningCertificate> EnsureCertificateAsync(
         AppleSession session, string teamId, byte[] csrDer, CancellationToken ct = default)
     {
+        // Free-tier discipline (one active development certificate): Apple rejects
+        // a new CSR with resultCode 7460 ("you already have a current iOS
+        // Development certificate or a pending certificate request") while any dev
+        // cert exists. The caller only reaches here when it has no usable persisted
+        // identity, so the existing cert is unusable to us (we lack its private
+        // key) — revoke it first, then mint. This mirrors the established
+        // revoke-then-add behaviour of the reference signer.
+        await RevokeAllDevelopmentCertificatesAsync(session, teamId, ct);
+
         // Apple's endpoint takes the CSR PEM-encoded; the caller keeps the
         // matching private key and assembles the PKCS#12 from the returned cert.
         string csrPem = PemEncoding.WriteString("CERTIFICATE REQUEST", csrDer);
@@ -96,7 +106,19 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
             }, ct);
 
         NSDictionary certRequest = PlistCodec.GetDictionary(response, "certRequest");
-        byte[] certificateDer = PlistCodec.GetData(certRequest, "certContent");
+
+        // Apple returns the new certificate one of two ways (the reference signer
+        // parses both): inline as certRequest.certContent (a <data> DER), or — the
+        // shape seen live — as metadata only (name + serialNumber), with the DER
+        // served from the JSON certificates list. Prefer the inline DER; otherwise
+        // fetch it from services/v1/certificates, matched by serial number.
+        byte[] certificateDer = PlistCodec.TryGetData(certRequest, "certContent", out byte[] inlineDer)
+            ? inlineDer
+            : await FetchDevelopmentCertificateDerAsync(
+                session, teamId,
+                PlistCodec.GetStringOrNull(certRequest, "serialNumber")
+                    ?? PlistCodec.GetStringOrNull(certRequest, "serialNum"),
+                ct);
 
         // The certificate itself is authoritative for the serial + expiry.
         using X509Certificate2 certificate = X509CertificateLoader.LoadCertificate(certificateDer);
@@ -104,6 +126,93 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
             certificate.SerialNumber,
             certificateDer,
             new DateTimeOffset(certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero));
+    }
+
+    /// <summary>
+    /// Fetch the DER of the just-issued iOS development certificate from the JSON
+    /// services list (<c>GET services/v1/certificates</c>). Apple's
+    /// submitDevelopmentCSR response can carry only certificate metadata, so the
+    /// content is read from <c>data[].attributes.certificateContent</c> (base64),
+    /// matched by serial number when known, else the sole development certificate
+    /// (revoke-then-mint leaves exactly one on the team).
+    /// </summary>
+    private async Task<byte[]> FetchDevelopmentCertificateDerAsync(
+        AppleSession session, string teamId, string? serialNumber, CancellationToken ct)
+    {
+        JsonElement list = await _dev.SendServicesRequestAsync(
+            "certificates", "GET", session, teamId,
+            new Dictionary<string, string> { ["filter[certificateType]"] = "IOS_DEVELOPMENT" }, ct);
+
+        if (list.ValueKind != JsonValueKind.Object ||
+            !list.TryGetProperty("data", out JsonElement data) ||
+            data.ValueKind != JsonValueKind.Array ||
+            data.GetArrayLength() == 0)
+        {
+            throw new DeveloperServicesException(
+                "submitDevelopmentCSR returned no inline certificate and the certificates list is empty");
+        }
+
+        // Prefer an exact serial match; otherwise keep the sole content-bearing
+        // entry (after revoke-then-mint there is exactly one).
+        string? chosen = null;
+        foreach (JsonElement cert in data.EnumerateArray())
+        {
+            if (!cert.TryGetProperty("attributes", out JsonElement attrs) ||
+                !attrs.TryGetProperty("certificateContent", out JsonElement content) ||
+                content.GetString() is not { Length: > 0 } base64)
+            {
+                continue;
+            }
+
+            chosen = base64;
+            if (serialNumber is not null &&
+                attrs.TryGetProperty("serialNumber", out JsonElement serial) &&
+                serial.GetString() == serialNumber)
+            {
+                break;
+            }
+        }
+
+        if (chosen is null)
+        {
+            throw new DeveloperServicesException(
+                "no downloadable iOS development certificate found after submitDevelopmentCSR");
+        }
+
+        return Convert.FromBase64String(chosen);
+    }
+
+    /// <summary>
+    /// Revoke every existing iOS development certificate on the team so a fresh
+    /// CSR is accepted (the free tier allows only one). Safe to call when none
+    /// exist (it simply revokes nothing). Uses the JSON services endpoints:
+    /// <c>GET services/v1/certificates</c> then <c>DELETE …/certificates/{id}</c>.
+    /// </summary>
+    private async Task RevokeAllDevelopmentCertificatesAsync(
+        AppleSession session, string teamId, CancellationToken ct)
+    {
+        JsonElement list = await _dev.SendServicesRequestAsync(
+            "certificates", "GET", session, teamId,
+            new Dictionary<string, string> { ["filter[certificateType]"] = "IOS_DEVELOPMENT" }, ct);
+
+        if (list.ValueKind != JsonValueKind.Object ||
+            !list.TryGetProperty("data", out JsonElement data) ||
+            data.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (JsonElement cert in data.EnumerateArray())
+        {
+            if (!cert.TryGetProperty("id", out JsonElement idNode))
+                continue;
+            string? id = idNode.GetString();
+            if (string.IsNullOrEmpty(id))
+                continue;
+
+            await _dev.SendServicesRequestAsync(
+                $"certificates/{id}", "DELETE", session, teamId, query: null, ct);
+        }
     }
 
     public async Task<ProvisioningProfile> EnsureProfileAsync(

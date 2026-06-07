@@ -118,6 +118,23 @@ internal static class PlistCodec
             ? data.Bytes
             : throw new FormatException($"plist key '{key}' is not data");
 
+    /// <summary>
+    /// Read a <c>&lt;data&gt;</c> node when present, returning <c>false</c> when the
+    /// key is absent or holds a non-data value. Apple sometimes omits an optional
+    /// data field (e.g. submitDevelopmentCSR's inline <c>certContent</c>, which
+    /// the response may carry as metadata only).
+    /// </summary>
+    public static bool TryGetData(NSDictionary dict, string key, out byte[] value)
+    {
+        if (dict.ContainsKey(key) && dict[key] is NSData data)
+        {
+            value = data.Bytes;
+            return true;
+        }
+        value = [];
+        return false;
+    }
+
     public static long GetLong(NSDictionary dict, string key) =>
         dict.ContainsKey(key) && dict[key] is NSNumber number
             ? number.ToLong()

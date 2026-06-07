@@ -21,6 +21,7 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
     private readonly string _teamId;
     private readonly HashSet<string> _devices = [];
     private readonly Dictionary<string, string> _appIds = []; // bundleId -> appIdId
+    private readonly List<FakeCertificate> _certs = []; // development certs on the team
     private int _certSerial;
     private int _appIdSeq;
 
@@ -34,6 +35,15 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
     /// <summary>Captured (action, requestDict, headers) per call, in order.</summary>
     public List<CapturedRequest> Requests { get; } = [];
 
+    /// <summary>Services-API calls captured as (method, path) in order.</summary>
+    public List<(string Method, string Path)> ServiceRequests { get; } = [];
+
+    /// <summary>Seed an existing development certificate id (the free-tier slot).</summary>
+    public void SeedDevelopmentCertificate(string id) => _certs.Add(new FakeCertificate(id, $"SEED-{id}", null));
+
+    /// <summary>Current development certificate ids on the team.</summary>
+    public IReadOnlyList<string> CertificateIds => _certs.Select(c => c.Id).ToList();
+
     /// <summary>When set, the next matching action returns this Apple resultCode.</summary>
     public (string Action, long Code, string Message)? NextError { get; set; }
 
@@ -45,10 +55,21 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
     public sealed record CapturedRequest(
         string Action, NSDictionary Body, IReadOnlyDictionary<string, string> Headers);
 
+    // A development certificate on the team. Der is null for a seeded cert we do
+    // not own the content of (only its id matters, for revocation).
+    private sealed record FakeCertificate(string Id, string Serial, byte[]? Der);
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        string action = request.RequestUri!.AbsolutePath.Split("/QH65B2/", 2)[^1];
+        string absolutePath = request.RequestUri!.AbsolutePath;
+
+        // JSON services endpoints (services/v1/...) — verb tunneled via
+        // X-HTTP-Method-Override. Used for certificate list/revoke.
+        if (absolutePath.Contains("/services/v1/", StringComparison.Ordinal))
+            return HandleServices(request, absolutePath);
+
+        string action = absolutePath.Split("/QH65B2/", 2)[^1];
         byte[] body = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
         var requestDict = (NSDictionary)PropertyListParser.Parse(body);
 
@@ -75,6 +96,44 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
         };
 
         return Ok(PlistContent(response));
+    }
+
+    /// <summary>
+    /// Handle the JSON services endpoints: GET/DELETE on certificates. The verb
+    /// is carried in X-HTTP-Method-Override (the request is always a POST).
+    /// </summary>
+    private HttpResponseMessage HandleServices(HttpRequestMessage request, string absolutePath)
+    {
+        string method = request.Headers.TryGetValues("X-HTTP-Method-Override", out var v)
+            ? v.First() : "GET";
+        string resource = absolutePath.Split("/services/v1/", 2)[^1];
+        ServiceRequests.Add((method, resource));
+
+        // certificates           -> GET list
+        // certificates/{id}      -> DELETE revoke
+        if (resource == "certificates" && method == "GET")
+        {
+            // Faithful to real Apple: each entry carries attributes incl. the
+            // base64 certificateContent (the DER), which is how the portal reads
+            // a just-issued cert back (submitDevelopmentCSR returns metadata only).
+            string data = string.Join(",", _certs.Select(c =>
+            {
+                string attrs = $"\"serialNumber\":\"{c.Serial}\",\"name\":\"Sideport Development\"";
+                if (c.Der is not null)
+                    attrs += $",\"certificateContent\":\"{Convert.ToBase64String(c.Der)}\"";
+                return $"{{\"type\":\"certificates\",\"id\":\"{c.Id}\",\"attributes\":{{{attrs}}}}}";
+            }));
+            return JsonResponse($"{{\"data\":[{data}]}}");
+        }
+
+        if (resource.StartsWith("certificates/", StringComparison.Ordinal) && method == "DELETE")
+        {
+            string id = resource["certificates/".Length..];
+            _certs.RemoveAll(c => c.Id == id);
+            return JsonResponse("{}");
+        }
+
+        return JsonResponse("{}");
     }
 
     // --- actions -----------------------------------------------------------
@@ -128,10 +187,16 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
         string csrPem = request["csrContent"].ToString()!;
         byte[] certDer = IssueCertificate(csrPem);
 
+        int serial = ++_certSerial;
+        _certs.Add(new FakeCertificate($"CERT{serial}", serial.ToString(), certDer));
+
+        // Faithful to real Apple: submitDevelopmentCSR returns certificate
+        // METADATA only (no inline certContent <data>). The portal fetches the DER
+        // from the services/v1/certificates list (attributes.certificateContent).
         var certRequest = new NSDictionary();
-        certRequest.Add("certContent", new NSData(certDer));
+        certRequest.Add("certificateId", $"CERT{serial}");
         certRequest.Add("name", "Sideport Development");
-        certRequest.Add("serialNumber", (++_certSerial).ToString());
+        certRequest.Add("serialNumber", serial.ToString());
 
         var response = Ok0();
         response.Add("certRequest", certRequest);
@@ -252,4 +317,12 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
 
     private static HttpResponseMessage Ok(HttpContent content) =>
         new(HttpStatusCode.OK) { Content = content };
+
+    private static HttpResponseMessage JsonResponse(string json)
+    {
+        var content = new ByteArrayContent(Encoding.UTF8.GetBytes(json));
+        content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/vnd.api+json");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }
 }

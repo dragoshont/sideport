@@ -136,6 +136,27 @@ public class DeveloperServicesTests
     }
 
     [Fact]
+    public async Task EnsureCertificate_FetchesDerFromServicesList_WhenResponseIsMetadataOnly()
+    {
+        // Regression: Apple's submitDevelopmentCSR response carries certificate
+        // METADATA only (no inline certContent <data>) — the shape seen live that
+        // previously threw "plist key 'certContent' is not data". The portal must
+        // fall back to GET services/v1/certificates for the DER. The fake models
+        // that real shape, so a SECOND certificates GET (after revoke's first)
+        // proves the fallback fetch ran instead of reading an inline blob.
+        (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, _) = Build();
+        using var keyPair = new DevelopmentKeyPair();
+
+        SigningCertificate cert = await portal.EnsureCertificateAsync(
+            Session(), TeamId, keyPair.CreateCsrDer());
+
+        int certListGets = handler.ServiceRequests.Count(r => r is ("GET", "certificates"));
+        Assert.Equal(2, certListGets); // 1 = revoke survey, 2 = post-submit DER fetch
+        // The DER fetched from the list assembles with the CSR key into a real p12.
+        Assert.NotEmpty(keyPair.ExportPkcs12(cert.CertificateDer, "pw"));
+    }
+
+    [Fact]
     public async Task EnsureProfile_CreatesAppIdThenDownloadsProfile()
     {
         (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, _) = Build();

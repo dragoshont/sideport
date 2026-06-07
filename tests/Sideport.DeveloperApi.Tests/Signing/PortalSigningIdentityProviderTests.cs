@@ -97,6 +97,29 @@ public class PortalSigningIdentityProviderTests : IDisposable
         Assert.Equal(2, mints);
     }
 
+    [Fact]
+    public async Task Prepare_RevokesExistingCertificateBeforeMinting()
+    {
+        // The free tier allows one development certificate. When another signer
+        // already holds the slot (e.g. AltServer), Apple rejects a new CSR with
+        // 7460 unless the existing cert is revoked first. Sideport has no usable
+        // persisted identity here, so it must revoke-then-mint.
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        (PortalSigningIdentityProvider provider, FakeDeveloperServicesHandler handler) = Build(time);
+        handler.SeedDevelopmentCertificate("EXISTING-CERT");
+
+        await provider.PrepareAsync(Session(), TeamId, BundleId, Udid);
+
+        // The pre-existing cert was revoked (DELETE) before the CSR was submitted.
+        Assert.Contains(("DELETE", "certificates/EXISTING-CERT"), handler.ServiceRequests);
+        Assert.DoesNotContain("EXISTING-CERT", handler.CertificateIds);
+        // And a fresh certificate was minted (the seeded one is gone, ours remains).
+        Assert.Single(handler.CertificateIds);
+        Assert.Equal(1, handler.Requests.Count(r => r.Action == "ios/submitDevelopmentCSR.action"));
+        // The list was queried before the delete (revoke-then-mint ordering).
+        Assert.Equal(("GET", "certificates"), handler.ServiceRequests[0]);
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_workDir)) Directory.Delete(_workDir, recursive: true); }
