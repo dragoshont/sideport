@@ -8,6 +8,7 @@
     <Project Path="src/Sideport.Orchestrator/Sideport.Orchestrator.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Sideport.Api.Tests/Sideport.Api.Tests.csproj" />
     <Project Path="tests/Sideport.DeveloperApi.Tests/Sideport.DeveloperApi.Tests.csproj" />
     <Project Path="tests/Sideport.Devices.Tests/Sideport.Devices.Tests.csproj" />
     <Project Path="tests/Sideport.GrandSlam.Tests/Sideport.GrandSlam.Tests.csproj" />
