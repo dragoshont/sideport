@@ -73,7 +73,10 @@ internal sealed class GrandSlamClient
         byte[] salt = PlistCodec.GetData(initResponse, "s");
         int iterations = checked((int)PlistCodec.GetLong(initResponse, "i"));
         byte[] serverB = PlistCodec.GetData(initResponse, "B");
-        byte[] cookie = PlistCodec.GetData(initResponse, "c");
+        // The cookie is opaque and round-tripped verbatim. Real GSA sends it as a
+        // plist string (not data), so keep the raw node and echo it back unchanged
+        // rather than coercing its type.
+        NSObject cookie = PlistCodec.GetNode(initResponse, "c");
 
         // --- Derive password key + client evidence -------------------------
         byte[] passwordKey = GrandSlamCrypto.DerivePasswordKey(password, salt, iterations, hexExpand);

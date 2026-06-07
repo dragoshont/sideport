@@ -66,6 +66,16 @@ internal static class PlistCodec
         return false;
     }
 
+    /// <summary>
+    /// Return the raw plist node for a key, preserving its type. Used for opaque
+    /// values (e.g. the GrandSlam cookie <c>c</c>, which Apple sends as a string
+    /// but must be echoed back unchanged) so we never coerce the wire type.
+    /// </summary>
+    public static NSObject GetNode(NSDictionary dict, string key) =>
+        dict.ContainsKey(key)
+            ? dict[key]
+            : throw new FormatException($"plist key '{key}' missing");
+
     public static NSDictionary GetDictionary(NSDictionary dict, string key) =>
         dict.ContainsKey(key) && dict[key] is NSDictionary nested
             ? nested

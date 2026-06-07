@@ -123,7 +123,9 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         response.Add("s", new NSData(_salt));
         response.Add("i", _iterations);
         response.Add("B", new NSData(b));
-        response.Add("c", new NSData("server-cookie"u8.ToArray()));
+        // Real GSA sends the cookie as a plist string (not data); mirror that so
+        // the replay oracle is faithful to the live wire format.
+        response.Add("c", "server-cookie");
         response.Add("Status", Status(ec: 0));
         return Wrap(response);
     }
