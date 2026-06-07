@@ -186,23 +186,42 @@ list stays safe to read and back up.
 
 ## Running it in a homelab (Kubernetes / Flux)
 
-Sideport ships as a single container and is built to live in a cluster. A
+Sideport ships as a single container and is built **GitOps-first** — it's meant
+to be deployed by [Flux](https://fluxcd.io/), not `kubectl apply` by hand. A
 ready-made, hardened deployment (Deployment + Service + Ingress, runs as a
-non-root user, readiness/liveness probes, secrets via SOPS) is maintained here:
+non-root user, readiness/liveness probes, secrets via SOPS, anisette sidecar) is
+maintained here:
 
 - **[`homelab/apps/platform/sideport/`](https://github.com/dragoshont/homelab/tree/main/apps/platform/sideport)**
 
 It mounts the host's `usbmuxd` socket so the pod can install to a phone over
 USB/Wi-Fi, runs the *anisette* helper as a sidecar, and exposes the API at
-`sideport.<your-domain>` through Traefik. Fill in the secret template
-(`secret.sops.example.yaml`) with your Apple ID, device UDID, and an API token,
-encrypt it, and let Flux reconcile.
+`sideport.<your-domain>` through Traefik.
+
+**Going live with Flux** — the manifests sit "staged but inert" (not yet listed
+in your cluster's root `kustomization.yaml`) so a half-configured signer can't
+start fighting an existing one. To turn it on:
+
+1. **Create the secret.** Copy `secret.sops.example.yaml`, fill in your Apple ID,
+   device UDID, and a generated API token, set the Apple password on the host
+   (never in the repo), then SOPS-encrypt it to `secret.sops.yaml` and uncomment
+   it in the app's `kustomization.yaml`.
+2. **Seed anisette.** Point the pod at your already-trusted anisette, or persist
+   and seed its ADI volume — a brand-new ADI triggers a 2FA loop (see below).
+3. **Wire it in.** Add `- ../../apps/platform/sideport/` to
+   `clusters/home/kustomization.yaml` and add the `sideport.<domain>` DNS record.
+4. **Reconcile.** `flux reconcile kustomization …` (or just push — Flux pulls it).
+   The pod comes up with the **scheduler off**, so it serves the API and does
+   nothing destructive until you say so.
+5. **Cut over.** Once you've confirmed no other signer is active for that Apple
+   ID (see [single-signer](#one-apple-id--one-signer)), flip
+   `Sideport__Scheduler__Enabled` to `true`.
 
 > [!NOTE]
-> In the homelab deployment the scheduler ships **off** by default
-> (`Sideport__Scheduler__Enabled=false`) so you can verify a manual refresh
-> first, then flip it on for a deliberate go-live. See the
-> [single-signer rule](#one-apple-id--one-signer) below.
+> The scheduler ships **off** on purpose so you can deploy via Flux, smoke-test a
+> manual refresh, and only then enable the automatic loop — a safe, reversible
+> go-live rather than an all-at-once switch.
+
 
 ---
 
@@ -328,6 +347,45 @@ documented behaviour rather than copied from AGPL projects — which is what kee
 the whole thing permissively licensed. The full design rationale and build plan
 live in the homelab docs:
 [`sideport-implementation-plan.md`](https://github.com/dragoshont/homelab/blob/main/docs/sideport-implementation-plan.md).
+
+---
+
+## Acknowledgments
+
+Sideport stands on the shoulders of the people who reverse-engineered and
+documented Apple's sideloading flow, and on several excellent open-source
+libraries. Sideport is an independent, clean-room reimplementation — where a
+project below is copyleft (AGPL), it was studied for **protocol facts only** and
+**no code was copied**; that boundary is what lets Sideport stay MIT-licensed.
+Huge thanks to:
+
+**The sideloading ecosystem that defined this category**
+- [**AltStore / AltServer / AltSign**](https://altstore.io) by Riley Testut — the
+  original free-developer-account sideloading tools this project automates a
+  headless equivalent of.
+- [**AltServer-Linux**](https://github.com/NyaMisty/AltServer-Linux) by NyaMisty
+  — proved the flow runs without a Mac.
+- [**pypush**](https://github.com/JJTech0130/pypush) by JJTech0130 — the clearest
+  open documentation of Apple's GrandSlam (GSA) authentication, used as the
+  protocol spec for the clean-room login implementation.
+
+**Bundled helpers (run alongside Sideport)**
+- [**anisette-v3-server**](https://github.com/Dadoum/anisette-v3-server) by Dadoum
+  — supplies the Apple device-identity (ADI) headers every Apple login needs.
+- [**zsign**](https://github.com/zhlynn/zsign) by zhlynn — the fast iOS code
+  signer, baked into the image as the signing backend.
+
+**Libraries Sideport builds on**
+- [**Netimobiledevice**](https://github.com/artehe/Netimobiledevice) (MIT) — pure
+  .NET device communication (usbmux / lockdown / install), replacing the entire
+  native `libimobiledevice` family.
+- [**plist-cil**](https://github.com/claunia/plist-cil) (MIT) — Apple property-list
+  parsing.
+- [**Bouncy Castle**](https://www.bouncycastle.org/) (MIT) — the AES-GCM mode
+  Apple's token blobs require.
+- [**.NET / ASP.NET Core**](https://dotnet.microsoft.com/) by Microsoft (MIT).
+- [**libgsa**](https://github.com/dragoshont/libgsa) (MIT) — used as a
+  byte-for-byte test oracle to verify the managed SRP/GrandSlam crypto.
 
 ---
 
