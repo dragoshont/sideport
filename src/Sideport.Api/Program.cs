@@ -80,7 +80,7 @@ app.MapGet("/", () => Results.Ok(new
 {
     service = "sideport",
     status = "ok",
-    docs = "https://github.com/dragoshont/homelab/blob/main/docs/sideport-implementation-plan.md",
+    docs = "https://github.com/dragoshont/sideport/blob/main/docs/sideport-implementation-plan.md",
 }));
 
 // Liveness: the process is up. Cheap, dependency-free (k8s livenessProbe).

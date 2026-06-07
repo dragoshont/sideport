@@ -555,9 +555,12 @@ Sideport is a clean-room, **MIT-licensed** reimplementation of the
 sideload-and-refresh flow. The Apple login crypto is pure managed .NET (no native
 crypto at run time), and Apple's endpoints were reimplemented from **documented
 behaviour** rather than copied from copyleft (AGPL) projects — which is what keeps
-the whole thing permissively licensed. The full design and build plan live in the
-homelab docs:
-[`sideport-implementation-plan.md`](https://github.com/dragoshont/homelab/blob/main/docs/sideport-implementation-plan.md).
+the whole thing permissively licensed. The full design and build plan live in
+[`docs/`](docs/):
+[`sideport-dotnet-consolidation.md`](docs/sideport-dotnet-consolidation.md) (the
+*what* & *why*) and
+[`sideport-implementation-plan.md`](docs/sideport-implementation-plan.md) (the
+*how* & *in what order*).
 
 ---
 
