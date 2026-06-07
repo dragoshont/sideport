@@ -1,5 +1,6 @@
 using System.Net;
 using Claunia.PropertyList;
+using Sideport.GrandSlam.Crypto;
 
 namespace Sideport.DeveloperApi.Tests.Support;
 
@@ -24,6 +25,12 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
     private GrandSlamSrpServer? _server;
     private TwoFactorMode _twoFactor;
     private byte[]? _clientA;
+
+    // The app-token GCM session key delivered in the SPD (deterministic for tests).
+    private readonly byte[] _appSk = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
+    /// <summary>The app token the apptokens <c>et</c> blob will carry.</summary>
+    public string AppToken { get; init; } = "fake-app-token";
 
     /// <summary>How the server should respond to the first <c>complete</c> round.</summary>
     public enum TwoFactorMode
@@ -106,6 +113,7 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         {
             "init" => Ok(PlistContent(BuildInitResponse(requestDict))),
             "complete" => Ok(PlistContent(BuildCompleteResponse(requestDict))),
+            "apptokens" => Ok(PlistContent(BuildAppTokensResponse())),
             _ => new HttpResponseMessage(HttpStatusCode.BadRequest),
         };
     }
@@ -155,6 +163,10 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         spd.Add("adsid", _adsid);
         spd.Add("GsIdmsToken", _idmsToken);
         spd.Add("acname", _accountName);
+        // The SPD also carries the app-token GCM session key (sk) + a cookie (c),
+        // both as data — the client uses them to fetch the dev-API app token.
+        spd.Add("sk", new NSData(_appSk));
+        spd.Add("c", new NSData("apptoken-cookie"u8.ToArray()));
         // Real GSA returns the SPD as a BARE <dict>…</dict> fragment (no <?xml?>,
         // no DOCTYPE, no <plist> envelope) — verified live. Strip the envelope so
         // the replay oracle exercises the same fragment-parse path the client must
@@ -218,6 +230,39 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         return start >= 0 && end > start
             ? fullPlistXml[start..(end + "</dict>".Length)]
             : fullPlistXml;
+    }
+
+    /// <summary>
+    /// Build the <c>apptokens</c> response: a GCM-encrypted <c>et</c> blob
+    /// (<c>[3B "XYZ"][16B IV][ct][16B tag]</c>) carrying
+    /// <c>{ t: { com.apple.gs.xcode.auth: { token: AppToken } } }</c>, encrypted
+    /// under the SPD session key — the same shape the client decrypts.
+    /// </summary>
+    private NSDictionary BuildAppTokensResponse()
+    {
+        var appEntry = new NSDictionary();
+        appEntry.Add("token", AppToken);
+        var apps = new NSDictionary();
+        apps.Add("com.apple.gs.xcode.auth", appEntry);
+        var tokenPlist = new NSDictionary();
+        tokenPlist.Add("t", apps);
+        byte[] tokenBytes = System.Text.Encoding.UTF8.GetBytes(tokenPlist.ToXmlPropertyList());
+
+        byte[] iv = Enumerable.Range(100, 16).Select(i => (byte)i).ToArray();
+        byte[] aad = "XYZ"u8.ToArray();
+        byte[] tag = new byte[16];
+        byte[] ciphertext = GrandSlamCipher.EncryptGcm(_appSk, iv, tokenBytes, tag, aad);
+
+        byte[] et = new byte[3 + 16 + ciphertext.Length + 16];
+        aad.CopyTo(et, 0);
+        iv.CopyTo(et, 3);
+        ciphertext.CopyTo(et, 3 + 16);
+        tag.CopyTo(et, 3 + 16 + ciphertext.Length);
+
+        var response = new NSDictionary();
+        response.Add("et", new NSData(et));
+        response.Add("Status", Status(ec: 0));
+        return Wrap(response);
     }
 
     private static NSDictionary Status(long ec, string? em = null, string? au = null)

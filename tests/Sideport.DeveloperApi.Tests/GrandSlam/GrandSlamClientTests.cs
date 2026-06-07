@@ -44,7 +44,9 @@ public class GrandSlamClientTests
         var success = Assert.IsType<AppleLoginResult.Success>(result);
         Assert.Equal(Username, success.Session.AppleId);
         Assert.Equal("000123-04-deadbeef", success.Session.Adsid);
-        Assert.Equal("test-idms-token", success.Session.IdmsToken);
+        // IdmsToken now carries the APP-SPECIFIC token fetched after login (the
+        // dev-API X-Apple-GS-Token), not the raw login GsIdmsToken.
+        Assert.Equal("fake-app-token", success.Session.IdmsToken);
         Assert.Equal("Test Person", success.Session.AccountName);
         Assert.Equal(32, success.Session.SessionKey.Length);
     }
@@ -58,8 +60,8 @@ public class GrandSlamClientTests
 
         await client.AuthenticateAsync(Username, Password);
 
-        // init + complete each fetch fresh anisette headers.
-        Assert.Equal(2, anisette.HeaderCalls);
+        // init + complete + the app-tokens round each fetch fresh anisette headers.
+        Assert.Equal(3, anisette.HeaderCalls);
     }
 
     [Fact]

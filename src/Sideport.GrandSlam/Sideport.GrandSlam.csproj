@@ -4,6 +4,12 @@
     <ProjectReference Include="..\Sideport.Core\Sideport.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- BouncyCastle: the GrandSlam app-token GCM blob uses a 16-byte IV, which
+         the BCL AesGcm (12-byte nonce only) cannot decrypt. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

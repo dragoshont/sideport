@@ -140,7 +140,11 @@ internal sealed class GrandSlamClient
 
         var session = new AppleSession(username, adsid, accountName, srp.SessionKey)
         {
-            IdmsToken = idmsToken,
+            // The developer-services endpoints reject the login GsIdmsToken (1100
+            // "session expired"); they need an app-specific token. Fetch it via the
+            // GSA app-tokens flow using the session key + cookie delivered in the
+            // SPD, and carry THAT as the dev-API X-Apple-GS-Token.
+            IdmsToken = await FetchAppTokenAsync(adsid, idmsToken, spd, ct),
         };
         _logger.LogInformation("GrandSlam login for {User} succeeded (adsid {Adsid})",
             Redact(username), Redact(adsid));
@@ -170,6 +174,71 @@ internal sealed class GrandSlamClient
 
         NSDictionary parsed = PlistCodec.ParseDictionary(body);
         ThrowOnError(parsed);
+    }
+
+    // --- app-token fetch (dev-API token) -----------------------------------
+
+    private const string XcodeAuthApp = "com.apple.gs.xcode.auth";
+
+    /// <summary>
+    /// Exchange the login session for an app-specific token usable as the
+    /// developer-services <c>X-Apple-GS-Token</c>. Uses the <c>sk</c> session key
+    /// and <c>c</c> cookie carried in the decrypted SPD.
+    /// </summary>
+    private async Task<string> FetchAppTokenAsync(
+        string adsid, string idmsToken, NSDictionary spd, CancellationToken ct)
+    {
+        byte[] sk = PlistCodec.GetData(spd, "sk");
+        byte[] cookie = PlistCodec.GetData(spd, "c");
+        byte[] checksum = AppTokensChecksum(sk, adsid, XcodeAuthApp);
+
+        NSDictionary response = await SendAsync(new Dictionary<string, object>
+        {
+            ["u"] = adsid,
+            ["app"] = new[] { XcodeAuthApp },
+            ["c"] = cookie,
+            ["t"] = idmsToken,
+            ["checksum"] = checksum,
+            ["o"] = "apptokens",
+        }, ct);
+        ThrowOnError(response);
+
+        byte[] encryptedToken = PlistCodec.GetData(response, "et");
+        byte[] tokenPlistBytes = DecryptAppTokenBlob(sk, encryptedToken);
+        NSDictionary tokenPlist = PlistCodec.ParseDictionary(tokenPlistBytes);
+
+        NSDictionary tokens = PlistCodec.GetDictionary(tokenPlist, "t");
+        NSDictionary appEntry = PlistCodec.GetDictionary(tokens, XcodeAuthApp);
+        return PlistCodec.GetString(appEntry, "token");
+    }
+
+    /// <summary>HMAC-SHA256(sk, "apptokens" || adsid || appId).</summary>
+    private static byte[] AppTokensChecksum(byte[] sk, string adsid, string appId)
+    {
+        byte[] message = System.Text.Encoding.UTF8.GetBytes("apptokens" + adsid + appId);
+        return System.Security.Cryptography.HMACSHA256.HashData(sk, message);
+    }
+
+    /// <summary>
+    /// Decrypt the GrandSlam app-token blob: layout
+    /// <c>[3B "XYZ" AAD][16B IV][ciphertext][16B tag]</c>, AES-256-GCM under the
+    /// session key, with the 3-byte version prefix as the AAD.
+    /// </summary>
+    private static byte[] DecryptAppTokenBlob(byte[] sk, byte[] et)
+    {
+        const int aadLength = 3, ivLength = 16, tagLength = 16;
+        if (et.Length < aadLength + ivLength + tagLength)
+            throw new GrandSlamException("app-token blob is too short");
+
+        ReadOnlySpan<byte> span = et;
+        ReadOnlySpan<byte> aad = span[..aadLength];
+        if (!aad.SequenceEqual("XYZ"u8))
+            throw new GrandSlamException("app-token blob has an unexpected version prefix");
+
+        ReadOnlySpan<byte> iv = span.Slice(aadLength, ivLength);
+        ReadOnlySpan<byte> tag = span[^tagLength..];
+        ReadOnlySpan<byte> ciphertext = span[(aadLength + ivLength)..^tagLength];
+        return GrandSlamCipher.DecryptGcm(sk, iv, ciphertext, tag, aad);
     }
 
     // --- request plumbing --------------------------------------------------

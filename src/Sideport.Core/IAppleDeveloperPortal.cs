@@ -88,9 +88,10 @@ public sealed record AppleSession(
     byte[] SessionKey)
 {
     /// <summary>
-    /// The GrandSlam IDMS token (<c>GsIdmsToken</c>) from the login SPD, used
-    /// together with <see cref="Adsid"/> to build the <c>X-Apple-Identity-Token</c>
-    /// the developer-services endpoints require.
+    /// The GrandSlam token used as <c>X-Apple-GS-Token</c> for the
+    /// developer-services endpoints. This is the APP-SPECIFIC token fetched after
+    /// login (the GSA app-tokens flow), not the raw login <c>GsIdmsToken</c> —
+    /// developer-services rejects the latter ("session expired").
     /// </summary>
     public string IdmsToken { get; init; } = "";
 }

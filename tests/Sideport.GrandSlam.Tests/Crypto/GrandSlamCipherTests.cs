@@ -81,6 +81,23 @@ public class GrandSlamCipherTests
     }
 
     [Fact]
+    public void Gcm_RoundTrips_With16ByteIv()
+    {
+        // The GrandSlam app-token blob uses a 16-byte GCM IV — the BCL AesGcm
+        // (12-byte only) cannot do this; the BouncyCastle backend must.
+        byte[] key = Key();
+        byte[] iv = RandomNumberGenerator.GetBytes(16);
+        byte[] aad = "XYZ"u8.ToArray();
+        byte[] plaintext = RandomNumberGenerator.GetBytes(64);
+        byte[] tag = new byte[16];
+
+        byte[] ciphertext = GrandSlamCipher.EncryptGcm(key, iv, plaintext, tag, aad);
+        byte[] roundTrip = GrandSlamCipher.DecryptGcm(key, iv, ciphertext, tag, aad);
+
+        Assert.Equal(plaintext, roundTrip);
+    }
+
+    [Fact]
     public void Gcm_TamperedTag_ThrowsAuthenticationFailure()
     {
         byte[] key = Key();

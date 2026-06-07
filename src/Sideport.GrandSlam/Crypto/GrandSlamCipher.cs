@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using Org.BouncyCastle.Crypto.Engines;
+using Org.BouncyCastle.Crypto.Modes;
+using Org.BouncyCastle.Crypto.Parameters;
 
 namespace Sideport.GrandSlam.Crypto;
 
@@ -43,9 +46,10 @@ public static class GrandSlamCipher
     }
 
     /// <summary>
-    /// Decrypt and authenticate an AES-256-GCM ciphertext. Throws
-    /// <see cref="AuthenticationTagMismatchException"/> if the tag does not
-    /// verify under <paramref name="key"/>/<paramref name="nonce"/>/<paramref name="associatedData"/>.
+    /// Decrypt and authenticate an AES-256-GCM ciphertext. Supports an
+    /// arbitrary-length IV/nonce (the GrandSlam app-token blob uses a 16-byte
+    /// IV, which the BCL <see cref="AesGcm"/> — 12-byte nonce only — rejects).
+    /// Throws on tag-verification failure.
     /// </summary>
     public static byte[] DecryptGcm(
         ReadOnlySpan<byte> key,
@@ -58,16 +62,34 @@ public static class GrandSlamCipher
         if (tag.Length != GcmTagSize)
             throw new ArgumentException($"GCM tag must be {GcmTagSize} bytes", nameof(tag));
 
-        byte[] plaintext = new byte[ciphertext.Length];
-        using AesGcm aes = new(key, GcmTagSize);
-        aes.Decrypt(nonce, ciphertext, tag, plaintext, associatedData);
-        return plaintext;
+        var cipher = new GcmBlockCipher(new AesEngine());
+        cipher.Init(false, new AeadParameters(
+            new KeyParameter(key.ToArray()), GcmTagSize * 8, nonce.ToArray(), associatedData.ToArray()));
+
+        // BouncyCastle's AEAD consumes the ciphertext with the tag appended.
+        byte[] input = new byte[ciphertext.Length + tag.Length];
+        ciphertext.CopyTo(input);
+        tag.CopyTo(input.AsSpan(ciphertext.Length));
+
+        byte[] output = new byte[cipher.GetOutputSize(input.Length)];
+        int written = cipher.ProcessBytes(input, 0, input.Length, output, 0);
+        try
+        {
+            written += cipher.DoFinal(output, written);
+        }
+        catch (Org.BouncyCastle.Crypto.InvalidCipherTextException ex)
+        {
+            // Preserve the BCL contract: a tag/AAD mismatch surfaces as the
+            // standard authentication-tag exception regardless of the backend.
+            throw new AuthenticationTagMismatchException("GCM authentication failed", ex);
+        }
+        return written == output.Length ? output : output[..written];
     }
 
     /// <summary>
-    /// Encrypt with AES-256-GCM, returning the ciphertext and writing the
-    /// authentication tag into <paramref name="tag"/> (the inverse of
-    /// <see cref="DecryptGcm"/>).
+    /// Encrypt with AES-256-GCM (arbitrary-length IV), returning the ciphertext
+    /// and writing the authentication tag into <paramref name="tag"/> (the
+    /// inverse of <see cref="DecryptGcm"/>).
     /// </summary>
     public static byte[] EncryptGcm(
         ReadOnlySpan<byte> key,
@@ -80,10 +102,18 @@ public static class GrandSlamCipher
         if (tag.Length != GcmTagSize)
             throw new ArgumentException($"GCM tag must be {GcmTagSize} bytes", nameof(tag));
 
-        byte[] ciphertext = new byte[plaintext.Length];
-        using AesGcm aes = new(key, GcmTagSize);
-        aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
-        return ciphertext;
+        var cipher = new GcmBlockCipher(new AesEngine());
+        cipher.Init(true, new AeadParameters(
+            new KeyParameter(key.ToArray()), GcmTagSize * 8, nonce.ToArray(), associatedData.ToArray()));
+
+        byte[] output = new byte[cipher.GetOutputSize(plaintext.Length)];
+        int written = cipher.ProcessBytes(plaintext.ToArray(), 0, plaintext.Length, output, 0);
+        cipher.DoFinal(output, written);
+
+        // output = ciphertext || tag; split the trailing tag out.
+        int ciphertextLength = output.Length - GcmTagSize;
+        output.AsSpan(ciphertextLength, GcmTagSize).CopyTo(tag);
+        return output[..ciphertextLength];
     }
 
     private static void RequireKey(ReadOnlySpan<byte> key)
