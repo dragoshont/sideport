@@ -39,6 +39,29 @@ public class PlistCodecTests
     }
 
     [Fact]
+    public void ParseDictionary_BareDictFragment_Succeeds()
+    {
+        // The EXACT shape of the live GrandSlam SPD login blob (verified against
+        // real Apple): a bare <dict>…</dict> with no <?xml?>, no DOCTYPE, and no
+        // <plist> envelope. The codec must wrap + parse it.
+        byte[] fragment =
+            "<dict><key>isEligibleForKey</key><true/><key>adsid</key><string>000123-04-deadbeef</string><key>GsIdmsToken</key><string>tok</string><key>n</key><integer>8133149</integer></dict>"u8.ToArray();
+
+        NSDictionary parsed = PlistCodec.ParseDictionary(fragment);
+        Assert.Equal("000123-04-deadbeef", PlistCodec.GetString(parsed, "adsid"));
+        Assert.Equal("tok", PlistCodec.GetString(parsed, "GsIdmsToken"));
+        Assert.Equal(8133149, PlistCodec.GetLong(parsed, "n"));
+    }
+
+    [Fact]
+    public void ParseDictionary_BareDictWithLeadingWhitespace_Succeeds()
+    {
+        byte[] fragment = "  \n<dict><key>k</key><string>v</string></dict>"u8.ToArray();
+        NSDictionary parsed = PlistCodec.ParseDictionary(fragment);
+        Assert.Equal("v", PlistCodec.GetString(parsed, "k"));
+    }
+
+    [Fact]
     public void ParseDictionary_Garbage_ThrowsFormatException()
     {
         Assert.Throws<FormatException>(() => PlistCodec.ParseDictionary("not a plist"u8.ToArray()));

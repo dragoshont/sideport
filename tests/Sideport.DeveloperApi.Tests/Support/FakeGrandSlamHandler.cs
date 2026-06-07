@@ -155,7 +155,11 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         spd.Add("adsid", _adsid);
         spd.Add("GsIdmsToken", _idmsToken);
         spd.Add("acname", _accountName);
-        byte[] spdPlain = System.Text.Encoding.UTF8.GetBytes(spd.ToXmlPropertyList());
+        // Real GSA returns the SPD as a BARE <dict>…</dict> fragment (no <?xml?>,
+        // no DOCTYPE, no <plist> envelope) — verified live. Strip the envelope so
+        // the replay oracle exercises the same fragment-parse path the client must
+        // handle against Apple.
+        byte[] spdPlain = System.Text.Encoding.UTF8.GetBytes(ExtractBareDict(spd.ToXmlPropertyList()));
         byte[] spdCipher = _server.EncryptSpd(spdPlain);
 
         var response = new NSDictionary();
@@ -201,6 +205,19 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         var root = new NSDictionary();
         root.Add("Response", inner);
         return root;
+    }
+
+    /// <summary>
+    /// Reduce a full plist document to its bare <c>&lt;dict&gt;…&lt;/dict&gt;</c>
+    /// fragment — the shape real GrandSlam returns for the SPD blob.
+    /// </summary>
+    private static string ExtractBareDict(string fullPlistXml)
+    {
+        int start = fullPlistXml.IndexOf("<dict", StringComparison.Ordinal);
+        int end = fullPlistXml.LastIndexOf("</dict>", StringComparison.Ordinal);
+        return start >= 0 && end > start
+            ? fullPlistXml[start..(end + "</dict>".Length)]
+            : fullPlistXml;
     }
 
     private static NSDictionary Status(long ec, string? em = null, string? au = null)

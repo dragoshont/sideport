@@ -11,8 +11,7 @@ namespace Sideport.DeveloperApi.Plist;
 /// </summary>
 internal static class PlistCodec
 {
-    // The XML prologue Apple omits from some embedded plists (e.g. the decrypted
-    // SPD blob); plist-cil parses bare <plist> too, but we prepend on retry.
+    // The XML prologue Apple omits from the decrypted SPD blob.
     private const string XmlPrologue =
         "<?xml version='1.0' encoding='UTF-8'?>\n" +
         "<!DOCTYPE plist PUBLIC '-//Apple//DTD PLIST 1.0//EN' " +
@@ -30,28 +29,42 @@ internal static class PlistCodec
     /// <exception cref="FormatException">The bytes are not a plist dictionary.</exception>
     public static NSDictionary ParseDictionary(byte[] bytes)
     {
-        NSObject parsed;
+        // 1. Parse as-is: handles binary plists and complete XML plists.
+        if (TryParse(bytes, out NSObject? parsed))
+            return AsDictionary(parsed);
+
+        // 2. The GrandSlam SPD login blob (verified live) is a BARE XML fragment —
+        //    `<dict>…</dict>` with neither the <?xml?>/DOCTYPE prologue nor the
+        //    <plist> envelope. Rebuild a complete document and retry. (A payload
+        //    that already carries <plist> parses on the first attempt above.)
+        string text = System.Text.Encoding.UTF8.GetString(bytes).Trim().TrimStart('\uFEFF').TrimStart();
+        string document = text.Contains("<plist", StringComparison.Ordinal)
+            ? XmlPrologue + text
+            : XmlPrologue + "<plist version=\"1.0\">" + text + "</plist>";
+
+        if (TryParse(System.Text.Encoding.UTF8.GetBytes(document), out NSObject? retried))
+            return AsDictionary(retried);
+
+        throw new FormatException("could not parse plist payload");
+    }
+
+    private static bool TryParse(byte[] bytes, out NSObject? result)
+    {
         try
         {
-            parsed = PropertyListParser.Parse(bytes);
+            result = PropertyListParser.Parse(bytes);
+            return result is not null;
         }
-        catch (Exception ex) when (ex is not FormatException)
+        catch
         {
-            // Retry with the Apple XML prologue prepended (the SPD-blob case).
-            try
-            {
-                byte[] prefixed = Combine(System.Text.Encoding.UTF8.GetBytes(XmlPrologue), bytes);
-                parsed = PropertyListParser.Parse(prefixed);
-            }
-            catch (Exception inner)
-            {
-                throw new FormatException("could not parse plist payload", inner);
-            }
+            result = null;
+            return false;
         }
-
-        return parsed as NSDictionary
-            ?? throw new FormatException($"expected a plist dictionary, got {parsed?.GetType().Name ?? "null"}");
     }
+
+    private static NSDictionary AsDictionary(NSObject? parsed) =>
+        parsed as NSDictionary
+            ?? throw new FormatException($"expected a plist dictionary, got {parsed?.GetType().Name ?? "null"}");
 
     // --- typed reads -------------------------------------------------------
 
@@ -140,13 +153,5 @@ internal static class PlistCodec
         foreach (object item in seq)
             items.Add(Wrap(item));
         return new NSArray([.. items]);
-    }
-
-    private static byte[] Combine(byte[] a, byte[] b)
-    {
-        byte[] result = new byte[a.Length + b.Length];
-        a.CopyTo(result, 0);
-        b.CopyTo(result, a.Length);
-        return result;
     }
 }

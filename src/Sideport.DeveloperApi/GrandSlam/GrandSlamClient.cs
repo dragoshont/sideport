@@ -100,7 +100,25 @@ internal sealed class GrandSlamClient
         var keys = new GrandSlamSessionKeys(srp.SessionKey);
         byte[] spdCipher = PlistCodec.GetData(completeResponse, "spd");
         byte[] spdPlain = GrandSlamCipher.DecryptCbc(keys.ExtraDataKey, keys.ExtraDataIv, spdCipher);
-        NSDictionary spd = PlistCodec.ParseDictionary(spdPlain);
+        NSDictionary spd;
+        try
+        {
+            spd = PlistCodec.ParseDictionary(spdPlain);
+        }
+        catch (FormatException ex)
+        {
+            // Surface enough to diagnose a wire/cipher mismatch without leaking
+            // the SPD contents: lengths + the (non-sensitive) plist framing bytes
+            // at both ends (head shows <?xml/<plist/garbage; tail shows </plist>
+            // vs trailing padding).
+            static string Hex(ReadOnlySpan<byte> b) => Convert.ToHexString(b);
+            int n = spdPlain.Length;
+            string head = Hex(spdPlain.AsSpan(0, Math.Min(24, n)));
+            string tail = n > 24 ? Hex(spdPlain.AsSpan(n - 24)) : "";
+            throw new GrandSlamException(
+                $"SPD did not decrypt to a plist (cipher={spdCipher.Length}B " +
+                $"plain={n}B head={head} tail={tail})", ex);
+        }
 
         string adsid = PlistCodec.GetString(spd, "adsid");
         string idmsToken = PlistCodec.GetString(spd, "GsIdmsToken");
