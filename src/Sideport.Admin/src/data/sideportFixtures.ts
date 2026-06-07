@@ -1,0 +1,370 @@
+import { addDays, subHours } from 'date-fns'
+
+export type SourceKind = 'live' | 'derived' | 'mock' | 'planned'
+export type HealthState = 'healthy' | 'warning' | 'blocked' | 'failed' | 'offline'
+export type ConnectionState = 'usb' | 'wifi' | 'offline'
+export type RenewalRisk = 'blocked' | 'due-now' | 'upcoming' | 'healthy' | 'unknown'
+export type RenewalStatus = 'idle' | 'running' | 'queued' | 'failed' | 'blocked'
+export type Severity = 'info' | 'warning' | 'error' | 'fatal'
+export type IssueStatus = 'unresolved' | 'investigating' | 'resolved' | 'ignored'
+
+export interface SourceTagged<T> {
+  value: T
+  source: SourceKind
+}
+
+export interface SystemStatus {
+  api: { ok: boolean; source: SourceKind }
+  ready: {
+    ready: boolean
+    source: SourceKind
+    checks: {
+      anisette: { ok: boolean; error?: string | null; source: SourceKind }
+      signer: { ok: boolean; path: string; source: SourceKind }
+    }
+  }
+  apiAuth: { configured: boolean; source: SourceKind }
+  scheduler: { enabled: boolean; source: SourceKind }
+  observability: { exporter: string; connected: boolean; source: SourceKind }
+}
+
+export interface DeviceSummary {
+  udid: string
+  name: string
+  productType: string
+  osVersion: string
+  connection: ConnectionState
+  lastSeenAt: SourceTagged<string>
+  health: HealthState
+  teamId: string
+  appSlotsUsed: number
+  nearestExpiryAt?: SourceTagged<string>
+  blocker?: string
+}
+
+export interface RegisteredAppSummary {
+  bundleId: string
+  deviceUdid: string
+  appleId: string
+  teamId: string
+  expiresAt?: SourceTagged<string>
+  timeUntilExpiry?: SourceTagged<string>
+  lastSucceeded?: boolean | null
+  lastError?: string | null
+  displayName: SourceTagged<string>
+  version: SourceTagged<string>
+  iconTone: 'blue' | 'green' | 'amber' | 'red' | 'slate'
+}
+
+export interface RenewalItem {
+  id: string
+  deviceUdid: string
+  bundleId: string
+  teamId: string
+  risk: RenewalRisk
+  status: RenewalStatus
+  expiresAt?: string
+  blocker?: string
+  operationId?: string
+  source: SourceKind
+}
+
+export interface DiagnosticIssue {
+  id: string
+  category: string
+  severity: Severity
+  status: IssueStatus
+  deviceUdid?: string
+  bundleId?: string
+  firstSeenAt: string
+  lastSeenAt: string
+  operationId: string
+  traceId: string
+  spanSummary: Array<{ name: string; durationMs: number; state: 'ok' | 'warning' | 'failed' }>
+  logSnippet: string
+  source: SourceKind
+}
+
+export interface ActivityEvent {
+  id: string
+  at: string
+  actor: string
+  title: string
+  detail: string
+  state: 'ok' | 'warning' | 'failed' | 'info'
+  source: SourceKind
+}
+
+export interface SideportFixtureSet {
+  system: SystemStatus
+  devices: DeviceSummary[]
+  apps: RegisteredAppSummary[]
+  renewals: RenewalItem[]
+  issues: DiagnosticIssue[]
+  activity: ActivityEvent[]
+}
+
+const now = new Date('2026-06-07T21:00:00Z')
+const iso = (date: Date) => date.toISOString()
+
+export const fixtures: SideportFixtureSet = {
+  system: {
+    api: { ok: true, source: 'live' },
+    ready: {
+      ready: true,
+      source: 'live',
+      checks: {
+        anisette: { ok: true, error: null, source: 'live' },
+        signer: { ok: true, path: '/opt/sideport/zsign', source: 'live' },
+      },
+    },
+    apiAuth: { configured: true, source: 'mock' },
+    scheduler: { enabled: false, source: 'mock' },
+    observability: { exporter: 'OTLP -> homelab collector', connected: false, source: 'planned' },
+  },
+  devices: [
+    {
+      udid: '00008140-FAKE-A41390242801C',
+      name: 'Dragos iPhone',
+      productType: 'iPhone17,2',
+      osVersion: '26.5',
+      connection: 'wifi',
+      lastSeenAt: { value: iso(subHours(now, 1)), source: 'mock' },
+      health: 'warning',
+      teamId: 'M62Z4M5EUY',
+      appSlotsUsed: 2,
+      nearestExpiryAt: { value: iso(addDays(now, 2)), source: 'live' },
+      blocker: 'One app expires inside the renewal window.',
+    },
+    {
+      udid: '00008030-FAKE-BB8F23A0C02E',
+      name: 'Lab iPhone SE',
+      productType: 'iPhone12,8',
+      osVersion: '17.7',
+      connection: 'usb',
+      lastSeenAt: { value: iso(now), source: 'mock' },
+      health: 'healthy',
+      teamId: 'M62Z4M5EUY',
+      appSlotsUsed: 1,
+      nearestExpiryAt: { value: iso(addDays(now, 5)), source: 'live' },
+    },
+    {
+      udid: '00008120-FAKE-C3A013FDF8AA',
+      name: 'QA iPhone',
+      productType: 'iPhone15,3',
+      osVersion: '18.6',
+      connection: 'offline',
+      lastSeenAt: { value: iso(addDays(now, -3)), source: 'mock' },
+      health: 'offline',
+      teamId: 'M62Z4M5EUY',
+      appSlotsUsed: 3,
+      nearestExpiryAt: { value: iso(addDays(now, -1)), source: 'mock' },
+      blocker: 'Known device, but not currently returned by /api/devices.',
+    },
+  ],
+  apps: [
+    {
+      bundleId: 'ro.hont.certcountdown',
+      deviceUdid: '00008140-FAKE-A41390242801C',
+      appleId: 'd***@example.test',
+      teamId: 'M62Z4M5EUY',
+      expiresAt: { value: iso(addDays(now, 2)), source: 'live' },
+      timeUntilExpiry: { value: '2d 4h', source: 'live' },
+      lastSucceeded: true,
+      lastError: null,
+      displayName: { value: 'Cert Countdown', source: 'mock' },
+      version: { value: '1.1.0', source: 'mock' },
+      iconTone: 'blue',
+    },
+    {
+      bundleId: 'ro.hont.diceroll',
+      deviceUdid: '00008140-FAKE-A41390242801C',
+      appleId: 'd***@example.test',
+      teamId: 'M62Z4M5EUY',
+      expiresAt: { value: iso(addDays(now, 6)), source: 'live' },
+      timeUntilExpiry: { value: '6d 1h', source: 'live' },
+      lastSucceeded: false,
+      lastError: 'Install failed: device became unreachable during installation.',
+      displayName: { value: 'Dice Roll', source: 'mock' },
+      version: { value: '1.0.3', source: 'mock' },
+      iconTone: 'amber',
+    },
+    {
+      bundleId: 'ro.hont.sigprobe',
+      deviceUdid: '00008030-FAKE-BB8F23A0C02E',
+      appleId: 'd***@example.test',
+      teamId: 'M62Z4M5EUY',
+      expiresAt: { value: iso(addDays(now, 5)), source: 'live' },
+      timeUntilExpiry: { value: '5d 8h', source: 'live' },
+      lastSucceeded: true,
+      lastError: null,
+      displayName: { value: 'Signature Probe', source: 'mock' },
+      version: { value: '0.4.0', source: 'mock' },
+      iconTone: 'green',
+    },
+    {
+      bundleId: 'ro.hont.wristlab',
+      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      appleId: 'd***@example.test',
+      teamId: 'M62Z4M5EUY',
+      expiresAt: { value: iso(addDays(now, -1)), source: 'mock' },
+      timeUntilExpiry: { value: 'expired', source: 'mock' },
+      lastSucceeded: false,
+      lastError: 'Invalid signature / Code=85 observed on launch.',
+      displayName: { value: 'Wrist Lab', source: 'mock' },
+      version: { value: '0.9.2', source: 'mock' },
+      iconTone: 'red',
+    },
+  ],
+  renewals: [
+    {
+      id: '00008140-FAKE-A41390242801C:ro.hont.certcountdown',
+      deviceUdid: '00008140-FAKE-A41390242801C',
+      bundleId: 'ro.hont.certcountdown',
+      teamId: 'M62Z4M5EUY',
+      risk: 'due-now',
+      status: 'running',
+      expiresAt: iso(addDays(now, 2)),
+      operationId: 'op_refresh_01JZ6Y_FAKE',
+      source: 'mock',
+    },
+    {
+      id: '00008140-FAKE-A41390242801C:ro.hont.diceroll',
+      deviceUdid: '00008140-FAKE-A41390242801C',
+      bundleId: 'ro.hont.diceroll',
+      teamId: 'M62Z4M5EUY',
+      risk: 'upcoming',
+      status: 'queued',
+      expiresAt: iso(addDays(now, 6)),
+      blocker: 'Waiting for current single-flight signing operation.',
+      operationId: 'op_refresh_01JZ6Z_FAKE',
+      source: 'mock',
+    },
+    {
+      id: '00008120-FAKE-C3A013FDF8AA:ro.hont.wristlab',
+      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      bundleId: 'ro.hont.wristlab',
+      teamId: 'M62Z4M5EUY',
+      risk: 'blocked',
+      status: 'blocked',
+      expiresAt: iso(addDays(now, -1)),
+      blocker: 'Device is offline; last known reachable state is fixture-only.',
+      source: 'mock',
+    },
+  ],
+  issues: [
+    {
+      id: 'issue-install-unreachable',
+      category: 'Install failed',
+      severity: 'error',
+      status: 'unresolved',
+      deviceUdid: '00008140-FAKE-A41390242801C',
+      bundleId: 'ro.hont.diceroll',
+      firstSeenAt: iso(subHours(now, 6)),
+      lastSeenAt: iso(subHours(now, 2)),
+      operationId: 'op_refresh_01JZ6Z_FAKE',
+      traceId: 'trace-0f4c9b0d8a7e4f40b8c1d6abfake',
+      spanSummary: [
+        { name: 'sideport.auth.grandslam', durationMs: 820, state: 'ok' },
+        { name: 'sideport.signer.process', durationMs: 1420, state: 'ok' },
+        { name: 'sideport.device.install', durationMs: 21300, state: 'failed' },
+      ],
+      logSnippet: 'Install failed: device became unreachable during installation. UDID redacted in UI logs.',
+      source: 'mock',
+    },
+    {
+      id: 'issue-anisette-unprovisioned',
+      category: 'Anisette unavailable',
+      severity: 'warning',
+      status: 'investigating',
+      firstSeenAt: iso(addDays(now, -1)),
+      lastSeenAt: iso(subHours(now, 8)),
+      operationId: 'op_readyz_01JZ5A_FAKE',
+      traceId: 'trace-a221b7cf5f84464a9e17c0d8fake',
+      spanSummary: [
+        { name: 'sideport.anisette.headers', durationMs: 5000, state: 'failed' },
+      ],
+      logSnippet: 'ADI provider returned not provisioned. Use the trusted host anisette or seed ADI volume.',
+      source: 'mock',
+    },
+    {
+      id: 'issue-invalid-signature',
+      category: 'Invalid signature / Code=85',
+      severity: 'fatal',
+      status: 'resolved',
+      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      bundleId: 'ro.hont.wristlab',
+      firstSeenAt: iso(addDays(now, -4)),
+      lastSeenAt: iso(addDays(now, -3)),
+      operationId: 'op_launch_01JZ22_FAKE',
+      traceId: 'trace-fb711ac142104b0eba26fafeedfake',
+      spanSummary: [
+        { name: 'sideport.device.launch-check', durationMs: 460, state: 'failed' },
+      ],
+      logSnippet: 'Launch check reported Code=85. Resolved by zsign SHA256-only signing path.',
+      source: 'mock',
+    },
+  ],
+  activity: [
+    {
+      id: 'evt-ready',
+      at: iso(subHours(now, 1)),
+      actor: 'system',
+      title: 'Readiness checked',
+      detail: 'Anisette and signer checks passed.',
+      state: 'ok',
+      source: 'live',
+    },
+    {
+      id: 'evt-refresh-started',
+      at: iso(subHours(now, 2)),
+      actor: 'operator',
+      title: 'Refresh started',
+      detail: 'Cert Countdown entered the single-flight signer.',
+      state: 'info',
+      source: 'mock',
+    },
+    {
+      id: 'evt-install-failed',
+      at: iso(subHours(now, 3)),
+      actor: 'system',
+      title: 'Install failed',
+      detail: 'Dice Roll lost device connectivity during installation.',
+      state: 'failed',
+      source: 'live',
+    },
+    {
+      id: 'evt-2fa',
+      at: iso(addDays(now, -1)),
+      actor: 'system',
+      title: '2FA required',
+      detail: 'GrandSlam trusted-device flow blocked unattended login.',
+      state: 'warning',
+      source: 'mock',
+    },
+  ],
+}
+
+export const emptyFixtures: SideportFixtureSet = {
+  ...fixtures,
+  devices: [],
+  apps: [],
+  renewals: [],
+  issues: [],
+  activity: [],
+}
+
+export const blockedFixtures: SideportFixtureSet = {
+  ...fixtures,
+  system: {
+    ...fixtures.system,
+    ready: {
+      ...fixtures.system.ready,
+      ready: false,
+      checks: {
+        anisette: { ok: false, error: 'ContainerAnisetteProviderException', source: 'live' },
+        signer: fixtures.system.ready.checks.signer,
+      },
+    },
+  },
+}
