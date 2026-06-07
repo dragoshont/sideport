@@ -1,4 +1,5 @@
 using Claunia.PropertyList;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sideport.Core;
 using Sideport.DeveloperApi;
@@ -33,6 +34,11 @@ Console.WriteLine($"   anisette : {anisetteUrl}");
 
 var options = new GrandSlamClientOptions { DeviceId = deviceIdFallback };
 
+// Console logging at Debug so the dev-api error responses surface.
+using ILoggerFactory loggerFactory = LoggerFactory.Create(b => b
+    .SetMinimumLevel(LogLevel.Debug)
+    .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }));
+
 // Anisette provider (flat v1 GET / — the trusted, provisioned path).
 var anisetteHttp = new HttpClient { BaseAddress = new Uri(anisetteUrl) };
 var anisette = new ContainerAnisetteProvider(anisetteHttp);
@@ -47,11 +53,11 @@ var gsaHttp = new HttpClient(new HttpClientHandler
 {
     ServerCertificateCustomValidationCallback = (_, cert, chain, _) => AppleCaPinning.Validate(cert, chain),
 });
-var grandSlam = new GrandSlamClient(gsaHttp, anisette, options, NullLogger<GrandSlamClient>.Instance);
+var grandSlam = new GrandSlamClient(gsaHttp, anisette, options, loggerFactory.CreateLogger<GrandSlamClient>());
 
 // developerservices2 client (normal public-trust TLS).
 var devHttp = new HttpClient();
-var dev = new DeveloperServicesClient(devHttp, anisette, options, NullLogger<DeveloperServicesClient>.Instance);
+var dev = new DeveloperServicesClient(devHttp, anisette, options, loggerFactory.CreateLogger<DeveloperServicesClient>());
 
 // ── 1. Authenticate ──────────────────────────────────────────────────────────
 Console.WriteLine("\n[1] GrandSlam authenticate…");
@@ -64,6 +70,7 @@ if (login is AppleLoginResult.TwoFactorRequired twoFactor)
 }
 var session = ((AppleLoginResult.Success)login).Session;
 Console.WriteLine($"    OK — adsid {Redact(session.Adsid)}, account '{session.AccountName}', idms {(string.IsNullOrEmpty(session.IdmsToken) ? "MISSING" : "present")}");
+Console.WriteLine($"    app-token: len={session.IdmsToken.Length} prefix='{Sanitize(session.IdmsToken)}'");
 
 // ── 2. listTeams (read) ──────────────────────────────────────────────────────
 Console.WriteLine("\n[2] listTeams…");
@@ -120,3 +127,9 @@ static string Env(string name) =>
 
 static string Redact(string value) =>
     string.IsNullOrEmpty(value) || value.Length <= 4 ? "***" : value[..4] + "***";
+
+// Show enough of a token to compare shape/encoding without leaking it whole.
+static string Sanitize(string value) =>
+    string.IsNullOrEmpty(value) ? "(empty)"
+    : value.Length <= 16 ? value[..2] + "…" + value[^2..]
+    : value[..8] + "…" + value[^6..];

@@ -209,6 +209,10 @@ internal sealed class GrandSlamClient
 
         NSDictionary tokens = PlistCodec.GetDictionary(tokenPlist, "t");
         NSDictionary appEntry = PlistCodec.GetDictionary(tokens, XcodeAuthApp);
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug(
+                "GrandSlam app-token minted for {App} (fields [{Fields}])",
+                XcodeAuthApp, string.Join(",", appEntry.Keys));
         return PlistCodec.GetString(appEntry, "token");
     }
 

@@ -84,6 +84,10 @@ internal sealed class DeveloperServicesClient
                 $"dev-api {action} HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
 
         NSDictionary parsed = PlistCodec.ParseDictionary(Inflate(raw));
+        long resultCode = parsed.ContainsKey("resultCode") && parsed["resultCode"] is NSNumber rc
+            ? rc.ToLong() : 0;
+        if (resultCode != 0)
+            _logger.LogDebug("dev-api {Action} error response:\n{Xml}", action, parsed.ToXmlPropertyList());
         ThrowOnResultError(action, parsed);
         return parsed;
     }

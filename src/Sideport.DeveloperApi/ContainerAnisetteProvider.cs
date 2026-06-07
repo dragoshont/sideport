@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Sideport.Core;
@@ -54,12 +55,26 @@ public sealed class ContainerAnisetteProvider(HttpClient http) : IAnisetteProvid
                 "anisette: GET / returned no X-Apple-I-MD — the ADI is likely not " +
                 "provisioned. Persist + seed the anisette ADI volume (see design §5/S6).");
 
+        // The one-time password is bound to the EXACT instant the anisette minted
+        // it; that instant is reported as X-Apple-I-Client-Time. The developer-
+        // services endpoints validate the OTP against the client-time we send, so
+        // we MUST echo the anisette's value — using the local clock here yields a
+        // "session expired" (1100) even though the OTP is fresh. Fall back to the
+        // local clock only when the server omits it.
+        string clientTimeRaw = Read("X-Apple-I-Client-Time");
+        DateTimeOffset clientTime = DateTimeOffset.TryParse(
+            clientTimeRaw, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out DateTimeOffset parsed)
+            ? parsed
+            : DateTimeOffset.UtcNow;
+
         return new AnisetteHeaders(
             MachineId: Read("X-Apple-I-MD-M"),
             OneTimePassword: oneTimePassword,
             RoutingInfo: Read("X-Apple-I-MD-RINFO"),
             LocalUserId: Read("X-Apple-I-MD-LU"),
-            ClientTime: DateTimeOffset.UtcNow,
+            ClientTime: clientTime,
             DeviceId: Read("X-Mme-Device-Id", "X-MMe-Device-Id"),
             ClientInfo: Read("X-MMe-Client-Info", "X-Mme-Client-Info"));
     }

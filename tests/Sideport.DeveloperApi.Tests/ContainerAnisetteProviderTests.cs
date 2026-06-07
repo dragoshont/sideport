@@ -55,6 +55,22 @@ public class ContainerAnisetteProviderTests
     }
 
     [Fact]
+    public async Task GetHeaders_ClientTime_IsTakenFromAnisetteNotLocalClock()
+    {
+        // The OTP is bound to the instant the anisette minted it (reported as
+        // X-Apple-I-Client-Time); the dev-services endpoints validate the OTP
+        // against the client-time we send, so it must echo the anisette value —
+        // not the local clock.
+        const string root = """
+        { "X-Apple-I-MD": "md", "X-Apple-I-Client-Time": "2026-06-07T09:34:27Z" }
+        """;
+        AnisetteHeaders headers = await Build(root).GetHeadersAsync();
+        Assert.Equal(
+            new DateTimeOffset(2026, 6, 7, 9, 34, 27, TimeSpan.Zero),
+            headers.ClientTime);
+    }
+
+    [Fact]
     public async Task GetHeaders_NoOneTimePassword_ThrowsProvisioningHint()
     {
         // Mirrors the "not provisioned (-45061)" failure: a healthy server reachable
