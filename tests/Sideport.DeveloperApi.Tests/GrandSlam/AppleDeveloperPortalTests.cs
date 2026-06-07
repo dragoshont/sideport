@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Sideport.Core;
+using Sideport.DeveloperApi.DeveloperServices;
 using Sideport.DeveloperApi.GrandSlam;
 using Sideport.DeveloperApi.Tests.Support;
 using Sideport.GrandSlam;
@@ -23,12 +24,19 @@ public class AppleDeveloperPortalTests
     {
         byte[] passwordKey = GrandSlamCrypto.DerivePasswordKey(Password, Salt, Iterations);
         var handler = new FakeGrandSlamHandler(Username, passwordKey, Salt, Iterations, twoFactor);
+        var anisette = new StubAnisetteProvider();
+        var options = new GrandSlamClientOptions { DeviceId = "portal-device-uuid" };
         var grandSlam = new GrandSlamClient(
             new HttpClient(handler),
-            new StubAnisetteProvider(),
-            new GrandSlamClientOptions { DeviceId = "portal-device-uuid" },
+            anisette,
+            options,
             NullLogger<GrandSlamClient>.Instance);
-        var portal = new AppleDeveloperPortal(grandSlam);
+        var dev = new DeveloperServicesClient(
+            new HttpClient(new FakeDeveloperServicesHandler()),
+            anisette,
+            options,
+            NullLogger<DeveloperServicesClient>.Instance);
+        var portal = new AppleDeveloperPortal(grandSlam, dev);
         return (portal, handler);
     }
 
@@ -61,11 +69,13 @@ public class AppleDeveloperPortalTests
     }
 
     [Fact]
-    public async Task ResourceMethods_NotYetImplemented_ThrowUntilP4()
+    public async Task ResourceMethods_RunOverDeveloperServices()
     {
         (IAppleDeveloperPortal portal, _) = Build();
-        var session = new AppleSession(Username, "adsid", "name", new byte[32]);
+        var session = new AppleSession(Username, "adsid", "name", new byte[32]) { IdmsToken = "idms" };
 
-        await Assert.ThrowsAsync<NotImplementedException>(() => portal.ListTeamsAsync(session));
+        IReadOnlyList<AppleTeam> teams = await portal.ListTeamsAsync(session);
+
+        Assert.NotEmpty(teams);
     }
 }

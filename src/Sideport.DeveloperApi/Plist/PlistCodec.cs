@@ -71,6 +71,17 @@ internal static class PlistCodec
             ? nested
             : throw new FormatException($"plist key '{key}' is not a dictionary");
 
+    public static IReadOnlyList<NSObject> GetArray(NSDictionary dict, string key) =>
+        dict.ContainsKey(key) && dict[key] is NSArray array
+            ? [.. array]
+            : throw new FormatException($"plist key '{key}' is not an array");
+
+    /// <summary>Read an array, returning empty when the key is absent or null.</summary>
+    public static IReadOnlyList<NSObject> GetArrayOrEmpty(NSDictionary dict, string key) =>
+        dict.ContainsKey(key) && dict[key] is NSArray array
+            ? [.. array]
+            : [];
+
     public static string GetString(NSDictionary dict, string key) =>
         dict.ContainsKey(key)
             ? dict[key].ToString()!

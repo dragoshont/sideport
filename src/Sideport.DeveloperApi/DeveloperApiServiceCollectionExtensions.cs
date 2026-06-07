@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Sideport.Core;
+using Sideport.DeveloperApi.DeveloperServices;
 using Sideport.DeveloperApi.GrandSlam;
 
 namespace Sideport.DeveloperApi;
@@ -27,9 +28,14 @@ public static class DeveloperApiServiceCollectionExtensions
     /// </param>
     public static IServiceCollection AddAppleDeveloperPortal(
         this IServiceCollection services, Uri anisetteBaseUrl, string deviceId,
-        bool allowInsecureTls = false)
+        bool allowInsecureTls = false, string? signingWorkDirectory = null)
     {
         services.AddSingleton(new GrandSlamClientOptions { DeviceId = deviceId });
+
+        var signingOptions = new PortalSigningOptions();
+        if (!string.IsNullOrEmpty(signingWorkDirectory))
+            signingOptions.WorkDirectory = signingWorkDirectory;
+        services.AddSingleton(signingOptions);
 
         services.AddHttpClient<IAnisetteProvider, ContainerAnisetteProvider>(
             c => c.BaseAddress = anisetteBaseUrl);
@@ -57,8 +63,25 @@ public static class DeveloperApiServiceCollectionExtensions
                 return handler;
             });
 
+        // developerservices2.apple.com is served from a PUBLICLY trusted cert
+        // (unlike GSA's private CA), so the developer-services client validates
+        // the chain normally. The insecure opt-out remains for proxy debugging.
+        services.AddHttpClient<DeveloperServicesClient>()
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                var handler = new HttpClientHandler();
+                if (allowInsecureTls)
+                {
+                    handler.ServerCertificateCustomValidationCallback =
+                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+                }
+                return handler;
+            });
+
         services.AddSingleton<IAppleDeveloperPortal>(sp =>
-            new AppleDeveloperPortal(sp.GetRequiredService<GrandSlamClient>()));
+            new AppleDeveloperPortal(
+                sp.GetRequiredService<GrandSlamClient>(),
+                sp.GetRequiredService<DeveloperServicesClient>()));
         services.AddSingleton<ISigningIdentityProvider, PortalSigningIdentityProvider>();
         return services;
     }
