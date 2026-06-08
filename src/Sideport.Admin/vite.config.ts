@@ -8,4 +8,13 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  server: {
+    proxy: {
+      '/sideport-api': {
+        target: 'http://127.0.0.1:5173',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sideport-api/, ''),
+      },
+    },
+  },
 })

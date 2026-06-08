@@ -36,6 +36,6 @@ export function compactUdid(udid: string): string {
 export function sourceLabel(source: string): string {
   if (source === 'live') return 'Live API'
   if (source === 'derived') return 'Derived'
-  if (source === 'planned') return 'Planned'
-  return 'Mock'
+  if (source === 'planned') return 'Pending'
+  return 'Demo'
 }

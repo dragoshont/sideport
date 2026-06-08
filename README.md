@@ -11,6 +11,25 @@
 
 ---
 
+## Demo Portal
+
+Want to see the admin console without running Sideport? Open the Storybook demo:
+
+**[https://dragoshont.github.io/sideport/](https://dragoshont.github.io/sideport/)**
+
+The demo is published from the separate `gh-pages` branch and uses sample data
+only. The real portal is built into the Sideport API image and talks to the live
+.NET backend.
+
+<p>
+  <img src="docs/ui/assets/demo-overview.jpg" alt="Sideport demo overview screen" width="640">
+</p>
+<p>
+  <img src="docs/ui/assets/demo-add-app-mobile.jpg" alt="Sideport demo add app mobile screen" width="220">
+</p>
+
+---
+
 ## The story: why this exists
 
 You found an app that is **not** in the App Store — an emulator, a small utility,

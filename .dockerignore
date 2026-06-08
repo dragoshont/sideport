@@ -1,6 +1,11 @@
 **/bin/
 **/obj/
 **/out/
+**/node_modules/
+**/dist/
+**/storybook-static/
+**/test-results/
+**/playwright-report/
 .git/
 .github/
 .vs/

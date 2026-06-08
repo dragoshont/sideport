@@ -1,108 +1,26 @@
 import { addDays, subHours } from 'date-fns'
+import type { SideportReadModel } from './sideportTypes'
 
-export type SourceKind = 'live' | 'derived' | 'mock' | 'planned'
-export type HealthState = 'healthy' | 'warning' | 'blocked' | 'failed' | 'offline'
-export type ConnectionState = 'usb' | 'wifi' | 'offline'
-export type RenewalRisk = 'blocked' | 'due-now' | 'upcoming' | 'healthy' | 'unknown'
-export type RenewalStatus = 'idle' | 'running' | 'queued' | 'failed' | 'blocked'
-export type Severity = 'info' | 'warning' | 'error' | 'fatal'
-export type IssueStatus = 'unresolved' | 'investigating' | 'resolved' | 'ignored'
+export type {
+  ActivityEvent,
+  ConnectionState,
+  DeviceSummary,
+  DiagnosticIssue,
+  HealthState,
+  IssueStatus,
+  OperationLogEntry,
+  RegisteredAppSummary,
+  RenewalItem,
+  RenewalRisk,
+  RenewalStatus,
+  Severity,
+  SideportReadModel,
+  SourceKind,
+  SourceTagged,
+  SystemStatus,
+} from './sideportTypes'
 
-export interface SourceTagged<T> {
-  value: T
-  source: SourceKind
-}
-
-export interface SystemStatus {
-  api: { ok: boolean; source: SourceKind }
-  ready: {
-    ready: boolean
-    source: SourceKind
-    checks: {
-      anisette: { ok: boolean; error?: string | null; source: SourceKind }
-      signer: { ok: boolean; path: string; source: SourceKind }
-    }
-  }
-  apiAuth: { configured: boolean; source: SourceKind }
-  scheduler: { enabled: boolean; source: SourceKind }
-  observability: { exporter: string; connected: boolean; source: SourceKind }
-}
-
-export interface DeviceSummary {
-  udid: string
-  name: string
-  productType: string
-  osVersion: string
-  connection: ConnectionState
-  lastSeenAt: SourceTagged<string>
-  health: HealthState
-  teamId: string
-  appSlotsUsed: number
-  nearestExpiryAt?: SourceTagged<string>
-  blocker?: string
-}
-
-export interface RegisteredAppSummary {
-  bundleId: string
-  deviceUdid: string
-  appleId: string
-  teamId: string
-  expiresAt?: SourceTagged<string>
-  timeUntilExpiry?: SourceTagged<string>
-  lastSucceeded?: boolean | null
-  lastError?: string | null
-  displayName: SourceTagged<string>
-  version: SourceTagged<string>
-  iconTone: 'blue' | 'green' | 'amber' | 'red' | 'slate'
-}
-
-export interface RenewalItem {
-  id: string
-  deviceUdid: string
-  bundleId: string
-  teamId: string
-  risk: RenewalRisk
-  status: RenewalStatus
-  expiresAt?: string
-  blocker?: string
-  operationId?: string
-  source: SourceKind
-}
-
-export interface DiagnosticIssue {
-  id: string
-  category: string
-  severity: Severity
-  status: IssueStatus
-  deviceUdid?: string
-  bundleId?: string
-  firstSeenAt: string
-  lastSeenAt: string
-  operationId: string
-  traceId: string
-  spanSummary: Array<{ name: string; durationMs: number; state: 'ok' | 'warning' | 'failed' }>
-  logSnippet: string
-  source: SourceKind
-}
-
-export interface ActivityEvent {
-  id: string
-  at: string
-  actor: string
-  title: string
-  detail: string
-  state: 'ok' | 'warning' | 'failed' | 'info'
-  source: SourceKind
-}
-
-export interface SideportFixtureSet {
-  system: SystemStatus
-  devices: DeviceSummary[]
-  apps: RegisteredAppSummary[]
-  renewals: RenewalItem[]
-  issues: DiagnosticIssue[]
-  activity: ActivityEvent[]
-}
+export type SideportFixtureSet = SideportReadModel
 
 const now = new Date('2026-06-07T21:00:00Z')
 const iso = (date: Date) => date.toISOString()
@@ -118,8 +36,8 @@ export const fixtures: SideportFixtureSet = {
         signer: { ok: true, path: '/opt/sideport/zsign', source: 'live' },
       },
     },
-    apiAuth: { configured: true, source: 'mock' },
-    scheduler: { enabled: false, source: 'mock' },
+    apiAuth: { configured: true, source: 'demo' },
+    scheduler: { enabled: false, source: 'demo' },
     observability: { exporter: 'OTLP -> homelab collector', connected: false, source: 'planned' },
   },
   devices: [
@@ -129,7 +47,7 @@ export const fixtures: SideportFixtureSet = {
       productType: 'iPhone17,2',
       osVersion: '26.5',
       connection: 'wifi',
-      lastSeenAt: { value: iso(subHours(now, 1)), source: 'mock' },
+      lastSeenAt: { value: iso(subHours(now, 1)), source: 'demo' },
       health: 'warning',
       teamId: 'M62Z4M5EUY',
       appSlotsUsed: 2,
@@ -142,7 +60,7 @@ export const fixtures: SideportFixtureSet = {
       productType: 'iPhone12,8',
       osVersion: '17.7',
       connection: 'usb',
-      lastSeenAt: { value: iso(now), source: 'mock' },
+      lastSeenAt: { value: iso(now), source: 'demo' },
       health: 'healthy',
       teamId: 'M62Z4M5EUY',
       appSlotsUsed: 1,
@@ -154,11 +72,11 @@ export const fixtures: SideportFixtureSet = {
       productType: 'iPhone15,3',
       osVersion: '18.6',
       connection: 'offline',
-      lastSeenAt: { value: iso(addDays(now, -3)), source: 'mock' },
+      lastSeenAt: { value: iso(addDays(now, -3)), source: 'demo' },
       health: 'offline',
       teamId: 'M62Z4M5EUY',
       appSlotsUsed: 3,
-      nearestExpiryAt: { value: iso(addDays(now, -1)), source: 'mock' },
+      nearestExpiryAt: { value: iso(addDays(now, -1)), source: 'demo' },
       blocker: 'Known device, but not currently returned by /api/devices.',
     },
   ],
@@ -172,8 +90,8 @@ export const fixtures: SideportFixtureSet = {
       timeUntilExpiry: { value: '2d 4h', source: 'live' },
       lastSucceeded: true,
       lastError: null,
-      displayName: { value: 'Cert Countdown', source: 'mock' },
-      version: { value: '1.1.0', source: 'mock' },
+      displayName: { value: 'Cert Countdown', source: 'demo' },
+      version: { value: '1.1.0', source: 'demo' },
       iconTone: 'blue',
     },
     {
@@ -185,8 +103,8 @@ export const fixtures: SideportFixtureSet = {
       timeUntilExpiry: { value: '6d 1h', source: 'live' },
       lastSucceeded: false,
       lastError: 'Install failed: device became unreachable during installation.',
-      displayName: { value: 'Dice Roll', source: 'mock' },
-      version: { value: '1.0.3', source: 'mock' },
+      displayName: { value: 'Dice Roll', source: 'demo' },
+      version: { value: '1.0.3', source: 'demo' },
       iconTone: 'amber',
     },
     {
@@ -198,8 +116,8 @@ export const fixtures: SideportFixtureSet = {
       timeUntilExpiry: { value: '5d 8h', source: 'live' },
       lastSucceeded: true,
       lastError: null,
-      displayName: { value: 'Signature Probe', source: 'mock' },
-      version: { value: '0.4.0', source: 'mock' },
+      displayName: { value: 'Signature Probe', source: 'demo' },
+      version: { value: '0.4.0', source: 'demo' },
       iconTone: 'green',
     },
     {
@@ -207,12 +125,12 @@ export const fixtures: SideportFixtureSet = {
       deviceUdid: '00008120-FAKE-C3A013FDF8AA',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
-      expiresAt: { value: iso(addDays(now, -1)), source: 'mock' },
-      timeUntilExpiry: { value: 'expired', source: 'mock' },
+      expiresAt: { value: iso(addDays(now, -1)), source: 'demo' },
+      timeUntilExpiry: { value: 'expired', source: 'demo' },
       lastSucceeded: false,
       lastError: 'Invalid signature / Code=85 observed on launch.',
-      displayName: { value: 'Wrist Lab', source: 'mock' },
-      version: { value: '0.9.2', source: 'mock' },
+      displayName: { value: 'Wrist Lab', source: 'demo' },
+      version: { value: '0.9.2', source: 'demo' },
       iconTone: 'red',
     },
   ],
@@ -226,7 +144,7 @@ export const fixtures: SideportFixtureSet = {
       status: 'running',
       expiresAt: iso(addDays(now, 2)),
       operationId: 'op_refresh_01JZ6Y_FAKE',
-      source: 'mock',
+      source: 'demo',
     },
     {
       id: '00008140-FAKE-A41390242801C:ro.hont.diceroll',
@@ -238,7 +156,7 @@ export const fixtures: SideportFixtureSet = {
       expiresAt: iso(addDays(now, 6)),
       blocker: 'Waiting for current single-flight signing operation.',
       operationId: 'op_refresh_01JZ6Z_FAKE',
-      source: 'mock',
+      source: 'demo',
     },
     {
       id: '00008120-FAKE-C3A013FDF8AA:ro.hont.wristlab',
@@ -249,7 +167,7 @@ export const fixtures: SideportFixtureSet = {
       status: 'blocked',
       expiresAt: iso(addDays(now, -1)),
       blocker: 'Device is offline; last known reachable state is fixture-only.',
-      source: 'mock',
+      source: 'demo',
     },
   ],
   issues: [
@@ -270,7 +188,7 @@ export const fixtures: SideportFixtureSet = {
         { name: 'sideport.device.install', durationMs: 21300, state: 'failed' },
       ],
       logSnippet: 'Install failed: device became unreachable during installation. UDID redacted in UI logs.',
-      source: 'mock',
+      source: 'demo',
     },
     {
       id: 'issue-anisette-unprovisioned',
@@ -285,7 +203,7 @@ export const fixtures: SideportFixtureSet = {
         { name: 'sideport.anisette.headers', durationMs: 5000, state: 'failed' },
       ],
       logSnippet: 'ADI provider returned not provisioned. Use the trusted host anisette or seed ADI volume.',
-      source: 'mock',
+      source: 'demo',
     },
     {
       id: 'issue-invalid-signature',
@@ -302,7 +220,7 @@ export const fixtures: SideportFixtureSet = {
         { name: 'sideport.device.launch-check', durationMs: 460, state: 'failed' },
       ],
       logSnippet: 'Launch check reported Code=85. Resolved by zsign SHA256-only signing path.',
-      source: 'mock',
+      source: 'demo',
     },
   ],
   activity: [
@@ -322,7 +240,7 @@ export const fixtures: SideportFixtureSet = {
       title: 'Refresh started',
       detail: 'Cert Countdown entered the single-flight signer.',
       state: 'info',
-      source: 'mock',
+      source: 'demo',
     },
     {
       id: 'evt-install-failed',
@@ -340,7 +258,42 @@ export const fixtures: SideportFixtureSet = {
       title: '2FA required',
       detail: 'GrandSlam trusted-device flow blocked unattended login.',
       state: 'warning',
-      source: 'mock',
+      source: 'demo',
+    },
+  ],
+  logs: [
+    {
+      id: 'log-104',
+      at: iso(subHours(now, 1)),
+      level: 'Information',
+      category: 'Sideport.Api.Requests',
+      eventId: 0,
+      message: 'api GET /api/apps -> 200 in 12ms',
+      exceptionType: null,
+      exceptionMessage: null,
+      source: 'demo',
+    },
+    {
+      id: 'log-103',
+      at: iso(subHours(now, 2)),
+      level: 'Warning',
+      category: 'Sideport.Orchestrator.RefreshOrchestrator',
+      eventId: 0,
+      message: 'refresh of ro.hont.diceroll on 00008140-FAKE-A41390242801C failed: install failed: device became unreachable during installation.',
+      exceptionType: null,
+      exceptionMessage: null,
+      source: 'demo',
+    },
+    {
+      id: 'log-102',
+      at: iso(subHours(now, 3)),
+      level: 'Information',
+      category: 'Sideport.DeveloperApi.ProcessSigner',
+      eventId: 0,
+      message: 'signed ro.hont.certcountdown -> /var/lib/sideport/work/00008140/ro.hont.certcountdown.ipa',
+      exceptionType: null,
+      exceptionMessage: null,
+      source: 'demo',
     },
   ],
 }
@@ -352,6 +305,7 @@ export const emptyFixtures: SideportFixtureSet = {
   renewals: [],
   issues: [],
   activity: [],
+  logs: [],
 }
 
 export const blockedFixtures: SideportFixtureSet = {
