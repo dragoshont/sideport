@@ -117,6 +117,37 @@ public class ApiSmokeTests
     }
 
     [Fact]
+    public async Task AnisetteInfo_WhenAnisetteDown_Returns503Json_NotDeveloperException()
+    {
+        using var factory = Factory(anisetteHealthy: false);
+        using HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/api/anisette/info");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task OnboardingStatus_WithTokenConfigured_ReturnsFirstRunSteps()
+    {
+        using var factory = Factory(apiToken: "s3cr3t-token");
+        using HttpClient client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "s3cr3t-token");
+
+        HttpResponseMessage response = await client.GetAsync("/api/onboarding/status");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OnboardingDto>();
+        Assert.NotNull(body);
+        Assert.Contains(body!.steps, step => step.id == "api-auth" && step.state == "complete");
+        Assert.Contains(body.steps, step => step.id == "anisette" && step.state == "complete");
+        Assert.Contains(body.steps, step => step.id == "signer" && step.state == "complete");
+        Assert.Contains(body.steps, step => step.id == "iphone-developer-mode" && step.surface == "iphone");
+        Assert.False(body.firstRunComplete);
+    }
+
+    [Fact]
     public async Task Probes_StayOpen_EvenWhenTokenConfigured()
     {
         using var factory = Factory(apiToken: "s3cr3t-token");
@@ -137,6 +168,8 @@ public class ApiSmokeTests
     }
 
     private sealed record ReadyDto(bool ready);
+    private sealed record OnboardingDto(bool firstRunComplete, IReadOnlyList<OnboardingStepDto> steps);
+    private sealed record OnboardingStepDto(string id, string state, string surface);
 
     private sealed class StubAnisette(bool healthy) : IAnisetteProvider
     {
