@@ -18,7 +18,10 @@ public sealed class FileAppRegistry : IAppRegistry
 
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly ConcurrentDictionary<string, AppRegistration> _apps = new();
+    // Case-insensitive: the API layer compares DeviceUdid/BundleId with
+    // OrdinalIgnoreCase, so the registry must match to avoid casing-only
+    // duplicate registrations and Find/Remove misses on differing route casing.
+    private readonly ConcurrentDictionary<string, AppRegistration> _apps = new(StringComparer.OrdinalIgnoreCase);
 
     public FileAppRegistry(string path)
     {

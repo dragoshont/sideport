@@ -117,45 +117,44 @@ Read it top-to-bottom the first time; jump straight to a section after that.
 
 ### Secret custody for Apple credentials
 
-For an Ubuntu homelab, the recommended model is **SOPS as the bootstrap root** plus a host-side credential source that the browser never sees. The newest Sideport path is **Vaultwarden -> Bitwarden CLI `bw serve` bridge -> Sideport Personal Apple ID connector**. SOPS/age remains the GitOps-safe fallback for injecting runtime env/file secrets.
+For an Ubuntu homelab, the model is **SOPS or Azure Key Vault as the source of
+truth** plus a host-side credential source the browser never sees. The deployed
+path is **Azure Key Vault → External Secrets Operator → Kubernetes Secret →
+Sideport env → Personal Apple ID connector**; SOPS/age remains a supported
+GitOps path (both arrive at the app as the same `SIDEPORT_APPLE_PW_*` env).
 
 Supported custody modes:
 
 | Mode | Use | Status |
 |---|---|---|
-| **Vaultwarden via `bw serve`** | UI-editable Apple password store for the Ubuntu homelab. Sideport reads through a private Bitwarden CLI bridge. | Recommended |
-| **SOPS/age Kubernetes Secret** | Bootstrap/fallback for Ubuntu/Kubernetes. Encrypt Apple ID/password in Git, let Flux/cluster decrypt, inject into Sideport. | Supported |
+| **Azure Key Vault via External Secrets Operator** | UI-editable Apple password store (Azure Portal). ESO syncs it into a native Kubernetes Secret; Sideport reads it as env. | Recommended (cluster) |
+| **SOPS/age Kubernetes Secret** | GitOps alternative for Ubuntu/Kubernetes. Encrypt Apple ID/password in Git, let Flux/cluster decrypt, inject into Sideport. | Supported |
+| **macOS Keychain** | Local Mac development only. `Sideport:Apple:CredentialSource=keychain`. | Local dev |
 | **Host env / local env file** | Quick local development only. | Temporary |
 | **App Store Connect API key** | Paid Developer Program teams only; passwordless JWT probe. | Optional |
 | **Sign in with Apple** | Optional Sideport portal login identity. | Not signing access |
-| **macOS Keychain helper** | Local Mac dev or remote-helper fallback only. | Not the Ubuntu default |
 
 The Personal Apple ID connector expects:
 
 ```text
 SIDEPORT_PERSONAL_APPLE_ID=you@example.com
-SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM=<from SOPS/age secret>
+SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM=<from the Kubernetes Secret (Azure KV/ESO or SOPS)>
 ```
 
 The Apple ID is uppercased and non-alphanumeric characters become `_` in the password variable name.
 
-When using Vaultwarden instead, configure:
+For **local macOS development**, store the password in the login keychain and select the keychain source:
 
 ```text
-Sideport:Apple:CredentialSource=vault
-Sideport:Vault:BaseUrl=http://127.0.0.1:8087
-Sideport:Vault:ItemNameTemplate={appleId}
-Sideport:Vault:ApiKey=<optional bearer for a private bridge>
+Sideport:Apple:CredentialSource=keychain
+# security add-generic-password -s sideport-apple-pw -a you@example.com -w
 ```
-
-The Vaultwarden item can be named after the Apple ID, or its `login.username` can match the Apple ID. The login password becomes the Apple credential.
 
 Open tasks for README/wiki:
 
-- Add a `bw serve` sidecar/private bridge example in front of Vaultwarden.
 - Add a concrete `secret.sops.yaml` fallback example for `SIDEPORT_PERSONAL_APPLE_ID` and `SIDEPORT_APPLE_PW_*`.
-- Add Flux/Kustomize wiring examples for both vault bridge and SOPS fallback.
-- Add a runbook for rotating the Apple password/app-specific credential in Vaultwarden and verifying Sideport.
+- Add the `ExternalSecret` (Azure Key Vault) example and Flux/Kustomize wiring for both the KV and SOPS paths.
+- Add a runbook for rotating the Apple password/app-specific credential (in Key Vault or SOPS) and verifying Sideport.
 - Add a safety note that Sideport must show planned Apple mutations before cert/profile/device changes.
 
 > **Apple's free-account limits** (Apple's rules, not Sideport's): up to **3

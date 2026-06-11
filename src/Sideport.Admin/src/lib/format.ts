@@ -23,7 +23,7 @@ export function timeUntil(value?: string): string {
   if (!value) return 'Unknown'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Unknown'
-  const now = new Date('2026-06-07T21:00:00Z')
+  const now = new Date()
   if (date.getTime() < now.getTime()) return `Expired ${formatDistanceStrict(date, now)} ago`
   return `${formatDistanceStrict(now, date)} left`
 }

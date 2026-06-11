@@ -1,6 +1,6 @@
-namespace Sideport.Orchestrator;
-
 using System.Diagnostics;
+
+namespace Sideport.Orchestrator;
 
 /// <summary>
 /// Options for <see cref="AppleKeychainCredentialProvider"/>.

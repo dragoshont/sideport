@@ -79,9 +79,6 @@ builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, all
 var runScheduler = builder.Configuration.GetValue("Sideport:Scheduler:Enabled", true);
 
 // Credential source for Apple passwords. Default "environment" reads
-// SIDEPORT_APPLE_PW_* (SOPS-injected env) — unchanged behavior. Set
-// "vault" to resolve from Vaultwarden via a `bw serve` REST endpoint, so
-// Credential source for Apple passwords. Default "environment" reads
 // SIDEPORT_APPLE_PW_* — injected from a Kubernetes Secret that is filled either
 // by SOPS or by Azure Key Vault via the External Secrets Operator (the in-cluster
 // path; both look identical to the app). Set "keychain" for LOCAL macOS
