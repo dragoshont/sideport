@@ -53,8 +53,10 @@ export const OverviewHealthy = routeStory('overview', 'Overview - healthy mixed 
 export const FirstRunOnboarding = routeStory('onboarding', 'Onboarding - first run checklist')
 export const DeviceInventory = routeStory('devices', 'Devices - table and mobile cards')
 export const DeviceDetailTwoApps = routeStory('device-detail', 'Device detail - two app slots')
-export const AddAppPreflight = routeStory('add-app', 'Add app - demo registration form')
+export const AppCatalogSeed = routeStory('catalog', 'App catalog - Cert Clock seed')
+export const InstallWizardShell = routeStory('install-app', 'Install wizard shell - save registration')
 export const RenewalsSingleFlight = routeStory('renewals', 'Renewals - running and queued')
+export const AppleAccessProbe = routeStory('apple-access', 'Apple Access - read-only probe')
 export const DiagnosticsTraceLinked = routeStory('diagnostics', 'Diagnostics - trace linked issues')
 export const SettingsSessionAccess = routeStory('settings', 'Settings - session token and checks')
 

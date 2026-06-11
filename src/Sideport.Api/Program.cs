@@ -1,7 +1,10 @@
 using System.Diagnostics;
+using Sideport.Api.AppleAccess;
+using Sideport.Api.Catalog;
 using Sideport.Api.Diagnostics;
 using Sideport.Core;
 using Sideport.DeveloperApi;
+using Sideport.DeveloperApi.Packaging;
 using Sideport.Devices;
 using Sideport.Orchestrator;
 
@@ -20,6 +23,34 @@ var signerOptions = new SignerOptions
     SignerBinaryPath = builder.Configuration["Sideport:Signer:BinaryPath"]
         ?? "/opt/sideport/zsign",
 };
+var stateDirectory = builder.Configuration["Sideport:State:Directory"]
+    ?? Environment.GetEnvironmentVariable("SIDEPORT_STATE_DIR")
+    ?? Path.Combine(Path.GetTempPath(), "sideport");
+var orchestratorOptions = new OrchestratorOptions
+{
+    StateDirectory = stateDirectory,
+    WorkDirectory = builder.Configuration["Sideport:Orchestrator:WorkDirectory"]
+        ?? Path.Combine(stateDirectory, "signed"),
+};
+var certClockSeedPath = builder.Configuration["Sideport:Catalog:SeedCertClockPath"]
+    ?? Environment.GetEnvironmentVariable("SIDEPORT_CERT_CLOCK_IPA")
+    ?? "/var/lib/altserver/ipa/CertCountdown.ipa";
+var appStoreConnectOptions = new AppStoreConnectOptions(
+    builder.Configuration["Sideport:AppStoreConnect:KeyId"]
+        ?? Environment.GetEnvironmentVariable("SIDEPORT_ASC_KEY_ID"),
+    builder.Configuration["Sideport:AppStoreConnect:IssuerId"]
+        ?? Environment.GetEnvironmentVariable("SIDEPORT_ASC_ISSUER_ID"),
+    builder.Configuration["Sideport:AppStoreConnect:PrivateKeyPath"]
+        ?? Environment.GetEnvironmentVariable("SIDEPORT_ASC_KEY_PATH"),
+    builder.Configuration["Sideport:AppStoreConnect:BaseUrl"]
+        ?? "https://api.appstoreconnect.apple.com");
+var credentialSource = builder.Configuration["Sideport:Apple:CredentialSource"]
+    ?? Environment.GetEnvironmentVariable("SIDEPORT_CREDENTIAL_SOURCE")
+    ?? "environment";
+var personalAppleOptions = new PersonalAppleAccessOptions(
+    builder.Configuration["Sideport:Apple:PersonalAppleId"]
+        ?? Environment.GetEnvironmentVariable("SIDEPORT_PERSONAL_APPLE_ID"),
+    credentialSource);
 
 // API bearer token (design §P7 / invariant: the refresh trigger must not be
 // open). When set, every /api/* route requires `Authorization: Bearer <token>`;
@@ -46,7 +77,50 @@ builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, all
 
 // Refresh orchestrator + scheduler (P6): the single-flight re-sign loop.
 var runScheduler = builder.Configuration.GetValue("Sideport:Scheduler:Enabled", true);
-builder.Services.AddRefreshOrchestrator(runScheduler: runScheduler);
+
+// Credential source for Apple passwords. Default "environment" reads
+// SIDEPORT_APPLE_PW_* (SOPS-injected env) — unchanged behavior. Set
+// "vault" to resolve from Vaultwarden via a `bw serve` REST endpoint, so
+// passwords are managed in the vault UI instead of `sops` on the CLI. The
+// browser portal still never collects the password (custody invariant);
+// it only comes from this host-side source. Registered BEFORE
+// AddRefreshOrchestrator so its TryAddSingleton default yields to this.
+if (string.Equals(credentialSource, "vault", StringComparison.OrdinalIgnoreCase))
+{
+    var vaultOptions = new VaultCredentialOptions(
+        BaseUrl: builder.Configuration["Sideport:Vault:BaseUrl"]
+            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_URL")
+            ?? "http://127.0.0.1:8087",
+        ItemNameTemplate: builder.Configuration["Sideport:Vault:ItemNameTemplate"]
+            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_ITEM_TEMPLATE")
+            ?? "{appleId}",
+        ApiKey: builder.Configuration["Sideport:Vault:ApiKey"]
+            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_API_KEY"));
+    builder.Services.AddSingleton(vaultOptions);
+    builder.Services.AddHttpClient("vault-credentials");
+    builder.Services.AddSingleton<IAppleCredentialProvider>(sp => new VaultBackedCredentialProvider(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("vault-credentials"),
+        sp.GetRequiredService<VaultCredentialOptions>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<VaultBackedCredentialProvider>>()));
+}
+
+builder.Services.AddRefreshOrchestrator(orchestratorOptions, runScheduler: runScheduler);
+builder.Services.AddSingleton(new AppCatalogOptions(
+    Path.Combine(stateDirectory, "catalog.json"),
+    [new AppCatalogSeed(
+        "cert-clock",
+        "Cert Clock",
+        certClockSeedPath,
+        "ro.hont.certcountdown",
+        "First signing and expiry-countdown test app.")]));
+builder.Services.AddSingleton<IAppCatalog, FileAppCatalog>();
+builder.Services.AddSingleton(appStoreConnectOptions);
+builder.Services.AddSingleton(personalAppleOptions);
+builder.Services.AddHttpClient("app-store-connect");
+builder.Services.AddSingleton<IAppleAccessProbe>(sp => new AppStoreConnectProbe(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("app-store-connect"),
+    sp.GetRequiredService<AppStoreConnectOptions>()));
+builder.Services.AddSingleton<IPersonalAppleAccess, PersonalAppleAccess>();
 
 var app = builder.Build();
 bool hasAdminBundle = app.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists;
@@ -176,9 +250,63 @@ app.MapGet("/api/anisette/info", async (IAnisetteProvider anisette, Cancellation
 app.MapGet("/api/logs", (OperationLogStore logs, int? limit) =>
     Results.Ok(logs.Read(limit ?? 100)));
 
+app.MapGet("/api/apple-access/status", async (IAppleAccessProbe probe, CancellationToken ct) =>
+    Results.Ok(await probe.ProbeAsync(ct)));
+
+app.MapGet("/api/apple-access/personal/status", async (IPersonalAppleAccess access, CancellationToken ct) =>
+    Results.Ok(await access.StatusAsync(ct)));
+
+app.MapPost("/api/apple-access/personal/sign-in", async (PersonalAppleSignInRequest request, IPersonalAppleAccess access, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await access.SignInAsync(request, ct));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.UnprocessableEntity(new { error = "apple-credential-missing", detail = ex.Message });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["appleId"] = [ex.Message] });
+    }
+});
+
+app.MapPost("/api/apple-access/personal/2fa", async (PersonalAppleCompleteTwoFactorRequest request, IPersonalAppleAccess access, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await access.CompleteTwoFactorAsync(request, ct));
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = "apple-2fa-challenge-not-found", detail = ex.Message });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["twoFactor"] = [ex.Message] });
+    }
+});
+
 // Device plane (design §8 phase 1) — wired to the seam, implementation pending.
 app.MapGet("/api/devices", async (IDeviceController devices, CancellationToken ct) =>
     Results.Ok(await devices.ListDevicesAsync(ct)));
+
+app.MapGet("/api/devices/{udid}/installed-apps", async (string udid, IDeviceController devices, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await devices.ListInstalledAppsAsync(udid, ct));
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            error = "device-installed-apps-unavailable",
+            detail = ex.GetType().Name,
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 // First-run onboarding status: one read-only endpoint that tells the portal
 // whether the safe prerequisites are in place before any sign/install action is
@@ -188,6 +316,7 @@ app.MapGet("/api/onboarding/status", async (
     SignerOptions signer,
     IDeviceController devices,
     IAppRegistry registry,
+    IAppCatalog catalog,
     CancellationToken ct) =>
 {
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -208,6 +337,18 @@ app.MapGet("/api/onboarding/status", async (
     }
 
     IReadOnlyList<AppRegistration> registrations = await registry.ListAsync(ct);
+    IReadOnlyList<CatalogAppDto> catalogApps = Array.Empty<CatalogAppDto>();
+    string? catalogError = null;
+    try
+    {
+        catalogApps = await catalog.ListAsync(ct);
+    }
+    catch (Exception ex)
+    {
+        catalogError = ex.GetType().Name;
+    }
+
+    int readyCatalogApps = catalogApps.Count(app => app.Status == "ready");
     bool apiProtected = !string.IsNullOrEmpty(apiToken);
 
     var steps = new[]
@@ -248,6 +389,15 @@ app.MapGet("/api/onboarding/status", async (
             true,
             null,
             deviceError ?? $"{reachableDevices.Count} reachable device(s)."),
+        new OnboardingStep(
+            "catalog",
+            "Prepare a catalog app",
+            "Inspect at least one server-side IPA before saving a phone registration.",
+            readyCatalogApps > 0 ? "complete" : catalogError is null ? "pending" : "blocked",
+            "portal",
+            true,
+            null,
+            catalogError ?? $"{readyCatalogApps} ready catalog app(s)."),
         new OnboardingStep(
             "iphone-trust-computer",
             "Trust this computer",
@@ -311,6 +461,26 @@ app.MapGet("/api/onboarding/status", async (
 });
 
 // Refresh orchestration (P6).
+app.MapGet("/api/catalog/apps", async (IAppCatalog catalog, CancellationToken ct) =>
+    Results.Ok(await catalog.ListAsync(ct)));
+
+app.MapPost("/api/catalog/apps/inspect", async (CatalogInspectRequest request, IAppCatalog catalog, CancellationToken ct) =>
+{
+    try
+    {
+        CatalogAppDto entry = await catalog.InspectAndStoreAsync(request, ct);
+        return Results.Created($"/api/catalog/apps/{entry.Id}", entry);
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = "ipa-not-found", path = ex.FileName });
+    }
+    catch (Exception ex) when (ex is ArgumentException || ex is FormatException || ex is InvalidDataException)
+    {
+        return Results.UnprocessableEntity(new { error = "ipa-inspection-failed", detail = ex.Message });
+    }
+});
+
 app.MapGet("/api/apps", async (IAppRegistry registry, RefreshOrchestrator orchestrator, CancellationToken ct) =>
 {
     var apps = await registry.ListAsync(ct);
@@ -334,6 +504,48 @@ app.MapGet("/api/apps", async (IAppRegistry registry, RefreshOrchestrator orches
 
 app.MapPost("/api/apps", async (AppRegistration registration, IAppRegistry registry, CancellationToken ct) =>
 {
+    var validationErrors = ValidateRegistration(registration);
+    if (validationErrors.Count > 0)
+        return Results.ValidationProblem(validationErrors);
+
+    if (!File.Exists(registration.InputIpaPath))
+        return Results.UnprocessableEntity(new { error = "ipa-not-found", path = registration.InputIpaPath });
+
+    IpaInfo info;
+    try
+    {
+        info = IpaInspector.Inspect(registration.InputIpaPath);
+    }
+    catch (Exception ex) when (ex is FormatException || ex is InvalidDataException)
+    {
+        return Results.UnprocessableEntity(new { error = "ipa-inspection-failed", detail = ex.Message });
+    }
+
+    if (!string.Equals(info.BundleIdentifier, registration.BundleId, StringComparison.Ordinal))
+    {
+        return Results.UnprocessableEntity(new
+        {
+            error = "bundle-mismatch",
+            requestedBundleId = registration.BundleId,
+            inspectedBundleId = info.BundleIdentifier,
+        });
+    }
+
+    IReadOnlyList<AppRegistration> apps = await registry.ListAsync(ct);
+    bool replacesExisting = apps.Any(app =>
+        string.Equals(app.DeviceUdid, registration.DeviceUdid, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(app.BundleId, registration.BundleId, StringComparison.Ordinal));
+    int deviceRegistrations = apps.Count(app => string.Equals(app.DeviceUdid, registration.DeviceUdid, StringComparison.OrdinalIgnoreCase));
+    if (!replacesExisting && deviceRegistrations >= 3)
+    {
+        return Results.Conflict(new
+        {
+            error = "device-app-slot-limit",
+            detail = "Free Apple developer accounts can keep three sideloaded app registrations per device.",
+            limit = 3,
+        });
+    }
+
     await registry.UpsertAsync(registration, ct);
     return Results.Created($"/api/apps/{registration.DeviceUdid}/{registration.BundleId}", registration);
 });
@@ -372,6 +584,23 @@ static async Task<(bool Ok, string? Error)> CheckAnisetteAsync(IAnisetteProvider
     {
         return (false, ex.GetType().Name);
     }
+}
+
+static Dictionary<string, string[]> ValidateRegistration(AppRegistration registration)
+{
+    var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+    AddRequired(errors, nameof(AppRegistration.BundleId), registration.BundleId);
+    AddRequired(errors, nameof(AppRegistration.DeviceUdid), registration.DeviceUdid);
+    AddRequired(errors, nameof(AppRegistration.AppleId), registration.AppleId);
+    AddRequired(errors, nameof(AppRegistration.TeamId), registration.TeamId);
+    AddRequired(errors, nameof(AppRegistration.InputIpaPath), registration.InputIpaPath);
+    return errors;
+}
+
+static void AddRequired(Dictionary<string, string[]> errors, string field, string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+        errors[field] = ["Required."];
 }
 
 public sealed record OnboardingStatus(

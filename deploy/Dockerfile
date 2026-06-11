@@ -46,10 +46,13 @@ WORKDIR /app
 # UID — the k8s securityContext runs as 1000 — can read/exec them).
 COPY --from=build --chmod=0755 /app ./
 COPY --from=signer --chmod=0755 /usr/local/bin/zsign /opt/sideport/zsign
+RUN mkdir -p /var/lib/sideport/signed && chown -R 1000:1000 /var/lib/sideport
 
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    Sideport__State__Directory=/var/lib/sideport \
+    Sideport__Orchestrator__WorkDirectory=/var/lib/sideport/signed \
     Sideport__Signer__BinaryPath=/opt/sideport/zsign \
     Sideport__Anisette__Url=http://anisette:6969/
 

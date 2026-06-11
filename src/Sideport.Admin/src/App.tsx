@@ -10,8 +10,10 @@ import {
   CircleDashed,
   Gauge,
   HardDrive,
+  KeyRound,
   ListChecks,
   Network,
+  Package,
   Play,
   Plus,
   RefreshCw,
@@ -20,6 +22,7 @@ import {
   ShieldCheck,
   Smartphone,
   Stethoscope,
+  Terminal,
   TimerReset,
   Wifi,
   XCircle,
@@ -34,15 +37,18 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import './App.css'
-import { getStoredSideportApiToken, refreshSideportApp, registerSideportApp, saveSideportApiToken, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload } from './api/sideportApi'
+import { completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, refreshSideportApp, registerSideportApp, saveSideportApiToken, signInPersonalApple, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload } from './api/sideportApi'
 import type { OnboardingStep, OnboardingStepState } from './api/sideportApi'
 import {
   runtimeEmptyData,
   type ActivityEvent,
+  type CatalogAppSummary,
   type DeviceSummary,
   type DiagnosticIssue,
   type HealthState,
+  type InstalledAppSummary,
   type OperationLogEntry,
+  type PersonalAppleSummary,
   type RegisteredAppSummary,
   type RenewalItem,
   type RenewalRisk,
@@ -50,17 +56,20 @@ import {
   type SideportReadModel,
   type SourceKind,
   type SystemStatus,
+  type AppleAccessCapabilitySummary,
+  type AppleAccessSummary,
 } from './data/sideportTypes'
 import { compactUdid, relativeTime, shortDateTime, sourceLabel, timeUntil } from './lib/format'
 
-export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'add-app' | 'renewals' | 'diagnostics' | 'settings'
+export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'apple-access' | 'diagnostics' | 'settings'
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
   { id: 'onboarding', label: 'Onboarding', icon: ListChecks },
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'devices', label: 'Devices', icon: Smartphone },
-  { id: 'add-app', label: 'Add App', icon: Plus },
+  { id: 'catalog', label: 'App Catalog', icon: Package },
   { id: 'renewals', label: 'Renewals', icon: TimerReset },
+  { id: 'apple-access', label: 'Apple Access', icon: KeyRound },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
@@ -106,8 +115,14 @@ const runtimeStatus: AdminDataStatus = {
 export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding', onApiTokenSaved }: SideportAdminAppProps) {
   const viewData = data ?? runtimeEmptyData
   const viewStatus = apiStatus ?? runtimeStatus
+  const catalogApps = viewData.catalogApps
   const [route, setRoute] = useState<RouteId>(initialRoute)
+  const [selectedCatalogAppId, setSelectedCatalogAppId] = useState(catalogApps[0]?.id ?? '')
   const selectedDevice = viewData.devices[0]
+  const openInstallWizard = (catalogAppId = selectedCatalogAppId) => {
+    setSelectedCatalogAppId(catalogAppId || catalogApps[0]?.id || '')
+    setRoute('install-app')
+  }
 
   return (
     <div className="admin-root">
@@ -146,12 +161,14 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
       <div className="workspace">
         <TopBar system={viewData.system} apiStatus={viewStatus} />
         <main className="content-area">
-          {route === 'onboarding' && <OnboardingPage data={viewData} apiStatus={viewStatus} onNavigate={setRoute} />}
+          {route === 'onboarding' && <OnboardingPage data={viewData} apiStatus={viewStatus} onNavigate={setRoute} onInstallFirstApp={() => openInstallWizard(catalogApps[0]?.id)} />}
           {route === 'overview' && <OverviewPage data={viewData} onNavigate={setRoute} />}
           {route === 'devices' && <DevicesPage data={viewData} onOpenDevice={() => setRoute('device-detail')} />}
-          {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} />}
-          {route === 'add-app' && <AddAppPage data={viewData} apiStatus={viewStatus} />}
+          {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} apiStatus={viewStatus} onInstallApp={() => openInstallWizard(catalogApps[0]?.id)} />}
+          {route === 'catalog' && <AppCatalogPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} onInstallApp={openInstallWizard} />}
+          {route === 'install-app' && <InstallWizardPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} initialCatalogAppId={selectedCatalogAppId} onOpenCatalog={() => setRoute('catalog')} />}
           {route === 'renewals' && <RenewalsPage data={viewData} apiStatus={viewStatus} />}
+          {route === 'apple-access' && <AppleAccessPage appleAccess={viewData.appleAccess} personalApple={viewData.personalApple} apiStatus={viewStatus} />}
           {route === 'diagnostics' && <DiagnosticsPage data={viewData} />}
           {route === 'settings' && <SettingsPage system={viewData.system} apiStatus={viewStatus} onApiTokenSaved={onApiTokenSaved} />}
         </main>
@@ -160,15 +177,20 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
   )
 }
 
-export function OnboardingPage({ data, apiStatus, onNavigate }: { data: SideportReadModel; apiStatus: AdminDataStatus; onNavigate?: (route: RouteId) => void }) {
+export function OnboardingPage({ data, apiStatus, onNavigate, onInstallFirstApp }: { data: SideportReadModel; apiStatus: AdminDataStatus; onNavigate?: (route: RouteId) => void; onInstallFirstApp?: () => void }) {
   const onboarding = apiStatus.onboarding
   const steps = onboarding?.steps ?? []
-  const requiredSteps = steps.filter((step) => step.surface === 'portal' && step.required)
   const iphoneSteps = steps.filter((step) => step.surface === 'iphone')
   const completeSteps = steps.filter((step) => step.state === 'complete').length
   const requiredComplete = onboarding?.firstRunComplete ?? false
-  const primaryBlocked = !data.system.ready.ready
+  const readyCatalogApps = data.catalogApps.filter((app) => app.status === 'ready').length
+  const primaryBlocked = !data.system.ready.ready || readyCatalogApps === 0
   const hasApiSnapshot = apiStatus.mode === 'live' || apiStatus.mode === 'partial' || apiStatus.mode === 'demo'
+  const wizardSteps = buildOnboardingWizardSteps(data, apiStatus, iphoneSteps, onNavigate, onInstallFirstApp)
+  const [activeStepId, setActiveStepId] = useState(wizardSteps[0]?.id ?? 'server')
+  const activeIndex = Math.max(0, wizardSteps.findIndex((step) => step.id === activeStepId))
+  const activeStep = wizardSteps[activeIndex] ?? wizardSteps[0]
+  const goStep = (index: number) => setActiveStepId(wizardSteps[Math.min(Math.max(index, 0), wizardSteps.length - 1)]?.id ?? activeStepId)
 
   return (
     <div className="page-stack">
@@ -191,25 +213,43 @@ export function OnboardingPage({ data, apiStatus, onNavigate }: { data: Sideport
           </div>
         </div>
         <div className="hero-actions">
-          <button className="primary-action" disabled={primaryBlocked} onClick={() => onNavigate?.('add-app')} type="button"><Plus size={16} /> Add first app</button>
+          <button className="primary-action" disabled={primaryBlocked} onClick={onInstallFirstApp} type="button"><Plus size={16} /> Register first app</button>
           <button className="ghost-action" onClick={() => onNavigate?.('settings')} type="button">View checks<ChevronRight size={15} /></button>
         </div>
       </section>
 
-      <div className="two-column-layout">
-        <Panel title="Required setup">
-          <OnboardingStepList steps={requiredSteps} />
-        </Panel>
-        <Panel title="On iPhone">
-          <IPhoneSetupList steps={iphoneSteps} />
-        </Panel>
-      </div>
+      {activeStep && (
+        <section className="setup-wizard" aria-label="Focused setup wizard">
+          <aside className="setup-stepper">
+            {wizardSteps.map((step, index) => (
+              <button className={step.id === activeStep.id ? 'setup-step-tab active' : 'setup-step-tab'} key={step.id} onClick={() => setActiveStepId(step.id)} type="button">
+                <span>{index + 1}</span>
+                <div><strong>{step.title}</strong><small>{step.kicker}</small></div>
+                <StatusPill state={step.health} label={step.statusLabel} />
+              </button>
+            ))}
+          </aside>
+          <Panel title={activeStep.title}>
+            <div className="setup-step-panel">
+              <p>{activeStep.description}</p>
+              {activeStep.content}
+              <div className="setup-step-actions">
+                <button className="ghost-action" disabled={activeIndex === 0} onClick={() => goStep(activeIndex - 1)} type="button">Back</button>
+                {activeStep.secondaryAction && <button className="ghost-action" onClick={activeStep.secondaryAction.onClick} type="button">{activeStep.secondaryAction.label}<ChevronRight size={15} /></button>}
+                {activeStep.primaryAction && <button className="primary-action" disabled={activeStep.primaryAction.disabled} onClick={activeStep.primaryAction.onClick} type="button">{activeStep.primaryAction.label}<ChevronRight size={15} /></button>}
+                {!activeStep.primaryAction && <button className="primary-action" disabled={activeIndex === wizardSteps.length - 1} onClick={() => goStep(activeIndex + 1)} type="button">Next<ChevronRight size={15} /></button>}
+              </div>
+            </div>
+          </Panel>
+        </section>
+      )}
 
       <div className="two-column-layout">
         <Panel title="First app registration path">
           <div className="setup-path">
             <FactTile label="Device" value={hasApiSnapshot ? data.devices[0]?.name ?? 'No reachable device' : 'Waiting for API'} source={hasApiSnapshot && data.devices.length ? 'live' : 'planned'} />
-            <FactTile label="App slots" value={hasApiSnapshot && data.devices[0] ? `${data.devices[0].appSlotsUsed}/3 used` : 'Unknown'} source={hasApiSnapshot ? 'derived' : 'planned'} />
+            <FactTile label="Ready catalog apps" value={hasApiSnapshot ? String(readyCatalogApps) : 'Unknown'} source={readyCatalogApps ? 'live' : 'planned'} />
+            <FactTile label="Sideport registrations" value={hasApiSnapshot && data.devices[0] ? `${data.devices[0].appSlotsUsed}/3 used` : 'Unknown'} source={hasApiSnapshot ? 'derived' : 'planned'} />
             <FactTile label="Registered apps" value={hasApiSnapshot ? String(data.apps.length) : 'Unknown'} source={hasApiSnapshot && data.apps.length ? 'live' : 'planned'} />
           </div>
         </Panel>
@@ -217,6 +257,124 @@ export function OnboardingPage({ data, apiStatus, onNavigate }: { data: Sideport
           <SystemChecks system={data.system} />
         </Panel>
       </div>
+    </div>
+  )
+}
+
+interface SetupWizardStep {
+  id: string
+  title: string
+  kicker: string
+  statusLabel: string
+  health: HealthState
+  description: string
+  content: ReactNode
+  primaryAction?: { label: string; onClick: () => void; disabled?: boolean }
+  secondaryAction?: { label: string; onClick: () => void }
+}
+
+function buildOnboardingWizardSteps(
+  data: SideportReadModel,
+  apiStatus: AdminDataStatus,
+  iphoneSteps: OnboardingStep[],
+  onNavigate?: (route: RouteId) => void,
+  onInstallFirstApp?: () => void,
+): SetupWizardStep[] {
+  const readyCatalogApps = data.catalogApps.filter((app) => app.status === 'ready').length
+  const canRegister = apiStatus.canMutate && data.devices.length > 0 && readyCatalogApps > 0
+  const appleAccessConfigured = data.personalApple.state === 'authenticated' || data.personalApple.state === 'two-factor-required' || data.appleAccess.state === 'read-only-verified' || data.appleAccess.state === 'partial'
+
+  return [
+    {
+      id: 'server',
+      title: 'Server readiness',
+      kicker: 'Verified by Sideport',
+      statusLabel: data.system.ready.ready ? 'Ready' : 'Blocked',
+      health: data.system.ready.ready ? 'healthy' : 'blocked',
+      description: 'Start with checks Sideport can verify automatically: API, anisette, signer, API auth, and scheduler posture.',
+      content: <SystemChecks system={data.system} />,
+      secondaryAction: { label: 'Open settings', onClick: () => onNavigate?.('settings') },
+    },
+    {
+      id: 'identity',
+      title: 'Sideport identity',
+      kicker: 'Optional Apple login',
+      statusLabel: 'Optional',
+      health: 'offline',
+      description: 'Sign in with Apple should be an optional Sideport login provider. It can identify the portal user, but it does not grant Developer signing access.',
+      content: (
+        <div className="check-list">
+          <CheckRow label="Reverse proxy or local auth" ok source="planned" detail="Sideport can run without Sign in with Apple." />
+          <CheckRow label="Sign in with Apple" ok={false} source="planned" detail="Optional identity provider. Not required for signing." />
+          <CheckRow label="Developer access" ok={false} source="planned" detail="Handled separately by Personal Apple ID or App Store Connect connector." />
+        </div>
+      ),
+      secondaryAction: { label: 'Open Apple Access', onClick: () => onNavigate?.('apple-access') },
+    },
+    {
+      id: 'apple-access',
+      title: 'Apple signing access',
+      kicker: 'Separate from login',
+      statusLabel: appleAccessConfigured ? 'Probe ready' : 'Planned',
+      health: appleAccessConfigured ? 'warning' : 'offline',
+      description: `For your free Apple ID, Sideport uses the Personal Apple ID connector backed by ${credentialCustodyLabel(data.personalApple.secretCustody)}. Paid-team App Store Connect JWT is optional and currently read-only.`,
+      content: <AppleAccessSetupSummary appleAccess={data.appleAccess} personalApple={data.personalApple} />,
+      secondaryAction: { label: 'Open Apple Access', onClick: () => onNavigate?.('apple-access') },
+    },
+    {
+      id: 'iphone',
+      title: 'iPhone readiness',
+      kicker: 'Live and guided',
+      statusLabel: data.devices.length ? 'Reachable' : 'Waiting',
+      health: data.devices.length ? 'healthy' : 'warning',
+      description: 'Sideport can detect reachable devices. Physical iPhone steps like Developer Mode and profile trust stay guided until a real signal exists.',
+      content: iphoneSteps.length ? <IPhoneSetupList steps={iphoneSteps} /> : <EmptyState icon={Smartphone} title="No iPhone actions yet" detail="Connect and unlock an iPhone, tap Trust This Computer, then retry discovery." />,
+      secondaryAction: { label: 'Open devices', onClick: () => onNavigate?.('devices') },
+    },
+    {
+      id: 'catalog',
+      title: 'Catalog app',
+      kicker: 'Detected from IPA',
+      statusLabel: readyCatalogApps ? 'Ready' : 'Needed',
+      health: readyCatalogApps ? 'healthy' : 'blocked',
+      description: 'The IPA should provide app identity automatically: bundle ID, version, checksum, and profile state. Server-path import works now; upload comes later.',
+      content: data.catalogApps.length ? <CatalogReadinessList apps={data.catalogApps} /> : <EmptyState icon={Package} title="No catalog apps" detail="Inspect a server IPA path in App Catalog before registering it on a phone." />,
+      secondaryAction: { label: 'Open catalog', onClick: () => onNavigate?.('catalog') },
+    },
+    {
+      id: 'registration',
+      title: 'Register first app',
+      kicker: 'Stored registration',
+      statusLabel: data.apps.length ? 'Saved' : 'Next action',
+      health: data.apps.length ? 'healthy' : canRegister ? 'warning' : 'blocked',
+      description: 'This saves Sideport intent for one catalog app on one reachable phone. It does not sign or install until the preflight/operation slice exists.',
+      content: (
+        <div className="setup-path">
+          <FactTile label="Reachable devices" value={String(data.devices.length)} source={data.devices.length ? 'live' : 'planned'} />
+          <FactTile label="Ready catalog apps" value={String(readyCatalogApps)} source={readyCatalogApps ? 'live' : 'planned'} />
+          <FactTile label="Existing registrations" value={String(data.apps.length)} source={data.apps.length ? 'live' : 'planned'} />
+        </div>
+      ),
+      primaryAction: { label: 'Register first app', onClick: () => onInstallFirstApp?.(), disabled: !canRegister },
+      secondaryAction: { label: 'Open catalog', onClick: () => onNavigate?.('catalog') },
+    },
+  ]
+}
+
+function AppleAccessSetupSummary({ appleAccess, personalApple }: { appleAccess: AppleAccessSummary; personalApple: PersonalAppleSummary }) {
+  return (
+    <div className="check-list">
+      <CheckRow label="Optional portal login" ok={false} source="planned" detail="Sign in with Apple can identify the Sideport user, but is not required." />
+      <CheckRow label={`Personal Apple ID via ${credentialCustodyShortLabel(personalApple.secretCustody)}`} ok={personalApple.state === 'authenticated'} source={personalApple.source} detail={personalApple.message} />
+      <CheckRow label="App Store Connect JWT" ok={appleAccess.state === 'read-only-verified'} source={appleAccess.source} detail={appleAccess.message} />
+    </div>
+  )
+}
+
+function CatalogReadinessList({ apps }: { apps: CatalogAppSummary[] }) {
+  return (
+    <div className="check-list">
+      {apps.map((app) => <CheckRow key={app.id} label={app.name} ok={app.status === 'ready'} source={app.source} detail={`${app.expectedBundleId} - ${app.statusLabel}`} />)}
     </div>
   )
 }
@@ -229,7 +387,7 @@ function TopBar({ system, apiStatus }: { system: SystemStatus; apiStatus: AdminD
         <span>Search devices, bundle IDs, blockers</span>
       </div>
       <div className="topbar-actions">
-        <span className={`api-mode ${apiStatus.mode}`}>{apiStatus.mode === 'live' ? 'Live API' : apiStatus.mode === 'partial' ? 'Partial API' : apiStatus.mode === 'demo' ? 'Demo data' : 'API unavailable'}</span>
+        <span className={`api-mode ${apiStatus.mode}`}>{apiModeLabel(apiStatus.mode)}</span>
         <span className="api-base">{apiStatus.baseUrl}</span>
         <StatusPill state={system.ready.ready ? 'healthy' : 'blocked'} label={system.ready.ready ? 'Ready' : 'Not ready'} />
       </div>
@@ -293,7 +451,7 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Devices" title="Device inventory" description="Desktop uses a scan-friendly table. Mobile switches to cards with one clear primary action per device." />
+      <PageHeader eyebrow="Devices" title="Device inventory" description="Reachability comes from /api/devices. App counts and expiry dates come from apps registered in Sideport, not from every app already installed on the phone." />
       <DeviceInventoryTable devices={data.devices} apps={data.apps} onOpenDevice={onOpenDevice} />
       <div className="device-card-list">
         {data.devices.map((device) => <DeviceCard key={device.udid} device={device} apps={appsForDevice(data.apps, device.udid)} onOpen={() => onOpenDevice?.(device)} />)}
@@ -302,11 +460,12 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
   )
 }
 
-export function DeviceDetailPage({ data, device }: { data: SideportReadModel; device?: DeviceSummary }) {
+export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { data: SideportReadModel; device?: DeviceSummary; apiStatus: AdminDataStatus; onInstallApp?: () => void }) {
   if (!device) {
     return <EmptyState icon={Smartphone} title="No selected device" detail="Device detail needs a reachable or known device read model." />
   }
   const apps = appsForDevice(data.apps, device.udid)
+  const installedApps = data.installedApps.filter((app) => app.deviceUdid === device.udid)
   const issues = data.issues.filter((issue) => issue.deviceUdid === device.udid)
 
   return (
@@ -326,11 +485,17 @@ export function DeviceDetailPage({ data, device }: { data: SideportReadModel; de
       <section className="section-grid three">
         <FactTile label="Connection" value={connectionLabel(device.connection)} source="live" />
         <FactTile label="Last seen" value={relativeTime(device.lastSeenAt.value)} source={device.lastSeenAt.source} />
-        <FactTile label="Nearest expiry" value={timeUntil(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
+        <FactTile label="Nearest registered expiry" value={expiryCopy(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
+        <FactTile label="Installed user apps" value={String(device.installedAppCount)} source={installedApps.length ? 'live' : 'planned'} />
+        <FactTile label="Unmanaged installed" value={String(device.unmanagedAppCount)} source={installedApps.length ? 'derived' : 'planned'} />
       </section>
 
-      <Panel title="App slots">
-        <AppSlotGrid apps={apps} />
+      <Panel title="Sideport-registered app slots">
+        <AppSlotGrid apps={apps} canRegister={apiStatus.canMutate} onInstallApp={onInstallApp} />
+      </Panel>
+
+      <Panel title="Installed on phone">
+        {installedApps.length ? <InstalledAppList apps={installedApps} /> : <EmptyState icon={Package} title="Installed app list unavailable" detail="Sideport could not read installation_proxy data for this reachable phone in the current snapshot." />}
       </Panel>
 
       <div className="two-column-layout">
@@ -349,8 +514,84 @@ export function DeviceDetailPage({ data, device }: { data: SideportReadModel; de
   )
 }
 
-export function AddAppPage({ data, apiStatus }: { data: SideportReadModel; apiStatus: AdminDataStatus }) {
+export function AppCatalogPage({ data, apiStatus, catalogApps, onInstallApp }: { data: SideportReadModel; apiStatus: AdminDataStatus; catalogApps: CatalogAppSummary[]; onInstallApp: (catalogAppId: string) => void }) {
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="App Catalog"
+        title="Reusable apps, separate from phone slots"
+        description="Catalog apps are reusable IPA definitions from /api/catalog/apps. Registered installations are /api/apps records that occupy Sideport slots on phones."
+      />
+
+      {catalogApps.length ? (
+        <div className="catalog-grid">
+          {catalogApps.map((catalogApp) => (
+            <CatalogAppCard
+              catalogApp={catalogApp}
+              installationCount={data.apps.filter((app) => app.bundleId === catalogApp.expectedBundleId).length}
+              key={catalogApp.id}
+              onInstall={() => onInstallApp(catalogApp.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon={Package} title="No catalog apps returned" detail="The live runtime only shows apps returned by /api/catalog/apps. Inspect a server IPA path to add one." />
+      )}
+
+      <Panel title="Add a server IPA">
+        <CatalogInspectPanel apiStatus={apiStatus} />
+      </Panel>
+
+      <Panel title="Registered installations">
+        {data.apps.length ? <RegisteredInstallationList apps={data.apps} /> : (
+          <EmptyState
+            icon={Package}
+            title="No Sideport registrations yet"
+            detail="Apps already installed by AltServer or Xcode are not counted here until Sideport has a registration record for them."
+          />
+        )}
+      </Panel>
+
+      <Panel title="How apps get into Sideport">
+        <AppIngestionGuide />
+      </Panel>
+    </div>
+  )
+}
+
+function CatalogInspectPanel({ apiStatus }: { apiStatus: AdminDataStatus }) {
+  const queryClient = useQueryClient()
+  const [ipaPath, setIpaPath] = useState('')
+  const inspectMutation = useMutation({
+    mutationFn: () => inspectCatalogApp({ ipaPath: ipaPath.trim() }),
+    onSuccess: () => {
+      setIpaPath('')
+      queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+    },
+  })
+  const canInspect = apiStatus.canMutate && ipaPath.trim().length > 0 && !inspectMutation.isPending
+
+  return (
+    <div className="inspect-form">
+      <label className="form-field wide-field">
+        <span>Server IPA path</span>
+        <input autoComplete="off" onChange={(event) => setIpaPath(event.currentTarget.value)} placeholder="/var/lib/sideport/ipa/App.ipa" value={ipaPath} />
+      </label>
+      <button className="primary-action" disabled={!canInspect} onClick={() => inspectMutation.mutate()} type="button">
+        <RefreshCw size={16} /> {inspectMutation.isPending ? 'Inspecting...' : 'Inspect IPA'}
+      </button>
+      {!apiStatus.canMutate && <p className="mutation-message">Catalog changes are disabled for this build.</p>}
+      {inspectMutation.isSuccess && <p className="mutation-message success">Catalog app inspected and saved.</p>}
+      {inspectMutation.error && <p className="mutation-message error">{inspectMutation.error.message}</p>}
+    </div>
+  )
+}
+
+export function InstallWizardPage({ data, apiStatus, catalogApps, initialCatalogAppId, onOpenCatalog }: { data: SideportReadModel; apiStatus: AdminDataStatus; catalogApps: CatalogAppSummary[]; initialCatalogAppId: string; onOpenCatalog: () => void }) {
   const firstDevice = data.devices[0]
+  const [catalogAppId, setCatalogAppId] = useState(initialCatalogAppId || catalogApps[0]?.id || '')
+  const selectedCatalogApp = catalogApps.find((app) => app.id === catalogAppId) ?? catalogApps[0]
+  const catalogReady = selectedCatalogApp?.status === 'ready'
   const queryClient = useQueryClient()
   const [form, setForm] = useState<AppRegistrationPayload>({
     bundleId: '',
@@ -362,68 +603,215 @@ export function AddAppPage({ data, apiStatus }: { data: SideportReadModel; apiSt
   const defaultTeamId = firstDevice?.teamId && firstDevice.teamId !== 'Unknown' ? firstDevice.teamId : ''
   const registrationPayload: AppRegistrationPayload = {
     ...form,
+    bundleId: form.bundleId || selectedCatalogApp?.expectedBundleId || '',
     deviceUdid: form.deviceUdid || firstDevice?.udid || '',
     teamId: form.teamId || defaultTeamId,
+    inputIpaPath: form.inputIpaPath || selectedCatalogApp?.suggestedIpaPath || '',
   }
+  const selectedDevice = data.devices.find((device) => device.udid === registrationPayload.deviceUdid) ?? firstDevice
+  const selectedDeviceRegistrations = selectedDevice ? appsForDevice(data.apps, selectedDevice.udid) : []
+  const slotAvailable = Boolean(selectedDevice && selectedDeviceRegistrations.length < 3)
   const registerMutation = useMutation({
     mutationFn: () => registerSideportApp(registrationPayload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
   })
   const update = (key: keyof AppRegistrationPayload, value: string) => setForm((current) => ({ ...current, [key]: value }))
   const hasRequiredFields = Object.values(registrationPayload).every((value) => value.trim().length > 0)
-  const canSubmit = apiStatus.canMutate && hasRequiredFields && !registerMutation.isPending
+  const canSubmit = apiStatus.canMutate && catalogReady && hasRequiredFields && slotAvailable && !registerMutation.isPending
+  const registrationHelp = registrationDisabledHelp(apiStatus.canMutate, registrationPayload, catalogReady, slotAvailable)
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Add app" title="Preflight before Sideport touches Apple services" description="Registration writes to the live API only when mutations are enabled for this build. The operator must provide the server-side IPA path and Apple/team/device identifiers explicitly." />
-      <div className="wizard-grid">
-        <Panel title="Target">
-          <div className="form-grid">
-            <label className="form-field">
-              <span>Device UDID</span>
-              {data.devices.length ? (
+      <PageHeader
+        eyebrow="Registration wizard"
+        title="Register a catalog app for Sideport refresh"
+        description="This saves a durable /api/apps registration after the catalog IPA has been inspected by the backend. It does not sign, install, or refresh the IPA yet."
+      />
+      <div className="wizard-shell">
+        <aside className="wizard-step-rail" aria-label="Registration steps">
+          {([
+            ['1', 'Catalog IPA', Boolean(catalogReady)],
+            ['2', 'Reachable phone', Boolean(selectedDevice)],
+            ['3', 'Registration fields', hasRequiredFields],
+            ['4', 'Save record', canSubmit || registerMutation.isSuccess],
+          ] satisfies Array<[string, string, boolean]>).map(([index, label, complete]) => (
+            <div className={complete ? 'wizard-step complete' : 'wizard-step'} key={String(label)}>
+              <span>{index}</span>
+              <strong>{label}</strong>
+            </div>
+          ))}
+        </aside>
+
+        <div className="wizard-content">
+          <Panel title="Choose catalog app">
+            {catalogApps.length ? (
+              <div className="catalog-picker">
+                {catalogApps.map((catalogApp) => (
+                  <button className={catalogApp.id === catalogAppId ? 'catalog-pick selected' : 'catalog-pick'} key={catalogApp.id} onClick={() => setCatalogAppId(catalogApp.id)} type="button">
+                    <span className={`app-icon ${catalogApp.iconTone}`}>{catalogApp.name.slice(0, 1)}</span>
+                    <span><strong>{catalogApp.name}</strong><small>{catalogApp.statusLabel}</small></span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <EmptyState icon={Package} title="No catalog app selected" detail="Inspect a server IPA path in App Catalog before registering it on a phone." />
+            )}
+          </Panel>
+
+          {selectedCatalogApp && (
+            <Panel title="Catalog metadata">
+              <dl className="catalog-meta compact">
+                <div><dt>Bundle ID</dt><dd>{selectedCatalogApp.expectedBundleId}</dd></div>
+                <div><dt>Server IPA path</dt><dd>{selectedCatalogApp.suggestedIpaPath}</dd></div>
+                <div><dt>Version</dt><dd>{selectedCatalogApp.versionLabel}</dd></div>
+                <div><dt>Inspection</dt><dd>{selectedCatalogApp.lastInspectedAt ? shortDateTime(selectedCatalogApp.lastInspectedAt) : selectedCatalogApp.statusLabel}</dd></div>
+                <div><dt>SHA-256</dt><dd>{selectedCatalogApp.sha256 ? `${selectedCatalogApp.sha256.slice(0, 12)}...` : 'Not available'}</dd></div>
+                <div><dt>Profile</dt><dd>{selectedCatalogApp.hasEmbeddedProfile ? expiryCopy(selectedCatalogApp.signatureExpiresAt) : 'No embedded profile'}</dd></div>
+              </dl>
+              {selectedCatalogApp.status !== 'ready' && <p className="mutation-message error">This catalog app is not ready for registration: {selectedCatalogApp.statusLabel}.</p>}
+            </Panel>
+          )}
+
+          <Panel title="Choose reachable phone">
+            {data.devices.length ? (
+              <label className="form-field">
+                <span>Target phone</span>
                 <select value={registrationPayload.deviceUdid} onChange={(event) => update('deviceUdid', event.currentTarget.value)}>
-                  {data.devices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · {compactUdid(device.udid)}</option>)}
+                  {data.devices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · {compactUdid(device.udid)} · {appsForDevice(data.apps, device.udid).length}/3 registered</option>)}
                 </select>
-              ) : (
-                <input autoComplete="off" onChange={(event) => update('deviceUdid', event.currentTarget.value)} placeholder="00008140..." value={form.deviceUdid} />
-              )}
-            </label>
-            <label className="form-field">
-              <span>Bundle ID</span>
-              <input autoComplete="off" onChange={(event) => update('bundleId', event.currentTarget.value)} placeholder="ro.hont.example" value={form.bundleId} />
-            </label>
-            <label className="form-field">
-              <span>Apple ID</span>
-              <input autoComplete="username" onChange={(event) => update('appleId', event.currentTarget.value)} placeholder="name@example.com" value={form.appleId} />
-            </label>
-            <label className="form-field">
-              <span>Team ID</span>
-              <input autoComplete="off" onChange={(event) => update('teamId', event.currentTarget.value)} placeholder="TEAMID1234" value={registrationPayload.teamId} />
-            </label>
-            <label className="form-field wide-field">
-              <span>Server IPA path</span>
-              <input autoComplete="off" onChange={(event) => update('inputIpaPath', event.currentTarget.value)} placeholder="/var/lib/sideport/ipa/App.ipa" value={form.inputIpaPath} />
-            </label>
-          </div>
-        </Panel>
-        <Panel title="Preflight">
-          <PreflightList items={[
-            ['Device is currently reachable', Boolean(firstDevice), firstDevice ? 'live' : 'planned'],
-            ['App slot available on selected device', firstDevice ? firstDevice.appSlotsUsed < 3 : false, 'derived'],
-            ['Signer binary ready', data.system.ready.checks.signer.ok, 'live'],
-            ['Anisette identity trusted', data.system.ready.checks.anisette.ok, 'live'],
-            ['Mutating API enabled in this build', apiStatus.canMutate, apiStatus.canMutate ? 'live' : 'planned'],
-          ]} />
-          <button className="primary-action wide" disabled={!canSubmit} onClick={() => registerMutation.mutate()} type="button">
-            <Play size={16} /> {registerMutation.isPending ? 'Registering...' : 'Register app'}
-          </button>
-          {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. Set VITE_SIDEPORT_ENABLE_MUTATIONS=true for the real portal bundle.</p>}
-          {registerMutation.isSuccess && <p className="mutation-message success">Registration saved. The app list will refresh from the API snapshot.</p>}
-          {registerMutation.error && <p className="mutation-message error">{registerMutation.error.message}</p>}
-        </Panel>
+              </label>
+            ) : (
+              <EmptyState icon={Smartphone} title="No reachable iPhone" detail="The live API only reports reachable phones today. Persistent known-offline phones need the planned device store." />
+            )}
+          </Panel>
+
+          <Panel title="Registration fields">
+            <div className="form-grid">
+              <label className="form-field">
+                <span>Apple ID</span>
+                <input autoComplete="username" onChange={(event) => update('appleId', event.currentTarget.value)} placeholder="name@example.com" value={form.appleId} />
+              </label>
+              <label className="form-field">
+                <span>Team ID</span>
+                <input autoComplete="off" onChange={(event) => update('teamId', event.currentTarget.value)} placeholder="TEAMID1234" value={registrationPayload.teamId} />
+              </label>
+            </div>
+          </Panel>
+
+          <Panel title="Registration preflight">
+            <PreflightList items={[
+              ['Catalog IPA inspected', Boolean(catalogReady), selectedCatalogApp?.source ?? 'planned'],
+              ['Reachable phone selected', Boolean(selectedDevice), selectedDevice ? 'live' : 'planned'],
+              [`Sideport registrations ${selectedDeviceRegistrations.length}/3`, slotAvailable, 'derived'],
+              ['Signer ready for future refresh', data.system.ready.checks.signer.ok, 'live'],
+              ['Anisette identity trusted', data.system.ready.checks.anisette.ok, 'live'],
+              ['Mutation endpoint enabled', apiStatus.canMutate, apiStatus.canMutate ? 'live' : 'planned'],
+            ]} />
+            <button className="primary-action wide" disabled={!canSubmit} onClick={() => registerMutation.mutate()} type="button">
+              <Play size={16} /> {registerMutation.isPending ? 'Saving...' : 'Save registration'}
+            </button>
+            {registrationHelp && <p className="mutation-message">{registrationHelp}</p>}
+            {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. Set VITE_SIDEPORT_ENABLE_MUTATIONS=true for the real portal bundle.</p>}
+            {registerMutation.isSuccess && <p className="mutation-message success">Registration saved. This records the app for Sideport refresh; it did not install the IPA yet.</p>}
+            {registerMutation.error && <p className="mutation-message error">{registerMutation.error.message}</p>}
+            <button className="ghost-action" onClick={onOpenCatalog} type="button">Back to catalog<ChevronRight size={15} /></button>
+          </Panel>
+        </div>
       </div>
     </div>
+  )
+}
+
+function CatalogAppCard({ catalogApp, installationCount, onInstall }: { catalogApp: CatalogAppSummary; installationCount: number; onInstall: () => void }) {
+  const canRegister = catalogApp.status === 'ready'
+  return (
+    <article className="catalog-card">
+      <div className="catalog-card-top">
+        <div className={`app-icon ${catalogApp.iconTone}`}>{catalogApp.name.slice(0, 1)}</div>
+        <div>
+          <h2>{catalogApp.name}</h2>
+          <span>{catalogApp.statusLabel}</span>
+        </div>
+        <SourcePill source={catalogApp.source} label={sourceLabel(catalogApp.source)} />
+      </div>
+      <p>{catalogApp.purpose}</p>
+      <dl className="catalog-meta">
+        <div><dt>Bundle ID</dt><dd>{catalogApp.expectedBundleId}</dd></div>
+        <div><dt>Server path</dt><dd>{catalogApp.suggestedIpaPath}</dd></div>
+        <div><dt>Version</dt><dd>{catalogApp.versionLabel}</dd></div>
+        <div><dt>Sideport registrations</dt><dd>{installationCount}</dd></div>
+        <div><dt>Profile</dt><dd>{catalogApp.hasEmbeddedProfile ? expiryCopy(catalogApp.signatureExpiresAt) : 'No embedded profile'}</dd></div>
+        <div><dt>Checksum</dt><dd>{catalogApp.sha256 ? `${catalogApp.sha256.slice(0, 12)}...` : 'Not available'}</dd></div>
+      </dl>
+      <ul className="catalog-notes">
+        {catalogApp.notes.map((note) => <li key={note}>{note}</li>)}
+      </ul>
+      <button className="primary-action" disabled={!canRegister} onClick={onInstall} type="button"><Plus size={16} /> Register on phone</button>
+    </article>
+  )
+}
+
+function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) {
+  return (
+    <div className="registration-list">
+      {apps.map((app) => (
+        <article className="registration-card" key={`${app.deviceUdid}:${app.bundleId}`}>
+          <AppSummary app={app} />
+          <div className="registration-meta">
+            <span>{compactUdid(app.deviceUdid)}</span>
+            <span>{app.teamId}</span>
+            <span>{expiryCopy(app.expiresAt?.value)}</span>
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function InstalledAppList({ apps }: { apps: InstalledAppSummary[] }) {
+  return (
+    <div className="registration-list">
+      {apps.map((app) => (
+        <article className="registration-card" key={`${app.deviceUdid}:${app.bundleId}`}>
+          <div className="app-summary">
+            <div className={`app-icon ${app.managedBySideport ? 'blue' : 'slate'}`}>{app.name.slice(0, 1)}</div>
+            <div>
+              <strong>{app.name}</strong>
+              <span>{app.bundleId}</span>
+            </div>
+          </div>
+          <div className="registration-meta">
+            <span>{app.managedBySideport ? 'Sideport' : 'External'}</span>
+            <span>{app.version}</span>
+            <span>{expiryCopy(app.signatureExpiresAt?.value)}</span>
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function AppIngestionGuide() {
+  const steps = [
+    ['Seeded app', 'Cert Clock is configured as the first server-side catalog seed.'],
+    ['Server IPA path', 'The operator points Sideport at an IPA already present on the server.'],
+    ['Inspection endpoint', '/api/catalog/apps/inspect reads bundle ID, version, checksum, and embedded-profile state.'],
+    ['Catalog store', 'Inspected apps become durable catalog records that can be registered on one or more phones.'],
+  ]
+
+  return (
+    <div className="ingestion-steps">
+      {steps.map(([title, detail], index) => <InfoStep detail={detail} index={index} key={title} title={title} />)}
+    </div>
+  )
+}
+
+function InfoStep({ title, detail, index }: { title: string; detail: string; index: number }) {
+  return (
+    <article className="ingestion-step">
+      <span>{index + 1}</span>
+      <div><strong>{title}</strong><p>{detail}</p></div>
+    </article>
   )
 }
 
@@ -438,13 +826,178 @@ export function RenewalsPage({ data, apiStatus }: { data: SideportReadModel; api
   )
 }
 
+export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { appleAccess: AppleAccessSummary; personalApple: PersonalAppleSummary; apiStatus: AdminDataStatus }) {
+  const verified = appleAccess.capabilities.filter((capability) => capability.state === 'verified').length
+  const blocked = appleAccess.capabilities.filter((capability) => capability.state !== 'verified' && capability.state !== 'not-checked').length
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Apple Access"
+        title="Connect Apple data without over-trusting it"
+        description="This page runs a read-only App Store Connect API-key probe. It does not use browser cookies, does not ask for an Apple ID password, and performs no Apple mutations."
+      />
+
+      <section className="section-grid three">
+        <FactTile label="Default connector" value="Personal Apple ID" source={personalApple.source} />
+        <FactTile label="Personal state" value={personalAppleStateLabel(personalApple.state)} source={personalApple.source} />
+        <FactTile label="Credential custody" value={credentialCustodyShortLabel(personalApple.secretCustody)} source={personalApple.source} />
+        <FactTile label="ASC probe" value={appleAccessStateLabel(appleAccess.state)} source={appleAccess.source} />
+        <FactTile label="Capabilities" value={`${verified}/${Math.max(appleAccess.capabilities.length, 1)} verified`} source={appleAccess.source} />
+        <FactTile label="Key ID" value={appleAccess.keyIdSuffix ?? 'Not configured'} source={appleAccess.keyIdSuffix ? appleAccess.source : 'planned'} />
+        <FactTile label="Issuer ID" value={appleAccess.issuerIdSuffix ?? 'Not configured'} source={appleAccess.issuerIdSuffix ? appleAccess.source : 'planned'} />
+      </section>
+
+      <Panel title={`Personal Apple ID via ${credentialCustodyShortLabel(personalApple.secretCustody)}`}>
+        <PersonalAppleConnectorPanel personalApple={personalApple} apiStatus={apiStatus} />
+      </Panel>
+
+      <Panel title="Connector posture">
+        <div className="connector-posture">
+          <StatusPill state={appleAccessHealth(appleAccess)} label={appleAccessStateLabel(appleAccess.state)} />
+          <p>{appleAccess.message}</p>
+          <div className="setup-meta">
+            <SourcePill source={appleAccess.source} label={sourceLabel(appleAccess.source)} />
+            <span>{blocked ? `${blocked} blocker(s) need attention before this can be used for signing preflight.` : 'Read-only probe only. Mutations still require preflight and confirmation.'}</span>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Capability probe">
+        {appleAccess.capabilities.length ? <AppleAccessCapabilityList capabilities={appleAccess.capabilities} /> : <EmptyState icon={KeyRound} title="No capability rows yet" detail="Configure server-side App Store Connect team key references, then reload this page to run the read-only probe." />}
+      </Panel>
+
+      <div className="two-column-layout">
+        <Panel title="What this is">
+          <div className="ingestion-steps compact">
+            {[
+              ['Optional portal login', 'Sign in with Apple can identify a Sideport user, but Sideport must also work with reverse-proxy or local auth. It does not grant Developer API access.'],
+              ['Developer access', 'App Store Connect team keys authorize provisioning API calls when role and agreements permit them.'],
+              ['Fallback path', 'Apple ID session and local helper remain compatibility options for personal/free teams.'],
+            ].map(([title, detail], index) => <InfoStep detail={detail} index={index} key={title} title={title} />)}
+          </div>
+        </Panel>
+        <Panel title="Safety rules">
+          <div className="ingestion-steps compact">
+            {[
+              ['No browser scraping', 'Being logged into Apple in a browser helps create an API key; Sideport must not capture cookies.'],
+              ['No routine revocation', 'Certificate creation or revocation requires explicit cutover acknowledgement.'],
+              ['No hidden mutations', 'This page only performs GET probes. Install and refresh actions must run through preflight.'],
+            ].map(([title, detail], index) => <InfoStep detail={detail} index={index} key={title} title={title} />)}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  )
+}
+
+function PersonalAppleConnectorPanel({ personalApple, apiStatus }: { personalApple: PersonalAppleSummary; apiStatus: AdminDataStatus }) {
+  const queryClient = useQueryClient()
+  const [appleId, setAppleId] = useState('')
+  const [code, setCode] = useState('')
+  const signInMutation = useMutation({
+    mutationFn: () => signInPersonalApple({ appleId: appleId.trim() }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+  const twoFactorMutation = useMutation({
+    mutationFn: () => completePersonalAppleTwoFactor({ challengeId: personalApple.pendingChallengeId ?? '', code: code.trim() }),
+    onSuccess: () => {
+      setCode('')
+      queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+    },
+  })
+  const canSignIn = apiStatus.canMutate && appleId.trim().length > 0 && !signInMutation.isPending
+  const canComplete2Fa = apiStatus.canMutate && Boolean(personalApple.pendingChallengeId) && code.trim().length >= 4 && !twoFactorMutation.isPending
+
+  return (
+    <div className="personal-apple-panel">
+      <div className="connector-posture">
+        <StatusPill state={personalAppleHealth(personalApple)} label={personalAppleStateLabel(personalApple.state)} />
+        <p>{personalApple.message}</p>
+        <div className="setup-meta">
+          <SourcePill source={personalApple.source} label={sourceLabel(personalApple.source)} />
+          <span>{personalApple.appleIdHint ? `Apple ID ${personalApple.appleIdHint}` : 'No Apple ID is configured or authenticated yet.'}</span>
+        </div>
+      </div>
+      <div className="form-grid">
+        <label className="form-field">
+          <span>Apple ID</span>
+          <input autoComplete="username" onChange={(event) => setAppleId(event.currentTarget.value)} placeholder="name@example.com" value={appleId} />
+        </label>
+        <div className="form-field action-field">
+          <span>{credentialCustodyShortLabel(personalApple.secretCustody)} credential</span>
+          <button className="primary-action" disabled={!canSignIn} onClick={() => signInMutation.mutate()} type="button">Start sign-in</button>
+        </div>
+      </div>
+      <p className="data-boundary-note">Sideport does not accept Apple passwords in the browser. Configure the matching {credentialCustodyLabel(personalApple.secretCustody)} first, then start sign-in. If Apple requires 2FA, enter the code here locally.</p>
+      {personalApple.pendingChallengeId && (
+        <div className="form-grid">
+          <label className="form-field">
+            <span>{personalApple.pendingChallengeKind ?? '2FA'} code</span>
+            <input autoComplete="one-time-code" inputMode="numeric" onChange={(event) => setCode(event.currentTarget.value)} placeholder="123456" value={code} />
+          </label>
+          <div className="form-field action-field">
+            <span>Pending challenge</span>
+            <button className="primary-action" disabled={!canComplete2Fa} onClick={() => twoFactorMutation.mutate()} type="button">Complete 2FA</button>
+          </div>
+        </div>
+      )}
+      {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. Personal Apple sign-in is unavailable in read-only mode.</p>}
+      {signInMutation.error && <p className="mutation-message error">{signInMutation.error.message}</p>}
+      {twoFactorMutation.error && <p className="mutation-message error">{twoFactorMutation.error.message}</p>}
+      {personalApple.teams.length > 0 && <PersonalAppleTeamList teams={personalApple.teams} />}
+    </div>
+  )
+}
+
+function PersonalAppleTeamList({ teams }: { teams: PersonalAppleSummary['teams'] }) {
+  return (
+    <div className="registration-list">
+      {teams.map((team) => (
+        <article className="registration-card" key={team.teamId}>
+          <div>
+            <strong>{team.name}</strong>
+            <span>{team.teamId}</span>
+          </div>
+          <div className="registration-meta"><span>{team.type}</span><span>Detected from Apple</span></div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function AppleAccessCapabilityList({ capabilities }: { capabilities: AppleAccessCapabilitySummary[] }) {
+  return (
+    <div className="capability-list">
+      {capabilities.map((capability) => (
+        <article className="capability-row" key={capability.id}>
+          <div>
+            <strong>{capability.label}</strong>
+            <span>{capability.endpoint}</span>
+          </div>
+          <StatusPill state={capabilityHealth(capability)} label={capabilityStateLabel(capability.state)} />
+          <div className="capability-detail">
+            <span>{capability.httpStatus ? `HTTP ${capability.httpStatus}` : 'Not checked'}</span>
+            {capability.count !== undefined && <span>{capability.count} returned</span>}
+            <SourcePill source={capability.source} label={sourceLabel(capability.source)} />
+          </div>
+          <p>{capability.detail}</p>
+        </article>
+      ))}
+    </div>
+  )
+}
+
 export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Diagnostics" title="Runtime failure evidence" description="Live evidence comes from readiness checks, API fetch failures, app lastError fields, and the protected API log stream." />
       {data.issues.length ? <DiagnosticIssueList issues={data.issues} /> : <EmptyState icon={Stethoscope} title="No diagnostic issues" detail="When OpenTelemetry is wired, this page will group refresh/sign/install failures by operation and trace ID." />}
-      <Panel title="Live API logs">
-        {data.logs.length ? <OperationLogList logs={data.logs} /> : <EmptyState icon={Activity} title="No API logs yet" detail="The runtime log endpoint has not returned entries for this snapshot." />}
+      <Panel title="Log highlights">
+        {data.logs.length ? <OperationLogList logs={data.logs.slice(0, 10)} /> : <EmptyState icon={Activity} title="No API logs yet" detail="The runtime log endpoint has not returned entries for this snapshot." />}
+      </Panel>
+      <Panel title="Advanced log tail">
+        {data.logs.length ? <LogTailConsole logs={data.logs} /> : <EmptyState icon={Terminal} title="No log tail yet" detail="The protected log stream is empty for this snapshot." />}
       </Panel>
     </div>
   )
@@ -528,6 +1081,74 @@ function StatusPill({ state, label }: { state: HealthState; label: string }) {
   return <span className={`status-pill ${state}`}><Icon size={14} />{label}</span>
 }
 
+function appleAccessHealth(appleAccess: AppleAccessSummary): HealthState {
+  if (appleAccess.state === 'read-only-verified') return 'healthy'
+  if (appleAccess.state === 'partial') return 'warning'
+  if (appleAccess.state === 'not-configured' || appleAccess.state === 'unavailable') return 'offline'
+  return 'blocked'
+}
+
+function capabilityHealth(capability: AppleAccessCapabilitySummary): HealthState {
+  if (capability.state === 'verified') return 'healthy'
+  if (capability.state === 'not-checked') return 'offline'
+  if (capability.state === 'rate-limited') return 'warning'
+  return 'blocked'
+}
+
+function personalAppleHealth(personalApple: PersonalAppleSummary): HealthState {
+  if (personalApple.state === 'authenticated') return 'healthy'
+  if (personalApple.state === 'credential-configured' || personalApple.state === 'two-factor-required') return 'warning'
+  if (personalApple.state === 'not-configured' || personalApple.state === 'unavailable') return 'offline'
+  return 'blocked'
+}
+
+function appleAccessStateLabel(state: AppleAccessSummary['state']): string {
+  if (state === 'read-only-verified') return 'Read-only verified'
+  if (state === 'not-configured') return 'Not configured'
+  if (state === 'invalid-configuration') return 'Invalid configuration'
+  if (state === 'partial') return 'Partial access'
+  if (state === 'blocked') return 'Blocked'
+  return 'Unavailable'
+}
+
+function capabilityStateLabel(state: AppleAccessCapabilitySummary['state']): string {
+  if (state === 'verified') return 'Verified'
+  if (state === 'not-checked') return 'Not checked'
+  if (state === 'unauthorized') return 'Unauthorized'
+  if (state === 'denied') return 'Denied'
+  if (state === 'rate-limited') return 'Rate limited'
+  return 'Failed'
+}
+
+function personalAppleStateLabel(state: PersonalAppleSummary['state']): string {
+  if (state === 'authenticated') return 'Authenticated'
+  if (state === 'credential-configured') return 'Credential configured'
+  if (state === 'two-factor-required') return '2FA required'
+  if (state === 'not-configured') return 'Not configured'
+  return 'Unavailable'
+}
+
+function credentialCustodyShortLabel(custody: string): string {
+  if (custody === 'vaultwarden-via-bitwarden-cli') return 'Vaultwarden'
+  if (custody === 'cached-grand-slam-session') return 'Cached session'
+  if (custody === 'environment-or-sops') return 'SOPS/env'
+  return 'Host secret'
+}
+
+function credentialCustodyLabel(custody: string): string {
+  if (custody === 'vaultwarden-via-bitwarden-cli') return 'Vaultwarden item through the Bitwarden CLI bridge'
+  if (custody === 'cached-grand-slam-session') return 'cached GrandSlam session'
+  if (custody === 'environment-or-sops') return 'environment/SOPS runtime secret'
+  return 'host-side secret custody'
+}
+
+function apiModeLabel(mode: AdminDataStatus['mode']): string {
+  if (mode === 'live') return 'Live API'
+  if (mode === 'partial') return 'Live API degraded'
+  if (mode === 'demo') return 'Demo data'
+  return 'API unavailable'
+}
+
 function SourcePill({ source, label }: { source: SourceKind; label: string }) {
   return <span className={`source-pill ${source}`}>{label}</span>
 }
@@ -555,15 +1176,6 @@ function CheckRow({ label, ok, detail, source }: { label: string; ok: boolean; d
   )
 }
 
-function OnboardingStepList({ steps }: { steps: OnboardingStep[] }) {
-  if (!steps.length) return <EmptyState icon={ListChecks} title="Waiting for onboarding status" detail="The backend onboarding endpoint has not returned a setup checklist yet." />
-  return (
-    <div className="onboarding-list">
-      {steps.map((step) => <OnboardingStepRow key={step.id} step={step} />)}
-    </div>
-  )
-}
-
 function IPhoneSetupList({ steps }: { steps: OnboardingStep[] }) {
   if (!steps.length) return <EmptyState icon={Smartphone} title="No iPhone actions yet" detail="Connect a device or register an app to reveal the iPhone-side setup prompts." />
   return (
@@ -581,21 +1193,6 @@ function IPhoneSetupList({ steps }: { steps: OnboardingStep[] }) {
         </article>
       ))}
     </div>
-  )
-}
-
-function OnboardingStepRow({ step }: { step: OnboardingStep }) {
-  const Icon = step.state === 'complete' ? CheckCircle2 : step.state === 'blocked' ? XCircle : step.state === 'warning' ? AlertTriangle : CircleDashed
-  return (
-    <article className={`onboarding-step ${step.state}`}>
-      <div className="onboarding-icon"><Icon size={17} /></div>
-      <div>
-        <strong>{step.label}</strong>
-        <span>{step.description}</span>
-        {step.detail && <small>{step.detail}</small>}
-      </div>
-      <StatusLabel state={step.state} />
-    </article>
   )
 }
 
@@ -624,13 +1221,18 @@ function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: Device
     },
     {
       id: 'apps',
-      header: 'Apps',
+      header: 'Registered apps',
       cell: ({ row }) => <span>{appsForDevice(apps, row.original.udid).length}/3</span>,
     },
     {
+      id: 'installedApps',
+      header: 'Installed apps',
+      cell: ({ row }) => <span>{row.original.installedAppCount} total · {row.original.unmanagedAppCount} external</span>,
+    },
+    {
       id: 'expiry',
-      header: 'Nearest expiry',
-      cell: ({ row }) => <span>{timeUntil(row.original.nearestExpiryAt?.value)}</span>,
+      header: 'Nearest registered expiry',
+      cell: ({ row }) => <span>{expiryCopy(row.original.nearestExpiryAt?.value)}</span>,
     },
     {
       accessorKey: 'health',
@@ -673,22 +1275,30 @@ function DeviceCard({ device, apps, onOpen }: { device: DeviceSummary; apps: Reg
       </div>
       <div className="device-card-grid">
         <FactTile label="Connection" value={connectionLabel(device.connection)} source="live" />
-        <FactTile label="Apps" value={`${apps.length}/3`} source="derived" />
-        <FactTile label="Expiry" value={timeUntil(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
+        <FactTile label="Registered apps" value={`${apps.length}/3`} source="derived" />
+        <FactTile label="Installed apps" value={`${device.installedAppCount} total`} source={device.installedAppCount ? 'live' : 'planned'} />
+        <FactTile label="Registered expiry" value={expiryCopy(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
       </div>
       <button className="row-action" onClick={onOpen} type="button">Open device</button>
     </article>
   )
 }
 
-function AppSlotGrid({ apps }: { apps: RegisteredAppSummary[] }) {
+function AppSlotGrid({ apps, canRegister, onInstallApp }: { apps: RegisteredAppSummary[]; canRegister: boolean; onInstallApp?: () => void }) {
   const slots = [0, 1, 2].map((index) => apps[index] ?? null)
   return (
     <div className="slot-grid">
       {slots.map((app, index) => (
         <article className={app ? 'slot-card filled' : 'slot-card empty'} key={index}>
           <div className="slot-number">Slot {index + 1}</div>
-          {app ? <AppSummary app={app} /> : <div className="empty-slot"><Plus size={18} /><span>Available</span><small>Registration disabled</small></div>}
+          {app ? <AppSummary app={app} /> : (
+            <div className="empty-slot">
+              <Plus size={18} />
+              <span>Available</span>
+              <small>{canRegister ? 'No Sideport registration' : 'Registration endpoint disabled'}</small>
+              {canRegister && <button className="row-action" onClick={onInstallApp} type="button">Register app</button>}
+            </div>
+          )}
         </article>
       ))}
     </div>
@@ -800,8 +1410,51 @@ function OperationLogList({ logs }: { logs: OperationLogEntry[] }) {
   )
 }
 
+function LogTailConsole({ logs }: { logs: OperationLogEntry[] }) {
+  return (
+    <div className="log-tail" role="log" aria-label="Advanced API log tail">
+      <div className="log-tail-toolbar">
+        <span><Terminal size={15} /> Protected /api/logs tail</span>
+        <small>{logs.length} lines · newest first</small>
+      </div>
+      <pre className="log-tail-scroll">
+        {logs.slice(0, 60).map((entry) => <code className={`tail-line level-${entry.level.toLowerCase()}`} key={entry.id}>{tailLine(entry)}</code>)}
+      </pre>
+    </div>
+  )
+}
+
 function PreflightList({ items }: { items: Array<[string, boolean, SourceKind]> }) {
   return <div className="check-list">{items.map(([label, ok, source]) => <CheckRow key={label} label={label} ok={ok} detail={ok ? 'Ready' : 'Not available yet'} source={source} />)}</div>
+}
+
+function registrationDisabledHelp(canMutate: boolean, payload: AppRegistrationPayload, catalogReady: boolean, slotAvailable: boolean): string | null {
+  if (!canMutate) return null
+  if (!catalogReady) return 'Inspect a ready catalog IPA before saving a phone registration.'
+  if (!slotAvailable) return 'This phone already has 3 Sideport registrations. Apps installed outside Sideport are reported separately when device app inspection is available.'
+  const labels: Record<keyof AppRegistrationPayload, string> = {
+    bundleId: 'Bundle ID',
+    deviceUdid: 'Device UDID',
+    appleId: 'Apple ID',
+    teamId: 'Team ID',
+    inputIpaPath: 'Server IPA path',
+  }
+  const missing = Object.entries(payload)
+    .filter(([, value]) => !value.trim())
+    .map(([key]) => labels[key as keyof AppRegistrationPayload])
+  if (!missing.length) return null
+  return `Fill ${missing.join(', ')} to enable registration.`
+}
+
+function expiryCopy(value?: string): string {
+  return value ? timeUntil(value) : 'No registered expiry'
+}
+
+function tailLine(entry: OperationLogEntry): string {
+  const at = new Date(entry.at)
+  const stamp = Number.isNaN(at.getTime()) ? entry.at : at.toISOString()
+  const suffix = entry.exceptionMessage ? ` :: ${entry.exceptionType ?? 'Exception'}: ${entry.exceptionMessage}` : ''
+  return `${stamp}  ${entry.level.padEnd(11)}  ${entry.category}  ${entry.message}${suffix}\n`
 }
 
 function EmptyState({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {

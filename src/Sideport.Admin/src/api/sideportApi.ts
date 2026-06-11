@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { runtimeEmptyData, type ActivityEvent, type ConnectionState, type DiagnosticIssue, type HealthState, type OperationLogEntry, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus } from '../data/sideportTypes'
+import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus } from '../data/sideportTypes'
+import { compactUdid } from '../lib/format'
 
 const DEFAULT_API_BASE_URL = '/sideport-api'
 const DEFAULT_REFRESH_INTERVAL_MS = 15_000
@@ -49,6 +50,22 @@ export interface AppRegistrationPayload {
   inputIpaPath: string
 }
 
+export interface CatalogInspectPayload {
+  ipaPath: string
+  id?: string
+  name?: string
+  purpose?: string
+}
+
+export interface PersonalAppleSignInPayload {
+  appleId: string
+}
+
+export interface PersonalAppleTwoFactorPayload {
+  challengeId: string
+  code: string
+}
+
 export interface RefreshResultDto {
   success?: boolean
   bundleId?: string
@@ -95,6 +112,69 @@ interface RegisteredAppDto {
   lastError?: string | null
 }
 
+interface CatalogAppDto {
+  id?: string
+  name?: string
+  purpose?: string
+  bundleId?: string
+  ipaPath?: string
+  version?: string | null
+  shortVersion?: string | null
+  sizeBytes?: number | null
+  sha256?: string | null
+  hasEmbeddedProfile?: boolean
+  signatureExpiresAt?: string | null
+  source?: string
+  status?: string
+  lastInspectedAt?: string | null
+  notes?: string[]
+}
+
+interface InstalledAppDto {
+  bundleId?: string
+  name?: string
+  version?: string
+  signatureExpiresAt?: string | null
+  deviceUdid?: string
+}
+
+interface AppleAccessStatusDto {
+  connector?: string
+  state?: string
+  secretCustody?: string
+  keyIdSuffix?: string | null
+  issuerIdSuffix?: string | null
+  message?: string
+  capabilities?: AppleAccessCapabilityDto[]
+}
+
+interface AppleAccessCapabilityDto {
+  id?: string
+  label?: string
+  endpoint?: string
+  state?: string
+  httpStatus?: number | null
+  detail?: string
+  count?: number | null
+}
+
+interface PersonalAppleStatusDto {
+  connector?: string
+  state?: string
+  secretCustody?: string
+  appleIdHint?: string | null
+  message?: string
+  pendingChallengeId?: string | null
+  pendingChallengeKind?: string | null
+  teams?: PersonalAppleTeamDto[]
+}
+
+interface PersonalAppleTeamDto {
+  teamId?: string
+  name?: string
+  type?: string
+}
+
 interface AnisetteInfoDto {
   deviceId?: string
   clientInfo?: string
@@ -135,6 +215,10 @@ interface ApiSnapshot {
   health: ApiResult<HealthResponse>
   ready: ApiResult<ReadyResponse>
   devices: ApiResult<DeviceDto[]>
+  catalog: ApiResult<CatalogAppDto[]>
+  appleAccess: ApiResult<AppleAccessStatusDto>
+  personalApple: ApiResult<PersonalAppleStatusDto>
+  installedApps: ApiResult<InstalledAppDto[]>
   apps: ApiResult<RegisteredAppDto[]>
   anisette: ApiResult<AnisetteInfoDto>
   onboarding: ApiResult<OnboardingStatusDto>
@@ -186,17 +270,43 @@ export function useSideportAdminData(apiTokenRevision = 0) {
 
 async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
   const fetchedAt = new Date().toISOString()
-  const [health, ready, devices, apps, anisette, onboarding, logs] = await Promise.all([
+  const [health, ready, devices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs] = await Promise.all([
     requestJson<HealthResponse>(config, '/healthz', false),
     requestJson<ReadyResponse>(config, '/readyz', false),
     requestJson<DeviceDto[]>(config, '/api/devices', true),
+    requestJson<CatalogAppDto[]>(config, '/api/catalog/apps', true),
+    requestJson<AppleAccessStatusDto>(config, '/api/apple-access/status', true),
+    requestJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/status', true),
     requestJson<RegisteredAppDto[]>(config, '/api/apps', true),
     requestJson<AnisetteInfoDto>(config, '/api/anisette/info', true),
     requestJson<OnboardingStatusDto>(config, '/api/onboarding/status', true),
     requestJson<OperationLogDto[]>(config, '/api/logs?limit=80', true),
   ])
+  const installedApps = await fetchInstalledApps(config, devices)
 
-  return { fetchedAt, config, health, ready, devices, apps, anisette, onboarding, logs }
+  return { fetchedAt, config, health, ready, devices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs }
+}
+
+async function fetchInstalledApps(config: ApiConfig, devices: ApiResult<DeviceDto[]>): Promise<ApiResult<InstalledAppDto[]>> {
+  if (!devices.ok || !devices.data?.length) return { ok: true, source: 'live', data: [] }
+  const reachableDevices = devices.data.filter((device) => device.udid)
+  const results = await Promise.all(reachableDevices.map(async (device) => {
+    const result = await requestJson<InstalledAppDto[]>(config, `/api/devices/${encodeURIComponent(device.udid!)}/installed-apps`, true)
+    return { deviceUdid: device.udid!, result }
+  }))
+
+  const data = results.flatMap(({ deviceUdid, result }) =>
+    result.ok && result.data ? result.data.map((app) => ({ ...app, deviceUdid })) : [])
+  const failed = results.filter(({ result }) => !result.ok)
+  if (!failed.length) return { ok: true, source: 'live', data }
+
+  return {
+    ok: false,
+    source: 'live',
+    data,
+    status: failed[0]?.result.status,
+    error: failed.map(({ deviceUdid, result }) => `${compactUdid(deviceUdid)}: ${result.error ?? 'unavailable'}`).join('; '),
+  }
 }
 
 async function requestJson<T>(config: ApiConfig, path: string, protectedApi: boolean): Promise<ApiResult<T>> {
@@ -211,22 +321,38 @@ async function requestJson<T>(config: ApiConfig, path: string, protectedApi: boo
       headers,
       signal: controller.signal,
     })
+    const data = await readJsonBody<T>(response)
 
     if (!response.ok) {
       return {
         ok: false,
         source: 'live',
+        data,
         status: response.status,
-        error: `${response.status} ${response.statusText || 'HTTP error'}`,
+        error: responseErrorSummary(response, data),
       }
     }
 
-    return { ok: true, source: 'live', data: await response.json() as T }
+    return { ok: true, source: 'live', data }
   } catch (error) {
     return { ok: false, source: 'live', error: describeError(error) }
   } finally {
     window.clearTimeout(timeout)
   }
+}
+
+async function readJsonBody<T>(response: Response): Promise<T | undefined> {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) return undefined
+  return await response.json().catch(() => undefined) as T | undefined
+}
+
+function responseErrorSummary(response: Response, data: unknown): string {
+  if (isRecord(data)) {
+    const detail = typeof data.error === 'string' ? data.error : typeof data.message === 'string' ? data.message : undefined
+    if (detail) return detail
+  }
+  return `${response.status} ${response.statusText || 'HTTP error'}`
 }
 
 export async function registerSideportApp(payload: AppRegistrationPayload, config = getSideportApiConfig()) {
@@ -236,9 +362,30 @@ export async function registerSideportApp(payload: AppRegistrationPayload, confi
   })
 }
 
+export async function inspectCatalogApp(payload: CatalogInspectPayload, config = getSideportApiConfig()) {
+  return mutateJson<CatalogAppDto>(config, '/api/catalog/apps/inspect', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function refreshSideportApp(deviceUdid: string, bundleId: string, config = getSideportApiConfig()) {
   return mutateJson<RefreshResultDto>(config, `/api/apps/${encodeURIComponent(deviceUdid)}/${encodeURIComponent(bundleId)}/refresh`, {
     method: 'POST',
+  })
+}
+
+export async function signInPersonalApple(payload: PersonalAppleSignInPayload, config = getSideportApiConfig()) {
+  return mutateJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/sign-in', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function completePersonalAppleTwoFactor(payload: PersonalAppleTwoFactorPayload, config = getSideportApiConfig()) {
+  return mutateJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/2fa', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 
@@ -277,29 +424,37 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
   const hasLiveCore = snapshot.health.ok || snapshot.ready.ok || snapshot.devices.ok || snapshot.apps.ok
   if (!hasLiveCore) return buildUnavailableData(snapshot.config, snapshot.health.error ?? 'Sideport API is not reachable.')
 
-  const apps = snapshot.apps.ok && snapshot.apps.data ? snapshot.apps.data.map(toRegisteredApp).filter(isPresent) : runtimeEmptyData.apps
+  const catalogApps = snapshot.catalog.ok && snapshot.catalog.data ? snapshot.catalog.data.map(toCatalogApp).filter(isPresent) : runtimeEmptyData.catalogApps
+  const appleAccess = snapshot.appleAccess.ok && snapshot.appleAccess.data ? toAppleAccess(snapshot.appleAccess.data) : unavailableAppleAccess(snapshot.appleAccess.error)
+  const personalApple = snapshot.personalApple.ok && snapshot.personalApple.data ? toPersonalApple(snapshot.personalApple.data) : unavailablePersonalApple(snapshot.personalApple.error)
+  const apps = snapshot.apps.ok && snapshot.apps.data ? snapshot.apps.data.map((app) => toRegisteredApp(app, catalogApps)).filter(isPresent) : runtimeEmptyData.apps
+  const installedApps = snapshot.installedApps.data ? snapshot.installedApps.data.map((app) => toInstalledApp(app, apps)).filter(isPresent) : runtimeEmptyData.installedApps
   const devices = snapshot.devices.ok && snapshot.devices.data
-    ? snapshot.devices.data.map((device) => toDeviceSummary(device, apps)).filter(isPresent)
+    ? snapshot.devices.data.map((device) => toDeviceSummary(device, apps, installedApps)).filter(isPresent)
     : runtimeEmptyData.devices
   const renewals = apps.length ? apps.map(toRenewalItem) : runtimeEmptyData.renewals
   const logs = snapshot.logs.ok && snapshot.logs.data ? snapshot.logs.data.map((entry) => toOperationLog(entry, snapshot.fetchedAt)).filter(isPresent) : runtimeEmptyData.logs
   const issues = buildIssues(snapshot, apps)
   const system = buildSystemStatus(snapshot)
 
-  const partial = [snapshot.health, snapshot.ready, snapshot.devices, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.logs].some((result) => !result.ok)
+  const partial = [snapshot.health, snapshot.ready, snapshot.devices, snapshot.catalog, snapshot.appleAccess, snapshot.personalApple, snapshot.installedApps, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.logs].some((result) => !result.ok)
   const status: AdminDataStatus = {
     mode: partial ? 'partial' : 'live',
     baseUrl: snapshot.config.baseUrl,
     lastUpdatedAt: snapshot.fetchedAt,
     canMutate: snapshot.config.canMutate,
     onboarding: snapshot.onboarding.data ? toOnboardingStatus(snapshot.onboarding.data) : buildFallbackOnboarding(system, devices, apps),
-    message: partial ? 'Live API partially loaded; missing endpoints stay empty until the backend returns data.' : 'Live Sideport API connected.',
+    message: partial ? degradedStatusMessage(snapshot) : 'Live Sideport API connected.',
   }
 
   return {
     data: {
       system,
       devices,
+      catalogApps,
+      appleAccess,
+      personalApple,
+      installedApps,
       apps,
       renewals,
       issues,
@@ -342,21 +497,21 @@ function buildUnavailableData(config: ApiConfig, message: string): { data: Sidep
 
 function buildSystemStatus(snapshot: ApiSnapshot): SystemStatus {
   const ready = snapshot.ready.data
-  const tokenMissing = [snapshot.devices, snapshot.apps, snapshot.anisette].some((result) => result.status === 401)
+  const tokenMissing = [snapshot.devices, snapshot.catalog, snapshot.installedApps, snapshot.apps, snapshot.anisette].some((result) => result.status === 401)
 
   return {
     api: { ok: snapshot.health.ok && snapshot.health.data?.ok !== false, source: 'live' },
     ready: {
-      ready: Boolean(snapshot.ready.ok && ready?.ready),
+      ready: Boolean(ready?.ready),
       source: 'live',
       checks: {
         anisette: {
-          ok: Boolean(snapshot.ready.ok && ready?.checks.anisette.ok),
+          ok: Boolean(ready?.checks.anisette.ok),
           error: ready?.checks.anisette.error ?? snapshot.ready.error ?? null,
           source: 'live',
         },
         signer: {
-          ok: Boolean(snapshot.ready.ok && ready?.checks.signer.ok),
+          ok: Boolean(ready?.checks.signer.ok),
           path: ready?.checks.signer.path ?? 'Unknown',
           source: 'live',
         },
@@ -370,9 +525,10 @@ function buildSystemStatus(snapshot: ApiSnapshot): SystemStatus {
   }
 }
 
-function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[]) {
+function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[], installedApps: InstalledAppSummary[]) {
   if (!device.udid) return null
   const deviceApps = apps.filter((app) => app.deviceUdid === device.udid)
+  const deviceInstalledApps = installedApps.filter((app) => app.deviceUdid === device.udid)
   const nearestExpiry = earliestDate(deviceApps.map((app) => app.expiresAt?.value))
   const hasLastError = deviceApps.some((app) => app.lastError)
 
@@ -386,8 +542,25 @@ function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[]) {
     health: healthFromExpiry(nearestExpiry, hasLastError),
     teamId: deviceApps[0]?.teamId || 'Unknown',
     appSlotsUsed: deviceApps.length,
+    installedAppCount: deviceInstalledApps.length,
+    unmanagedAppCount: deviceInstalledApps.filter((app) => !app.managedBySideport).length,
     nearestExpiryAt: nearestExpiry ? { value: nearestExpiry, source: 'live' as const } : undefined,
     blocker: hasLastError ? 'One app has a failed refresh/install state.' : undefined,
+  }
+}
+
+function toInstalledApp(app: InstalledAppDto, registrations: RegisteredAppSummary[]): InstalledAppSummary | null {
+  if (!app.bundleId || !app.deviceUdid) return null
+  const managedBySideport = registrations.some((registration) =>
+    registration.bundleId === app.bundleId && registration.deviceUdid === app.deviceUdid)
+  return {
+    bundleId: app.bundleId,
+    deviceUdid: app.deviceUdid,
+    name: app.name || displayNameFromBundleId(app.bundleId),
+    version: app.version || 'Unknown',
+    signatureExpiresAt: app.signatureExpiresAt ? { value: app.signatureExpiresAt, source: 'live' } : undefined,
+    managedBySideport,
+    source: 'live',
   }
 }
 
@@ -406,8 +579,98 @@ function toOperationLog(entry: OperationLogDto, fallbackAt: string): OperationLo
   }
 }
 
-function toRegisteredApp(app: RegisteredAppDto) {
+function toCatalogApp(app: CatalogAppDto): CatalogAppSummary | null {
+  if (!app.id || !app.name || !app.bundleId || !app.ipaPath) return null
+  const status = normalizeCatalogStatus(app.status)
+  return {
+    id: app.id,
+    name: app.name,
+    purpose: app.purpose || 'Server-side IPA catalog entry.',
+    expectedBundleId: app.bundleId,
+    suggestedIpaPath: app.ipaPath,
+    versionLabel: versionLabel(app.shortVersion, app.version),
+    status,
+    statusLabel: catalogStatusLabel(status),
+    source: status === 'missing' ? 'planned' : 'live',
+    iconTone: toneFromBundleId(app.bundleId),
+    notes: app.notes?.length ? app.notes : [catalogStatusLabel(status)],
+    sizeBytes: app.sizeBytes ?? undefined,
+    sha256: app.sha256 ?? undefined,
+    hasEmbeddedProfile: Boolean(app.hasEmbeddedProfile),
+    signatureExpiresAt: app.signatureExpiresAt ?? undefined,
+    lastInspectedAt: app.lastInspectedAt ?? undefined,
+  }
+}
+
+function toAppleAccess(dto: AppleAccessStatusDto): AppleAccessSummary {
+  return {
+    connector: dto.connector || 'app-store-connect-jwt',
+    state: normalizeAppleAccessState(dto.state),
+    secretCustody: dto.secretCustody || 'server-configured-key-reference',
+    keyIdSuffix: dto.keyIdSuffix ?? null,
+    issuerIdSuffix: dto.issuerIdSuffix ?? null,
+    message: dto.message || 'Apple Access status returned without a message.',
+    capabilities: dto.capabilities?.map(toAppleAccessCapability).filter(isPresent) ?? [],
+    source: 'live',
+  }
+}
+
+function toPersonalApple(dto: PersonalAppleStatusDto): PersonalAppleSummary {
+  return {
+    connector: dto.connector || 'personal-apple-id',
+    state: normalizePersonalAppleState(dto.state),
+    secretCustody: dto.secretCustody || 'host-environment-or-secret-store',
+    appleIdHint: dto.appleIdHint ?? null,
+    message: dto.message || 'Personal Apple ID connector returned without a message.',
+    pendingChallengeId: dto.pendingChallengeId ?? null,
+    pendingChallengeKind: dto.pendingChallengeKind ?? null,
+    teams: dto.teams?.map(toPersonalAppleTeam).filter(isPresent) ?? [],
+    source: 'live',
+  }
+}
+
+function toPersonalAppleTeam(team: PersonalAppleTeamDto): PersonalAppleTeamSummary | null {
+  if (!team.teamId) return null
+  return {
+    teamId: team.teamId,
+    name: team.name || 'Apple Developer Team',
+    type: team.type || 'Unknown',
+  }
+}
+
+function toAppleAccessCapability(dto: AppleAccessCapabilityDto): AppleAccessCapabilitySummary | null {
+  if (!dto.id || !dto.label || !dto.endpoint) return null
+  return {
+    id: dto.id,
+    label: dto.label,
+    endpoint: dto.endpoint,
+    state: normalizeCapabilityState(dto.state),
+    httpStatus: dto.httpStatus ?? undefined,
+    detail: dto.detail || 'No detail returned.',
+    count: dto.count ?? undefined,
+    source: 'live',
+  }
+}
+
+function unavailableAppleAccess(error?: string): AppleAccessSummary {
+  return {
+    ...runtimeEmptyData.appleAccess,
+    state: 'unavailable',
+    message: error ?? 'Apple Access status endpoint is unavailable.',
+  }
+}
+
+function unavailablePersonalApple(error?: string): PersonalAppleSummary {
+  return {
+    ...runtimeEmptyData.personalApple,
+    state: 'unavailable',
+    message: error ?? 'Personal Apple ID connector status endpoint is unavailable.',
+  }
+}
+
+function toRegisteredApp(app: RegisteredAppDto, catalogApps: CatalogAppSummary[]) {
   if (!app.bundleId || !app.deviceUdid) return null
+  const catalogApp = catalogApps.find((catalog) => catalog.expectedBundleId === app.bundleId)
   return {
     bundleId: app.bundleId,
     deviceUdid: app.deviceUdid,
@@ -417,8 +680,8 @@ function toRegisteredApp(app: RegisteredAppDto) {
     timeUntilExpiry: app.timeUntilExpiry ? { value: app.timeUntilExpiry, source: 'live' as const } : undefined,
     lastSucceeded: app.lastSucceeded ?? null,
     lastError: app.lastError ?? null,
-    displayName: { value: displayNameFromBundleId(app.bundleId), source: 'derived' as const },
-    version: { value: 'Unknown', source: 'planned' as const },
+    displayName: catalogApp ? { value: catalogApp.name, source: catalogApp.source } : { value: displayNameFromBundleId(app.bundleId), source: 'derived' as const },
+    version: catalogApp ? { value: catalogApp.versionLabel, source: catalogApp.source } : { value: 'Unknown', source: 'planned' as const },
     iconTone: toneFromBundleId(app.bundleId),
   }
 }
@@ -447,6 +710,10 @@ function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[]): Diagn
     ['Health check unavailable', snapshot.health],
     ['Readiness check unavailable', snapshot.ready],
     ['Device API unavailable', snapshot.devices],
+    ['Installed apps API unavailable', snapshot.installedApps],
+    ['App catalog API unavailable', snapshot.catalog],
+    ['Apple Access API unavailable', snapshot.appleAccess],
+    ['Personal Apple API unavailable', snapshot.personalApple],
     ['App registry API unavailable', snapshot.apps],
     ['Anisette API unavailable', snapshot.anisette],
     ['Onboarding API unavailable', snapshot.onboarding],
@@ -625,7 +892,7 @@ function buildActivity(snapshot: ApiSnapshot, partial: boolean, logs: OperationL
     id: `api-snapshot-${snapshot.fetchedAt}`,
     at: snapshot.fetchedAt,
     actor: 'system',
-    title: partial ? 'API snapshot partially loaded' : 'API snapshot loaded',
+    title: partial ? 'API snapshot degraded' : 'API snapshot loaded',
     detail: `Source: ${snapshot.config.baseUrl}`,
     state,
     source: 'live',
@@ -676,6 +943,63 @@ function apiIssue(category: string, detail: string, at: string, status?: number)
     logSnippet: detail,
     source: 'live',
   }
+}
+
+function degradedStatusMessage(snapshot: ApiSnapshot): string {
+  const failed = [
+    ['health', snapshot.health],
+    ['readiness', snapshot.ready],
+    ['devices', snapshot.devices],
+    ['installed apps', snapshot.installedApps],
+    ['catalog', snapshot.catalog],
+    ['apple access', snapshot.appleAccess],
+    ['personal apple', snapshot.personalApple],
+    ['apps', snapshot.apps],
+    ['anisette', snapshot.anisette],
+    ['onboarding', snapshot.onboarding],
+    ['logs', snapshot.logs],
+  ].filter(([, result]) => !(result as ApiResult<unknown>).ok).map(([label]) => label)
+
+  if (!failed.length) return 'Live Sideport API connected.'
+  const summary = failed.length === 1 ? failed[0] : `${failed.slice(0, -1).join(', ')} and ${failed.at(-1)}`
+  return `Live API connected with ${summary} failing. Healthy endpoints still show live data.`
+}
+
+function normalizeCatalogStatus(status: string | undefined): CatalogAppStatus {
+  if (status === 'ready' || status === 'invalid') return status
+  return 'missing'
+}
+
+function normalizeAppleAccessState(state: string | undefined): AppleAccessState {
+  if (state === 'not-configured' || state === 'invalid-configuration' || state === 'read-only-verified' || state === 'partial' || state === 'blocked') return state
+  return 'unavailable'
+}
+
+function normalizePersonalAppleState(state: string | undefined): PersonalAppleState {
+  if (state === 'not-configured' || state === 'credential-configured' || state === 'two-factor-required' || state === 'authenticated') return state
+  return 'unavailable'
+}
+
+function normalizeCapabilityState(state: string | undefined): AppleAccessCapabilitySummary['state'] {
+  if (state === 'verified' || state === 'not-checked' || state === 'unauthorized' || state === 'denied' || state === 'rate-limited') return state
+  return 'failed'
+}
+
+function catalogStatusLabel(status: CatalogAppStatus): string {
+  if (status === 'ready') return 'IPA inspected'
+  if (status === 'invalid') return 'Inspection failed'
+  return 'IPA missing on server'
+}
+
+function versionLabel(shortVersion?: string | null, version?: string | null): string {
+  if (shortVersion && version && shortVersion !== version) return `${shortVersion} (build ${version})`
+  if (shortVersion) return shortVersion
+  if (version) return `build ${version}`
+  return 'Unknown'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function normalizeConnection(value: DeviceDto['connection']): ConnectionState {
