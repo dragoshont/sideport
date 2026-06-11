@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Sideport.Core;
 
 namespace Sideport.Orchestrator;
@@ -22,8 +23,12 @@ public static class OrchestratorServiceCollectionExtensions
         bool runScheduler = true)
     {
         services.AddSingleton(options ?? new OrchestratorOptions());
-        services.AddSingleton<IAppRegistry, InMemoryAppRegistry>();
-        services.AddSingleton<IAppleCredentialProvider, EnvironmentCredentialProvider>();
+        services.AddSingleton<IAppRegistry>(sp => new FileAppRegistry(
+            sp.GetRequiredService<OrchestratorOptions>().AppRegistryPath));
+        // Default credential source. TryAdd so a host that pre-registers a
+        // different IAppleCredentialProvider (e.g. AppleKeychainCredentialProvider
+        // when Sideport:Apple:CredentialSource=keychain) wins; env stays the default.
+        services.TryAddSingleton<IAppleCredentialProvider, EnvironmentCredentialProvider>();
         services.AddSingleton<ISessionManager, SessionManager>();
         services.AddSingleton<RefreshOrchestrator>();
         services.AddSingleton<IRefreshOrchestrator>(sp => sp.GetRequiredService<RefreshOrchestrator>());

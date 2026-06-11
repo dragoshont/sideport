@@ -1,9 +1,9 @@
 namespace Sideport.Orchestrator;
 
 /// <summary>
-/// The set of apps Sideport keeps signed. An in-memory implementation ships in
-/// v1 (<see cref="InMemoryAppRegistry"/>); a persisted implementation can back
-/// it later without changing callers.
+/// The set of apps Sideport keeps signed. The API uses a durable file-backed
+/// registry by default, while tests can still substitute an in-memory registry
+/// without changing callers.
 /// </summary>
 public interface IAppRegistry
 {

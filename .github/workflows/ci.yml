@@ -2,12 +2,31 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
     tags: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
 
 jobs:
+  admin-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/Sideport.Admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: src/Sideport.Admin/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run build-storybook
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:screens -- --project=desktop --project=mobile
+
   build-test:
     # The managed core is cross-platform — prove it on Linux AND macOS (incl.
     # Apple Silicon). Windows is intentionally excluded: the password-less p12
@@ -30,8 +49,8 @@ jobs:
   build-image:
     # Publish the runnable image after the suite is green. Skipped on PRs (no
     # push); runs on push to main + manual dispatch.
-    needs: build-test
-    if: github.event_name != 'pull_request'
+    needs: [build-test, admin-ui]
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
