@@ -81,27 +81,23 @@ var runScheduler = builder.Configuration.GetValue("Sideport:Scheduler:Enabled", 
 // Credential source for Apple passwords. Default "environment" reads
 // SIDEPORT_APPLE_PW_* (SOPS-injected env) — unchanged behavior. Set
 // "vault" to resolve from Vaultwarden via a `bw serve` REST endpoint, so
-// passwords are managed in the vault UI instead of `sops` on the CLI. The
-// browser portal still never collects the password (custody invariant);
-// it only comes from this host-side source. Registered BEFORE
-// AddRefreshOrchestrator so its TryAddSingleton default yields to this.
-if (string.Equals(credentialSource, "vault", StringComparison.OrdinalIgnoreCase))
+// Credential source for Apple passwords. Default "environment" reads
+// SIDEPORT_APPLE_PW_* — injected from a Kubernetes Secret that is filled either
+// by SOPS or by Azure Key Vault via the External Secrets Operator (the in-cluster
+// path; both look identical to the app). Set "keychain" for LOCAL macOS
+// development to read from the login keychain via the `security` CLI. The browser
+// portal NEVER collects the password (custody invariant); it only comes from this
+// host-side source. Registered BEFORE AddRefreshOrchestrator so its
+// TryAddSingleton default yields to this.
+if (string.Equals(credentialSource, "keychain", StringComparison.OrdinalIgnoreCase))
 {
-    var vaultOptions = new VaultCredentialOptions(
-        BaseUrl: builder.Configuration["Sideport:Vault:BaseUrl"]
-            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_URL")
-            ?? "http://127.0.0.1:8087",
-        ItemNameTemplate: builder.Configuration["Sideport:Vault:ItemNameTemplate"]
-            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_ITEM_TEMPLATE")
-            ?? "{appleId}",
-        ApiKey: builder.Configuration["Sideport:Vault:ApiKey"]
-            ?? Environment.GetEnvironmentVariable("SIDEPORT_VAULT_API_KEY"));
-    builder.Services.AddSingleton(vaultOptions);
-    builder.Services.AddHttpClient("vault-credentials");
-    builder.Services.AddSingleton<IAppleCredentialProvider>(sp => new VaultBackedCredentialProvider(
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient("vault-credentials"),
-        sp.GetRequiredService<VaultCredentialOptions>(),
-        sp.GetService<Microsoft.Extensions.Logging.ILogger<VaultBackedCredentialProvider>>()));
+    var keychainOptions = new KeychainCredentialOptions(
+        ServiceName: builder.Configuration["Sideport:Keychain:ServiceName"]
+            ?? Environment.GetEnvironmentVariable("SIDEPORT_KEYCHAIN_SERVICE")
+            ?? "sideport-apple-pw");
+    builder.Services.AddSingleton(keychainOptions);
+    builder.Services.AddSingleton<IAppleCredentialProvider>(
+        sp => new AppleKeychainCredentialProvider(sp.GetRequiredService<KeychainCredentialOptions>()));
 }
 
 builder.Services.AddRefreshOrchestrator(orchestratorOptions, runScheduler: runScheduler);

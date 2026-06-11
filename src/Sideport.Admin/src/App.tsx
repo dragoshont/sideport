@@ -1129,14 +1129,14 @@ function personalAppleStateLabel(state: PersonalAppleSummary['state']): string {
 }
 
 function credentialCustodyShortLabel(custody: string): string {
-  if (custody === 'vaultwarden-via-bitwarden-cli') return 'Vaultwarden'
+  if (custody === 'macos-keychain') return 'macOS Keychain'
   if (custody === 'cached-grand-slam-session') return 'Cached session'
   if (custody === 'environment-or-sops') return 'SOPS/env'
   return 'Host secret'
 }
 
 function credentialCustodyLabel(custody: string): string {
-  if (custody === 'vaultwarden-via-bitwarden-cli') return 'Vaultwarden item through the Bitwarden CLI bridge'
+  if (custody === 'macos-keychain') return 'the macOS login keychain'
   if (custody === 'cached-grand-slam-session') return 'cached GrandSlam session'
   if (custody === 'environment-or-sops') return 'environment/SOPS runtime secret'
   return 'host-side secret custody'

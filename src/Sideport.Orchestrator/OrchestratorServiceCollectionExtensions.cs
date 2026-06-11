@@ -26,8 +26,8 @@ public static class OrchestratorServiceCollectionExtensions
         services.AddSingleton<IAppRegistry>(sp => new FileAppRegistry(
             sp.GetRequiredService<OrchestratorOptions>().AppRegistryPath));
         // Default credential source. TryAdd so a host that pre-registers a
-        // different IAppleCredentialProvider (e.g. VaultBackedCredentialProvider
-        // when Sideport:Apple:CredentialSource=vault) wins; env stays the default.
+        // different IAppleCredentialProvider (e.g. AppleKeychainCredentialProvider
+        // when Sideport:Apple:CredentialSource=keychain) wins; env stays the default.
         services.TryAddSingleton<IAppleCredentialProvider, EnvironmentCredentialProvider>();
         services.AddSingleton<ISessionManager, SessionManager>();
         services.AddSingleton<RefreshOrchestrator>();

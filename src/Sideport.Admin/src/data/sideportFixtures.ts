@@ -164,9 +164,9 @@ export const fixtures: SideportFixtureSet = {
   personalApple: {
     connector: 'personal-apple-id',
     state: 'two-factor-required',
-    secretCustody: 'vaultwarden-via-bitwarden-cli',
+    secretCustody: 'environment-or-sops',
     appleIdHint: 'd***@example.test',
-    message: 'Demo state: Vaultwarden has the Apple credential; Apple requires a trusted-device verification code before teams can be listed.',
+    message: 'Demo state: the Apple password is held in runtime secret custody (a Kubernetes Secret from Azure Key Vault or SOPS); Apple requires a trusted-device verification code before teams can be listed.',
     pendingChallengeId: 'demo-challenge',
     pendingChallengeKind: 'TrustedDevice',
     teams: [],

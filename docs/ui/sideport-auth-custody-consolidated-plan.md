@@ -46,10 +46,15 @@ is which backend fills the Secret (ESO/KV is the new default, SOPS still works).
   portal never sees it. **No flow change needed — this is correct already.**
 - **Credential providers** (`IAppleCredentialProvider`):
   - keep `EnvironmentCredentialProvider` (cluster: env from KV/SOPS Secret) — default
-  - **add** `AppleKeychainCredentialProvider` (local macOS dev)
-  - **add (optional)** `AzureKeyVaultCredentialProvider` (local direct-to-KV)
+  - **add** `AppleKeychainCredentialProvider` (local macOS dev) — `Sideport:Apple:CredentialSource=keychain`
   - **remove** `VaultBackedCredentialProvider` + the `credentialSource == "vault"`
     wiring in `Program.cs` (Vaultwarden is gone)
+
+  > Adversarial scope cut (2026-06-11): a direct `AzureKeyVaultCredentialProvider`
+  > was considered and **dropped** — the cluster already receives Azure secrets via
+  > ESO → K8s Secret → env (the env provider), so an in-app Azure SDK dependency for
+  > a local-dev-only convenience was unjustified scope creep. Keychain covers local;
+  > env covers cluster.
 - **Re-point custody labels** in `PersonalAppleAccess.SecretCustody()/Label()/
   MissingCredentialMessage()`: `vaultwarden-via-bitwarden-cli` →
   `kubernetes-secret` (cluster) / `macos-keychain` (local); drop the bw-serve text.
@@ -73,12 +78,14 @@ is which backend fills the Secret (ESO/KV is the new default, SOPS still works).
   stays **on-cluster** (not pushed to the cloud).
 
 ## Sequence to stable → main → deployed-at-home
-1. **Commit in-flight branch WIP** (builds clean — verified) so there's a stable base. ✅ this turn
-2. **Code reconcile (Sideport):** remove dead Vaultwarden provider; add Keychain
-   (+ optional KV-direct) provider; re-point custody labels. `dotnet build` + tests.
-3. **Docs:** this plan supersedes the stale custody doc; fix the `Program.cs`
-   credential-source comment.
-4. **Merge `feature/sideport-ui-experience-plan` → `main`** (sideport repo).
+1. **Commit in-flight branch WIP** (builds clean — verified) so there's a stable base. ✅ done (7d5b3a3)
+2. **Code reconcile (Sideport):** remove dead Vault provider; add Keychain provider;
+   re-point custody labels (backend + Admin UI + fixtures). ✅ done — `dotnet build`
+   0/0, orchestrator tests 32/32, Admin `tsc --noEmit` clean. Azure-KV-direct dropped
+   (see scope cut above).
+3. **Docs:** this plan supersedes the stale custody doc; `Program.cs` credential-source
+   comment updated. ✅ done
+4. **Merge `feature/sideport-ui-experience-plan` → `main`** (sideport repo). ⏭ next
 5. **Deploy at home (homelab repo, GitOps):** activate the SidePort + MCP
    `ExternalSecret`s (the prepared one-line swaps), `flux reconcile`, restart pods
    (env-var consumers), verify KV→ESO→Secret hash + pod health.

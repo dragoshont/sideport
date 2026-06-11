@@ -138,22 +138,23 @@ public sealed class PersonalAppleAccess : IPersonalAppleAccess
 
     private string SecretCustody()
     {
-        if (string.Equals(_options.CredentialSource, "vault", StringComparison.OrdinalIgnoreCase))
-            return "vaultwarden-via-bitwarden-cli";
+        if (string.Equals(_options.CredentialSource, "keychain", StringComparison.OrdinalIgnoreCase))
+            return "macos-keychain";
         return "environment-or-sops";
     }
 
     private string SecretCustodyLabel()
     {
-        if (string.Equals(_options.CredentialSource, "vault", StringComparison.OrdinalIgnoreCase))
-            return "Vaultwarden through a Bitwarden CLI bridge";
+        if (string.Equals(_options.CredentialSource, "keychain", StringComparison.OrdinalIgnoreCase))
+            return "the macOS login keychain";
         return "environment/SOPS secret custody";
     }
 
     private string MissingCredentialMessage()
     {
-        if (string.Equals(_options.CredentialSource, "vault", StringComparison.OrdinalIgnoreCase))
-            return "Configure SIDEPORT_PERSONAL_APPLE_ID and a matching Vaultwarden item reachable through bw serve before starting sign-in.";
+        if (string.Equals(_options.CredentialSource, "keychain", StringComparison.OrdinalIgnoreCase))
+            return "Configure SIDEPORT_PERSONAL_APPLE_ID and store the password in the macOS login keychain " +
+                "(security add-generic-password -s sideport-apple-pw -a <appleId> -w) before starting sign-in.";
         return "Configure SIDEPORT_PERSONAL_APPLE_ID and the matching SIDEPORT_APPLE_PW_* secret before starting sign-in.";
     }
 
