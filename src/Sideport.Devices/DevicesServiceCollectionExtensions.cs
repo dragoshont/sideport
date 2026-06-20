@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sideport.Core;
@@ -13,7 +14,12 @@ public static class DevicesServiceCollectionExtensions
     public static IServiceCollection AddDeviceController(this IServiceCollection services)
     {
         services.AddSingleton<IDeviceBackend>(sp =>
-            new NetimobiledeviceBackend(sp.GetService<ILogger<NetimobiledeviceBackend>>()));
+            new NetimobiledeviceBackend(
+                sp.GetService<ILogger<NetimobiledeviceBackend>>(),
+                // Where the host keeps the trusted lockdown pairing records, so the
+                // Wi-Fi direct-TCP path can reuse the existing trust. Defaults to
+                // /var/lib/lockdown when unset.
+                sp.GetService<IConfiguration>()?["Sideport:Devices:PairingRecordsDir"]));
         services.AddSingleton<IDeviceController>(sp =>
             new NetimobiledeviceController(
                 sp.GetRequiredService<IDeviceBackend>(),

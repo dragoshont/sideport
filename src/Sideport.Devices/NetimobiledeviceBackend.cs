@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Netimobiledevice;
@@ -20,11 +21,27 @@ namespace Sideport.Devices;
 /// </summary>
 internal sealed class NetimobiledeviceBackend : IDeviceBackend
 {
-    private readonly ILogger<NetimobiledeviceBackend> _logger;
+    // The lockdown service port — identical whether the connection is proxied
+    // through usbmux (USB) or opened directly over TCP (Wi-Fi).
+    private const ushort LockdownPort = 62078;
 
-    public NetimobiledeviceBackend(ILogger<NetimobiledeviceBackend>? logger = null)
+    // Default host location of the trusted lockdown pairing records. The pod
+    // mounts this read-only so the direct-TCP (Wi-Fi) path can validate the
+    // already-established trust without re-pairing. Overridable via
+    // Sideport:Devices:PairingRecordsDir for non-standard hosts.
+    private const string DefaultPairingRecordsDir = "/var/lib/lockdown";
+
+    private readonly ILogger<NetimobiledeviceBackend> _logger;
+    private readonly string _pairingRecordsDir;
+
+    public NetimobiledeviceBackend(
+        ILogger<NetimobiledeviceBackend>? logger = null,
+        string? pairingRecordsDir = null)
     {
         _logger = logger ?? NullLogger<NetimobiledeviceBackend>.Instance;
+        _pairingRecordsDir = string.IsNullOrWhiteSpace(pairingRecordsDir)
+            ? DefaultPairingRecordsDir
+            : pairingRecordsDir;
     }
 
     public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct)
@@ -41,7 +58,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             string name = "", productType = "", osVersion = "";
             try
             {
-                using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(muxDevice.Serial, logger: _logger);
+                using LockdownClient lockdown = CreateLockdown(muxDevice);
                 name = lockdown.DeviceName;
                 productType = lockdown.ProductType;
                 osVersion = lockdown.OsVersion.ToString();
@@ -58,7 +75,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     public async Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct)
     {
-        using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(udid, logger: _logger);
+        using LockdownClient lockdown = CreateLockdown(udid);
         using var installProxy = new InstallationProxyService(lockdown, _logger);
 
         ArrayNode apps = await installProxy.Browse(cancellationToken: ct).ConfigureAwait(false);
@@ -88,7 +105,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     public async Task<IReadOnlyList<byte[]>> ListProvisioningProfilesAsync(string udid, CancellationToken ct)
     {
-        using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(udid, logger: _logger);
+        using LockdownClient lockdown = CreateLockdown(udid);
         using var misagent = new MisagentService(lockdown, _logger);
 
         List<PropertyNode> profiles = await misagent.GetInstalledProvisioningProfiles().ConfigureAwait(false);
@@ -110,7 +127,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     public async Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct)
     {
-        using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(udid, logger: _logger);
+        using LockdownClient lockdown = CreateLockdown(udid);
         using var installProxy = new InstallationProxyService(lockdown, _logger);
         await installProxy.Install(ipaPath, ct, options: null, progress).ConfigureAwait(false);
     }
@@ -136,7 +153,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 : DeviceConnection.Usb;
             try
             {
-                using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(muxDevice.Serial, logger: _logger);
+                using LockdownClient lockdown = CreateLockdown(muxDevice);
                 probes.Add(new BackendDeviceProbe(muxDevice.Serial, connection, true, lockdown.DeviceName, null));
             }
             catch (Exception ex)
@@ -150,4 +167,76 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     private static string ReadString(DictionaryNode dict, string key) =>
         dict.TryGetValue(key, out PropertyNode? node) ? node.AsStringNode().Value : "";
+
+    /// <summary>
+    /// Open a lockdown session to a device, choosing the transport by how the
+    /// device is reachable. USB devices are proxied through usbmux (the daemon
+    /// relays the connection). Wi-Fi/network devices are connected to DIRECTLY
+    /// over TCP: netmuxd advertises them but does not relay the usbmux Connect,
+    /// so a direct TCP lockdown to the device's network address — validated
+    /// against the host's existing pairing record — is the only path that
+    /// completes the trusted handshake.
+    /// </summary>
+    private LockdownClient CreateLockdown(string udid)
+    {
+        List<UsbmuxdDevice> matches = Usbmux.GetDeviceList()
+            .Where(d => string.Equals(d.Serial, udid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        // Prefer USB (the daemon proxies it reliably); fall back to Wi-Fi.
+        UsbmuxdDevice? mux = matches.FirstOrDefault(d => d.ConnectionType != UsbmuxdConnectionType.Network)
+                             ?? matches.FirstOrDefault();
+        if (mux is null)
+            throw new InvalidOperationException($"device {udid} is not currently reachable over usbmux");
+        return CreateLockdown(mux);
+    }
+
+    private LockdownClient CreateLockdown(UsbmuxdDevice mux)
+    {
+        if (mux.ConnectionType != UsbmuxdConnectionType.Network)
+            return MobileDevice.CreateUsingUsbmux(mux.Serial, logger: _logger);
+
+        string? host = DecodeNetworkAddress(mux.NetworkAddress);
+        if (host is null)
+            throw new InvalidOperationException(
+                $"Wi-Fi device {mux.Serial} reported no usable (routable) network address");
+
+        _logger.LogDebug(
+            "connecting to Wi-Fi device {Udid} directly over TCP at {Host}:{Port} (netmuxd does not proxy usbmux Connect)",
+            mux.Serial, host, LockdownPort);
+
+        // autopair:false — the device is already trusted host-side, so only USE
+        // the existing pairing record; never write one (the mount is read-only).
+        return MobileDevice.CreateUsingTcp(
+            hostname: host,
+            identifier: mux.Serial,
+            autopair: false,
+            pairingRecordsCacheDir: _pairingRecordsDir,
+            logger: _logger);
+    }
+
+    /// <summary>
+    /// Decode the muxer's <c>NetworkAddress</c> (a BSD <c>sockaddr</c>: byte 0 =
+    /// length, byte 1 = family; Darwin <c>AF_INET</c>=2, <c>AF_INET6</c>=30) into
+    /// an IP string. IPv6 link-local (<c>fe80::/10</c>) needs a pod-local scope
+    /// id we cannot supply and is treated as unusable.
+    /// </summary>
+    internal static string? DecodeNetworkAddress(byte[]? sockaddr)
+    {
+        if (sockaddr is null || sockaddr.Length < 8)
+            return null;
+
+        int family = sockaddr[1];
+        if (family == 2) // AF_INET — IPv4 address at offset 4
+            return new IPAddress(sockaddr.AsSpan(4, 4).ToArray()).ToString();
+
+        if (family is 10 or 28 or 30 && sockaddr.Length >= 24) // AF_INET6
+        {
+            // Link-local (fe80::/10) is not routable from the pod.
+            if (sockaddr[8] == 0xFE && (sockaddr[9] & 0xC0) == 0x80)
+                return null;
+            return new IPAddress(sockaddr.AsSpan(8, 16).ToArray()).ToString();
+        }
+
+        return null;
+    }
 }
