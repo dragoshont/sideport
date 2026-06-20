@@ -82,7 +82,7 @@ public sealed class PortalSigningIdentityProvider : ISigningIdentityProvider
     /// </summary>
     private async Task<byte[]> EnsureIdentityAsync(AppleSession session, string teamId, CancellationToken ct)
     {
-        string dir = Path.Combine(_options.WorkDirectory, "identities");
+        string dir = _options.IdentityDirectory ?? Path.Combine(_options.WorkDirectory, "identities");
         Directory.CreateDirectory(dir);
         RestrictToOwner(dir, directory: true);
         string path = Path.Combine(dir, $"{IdentityKey(session.AppleId, teamId)}.p12");

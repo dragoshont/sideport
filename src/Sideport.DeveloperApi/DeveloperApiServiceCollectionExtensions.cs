@@ -28,13 +28,16 @@ public static class DeveloperApiServiceCollectionExtensions
     /// </param>
     public static IServiceCollection AddAppleDeveloperPortal(
         this IServiceCollection services, Uri anisetteBaseUrl, string deviceId,
-        bool allowInsecureTls = false, string? signingWorkDirectory = null)
+        bool allowInsecureTls = false, string? signingWorkDirectory = null,
+        string? signingIdentityDirectory = null)
     {
         services.AddSingleton(new GrandSlamClientOptions { DeviceId = deviceId });
 
         var signingOptions = new PortalSigningOptions();
         if (!string.IsNullOrEmpty(signingWorkDirectory))
             signingOptions.WorkDirectory = signingWorkDirectory;
+        if (!string.IsNullOrEmpty(signingIdentityDirectory))
+            signingOptions.IdentityDirectory = signingIdentityDirectory;
         services.AddSingleton(signingOptions);
 
         services.AddHttpClient<IAnisetteProvider, ContainerAnisetteProvider>(

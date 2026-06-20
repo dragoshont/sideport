@@ -37,4 +37,12 @@ public sealed class OrchestratorOptions
 
     /// <summary>How often the scheduler evaluates the catalog for due refreshes.</summary>
     public TimeSpan ScheduleInterval { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Optional fixed re-sign cadence. When set, an app is re-signed once its
+    /// last SUCCESSFUL sign is older than this — even if the signature isn't near
+    /// expiry — to keep a fresh safety margin (e.g. daily). Null = expiry-driven
+    /// only.
+    /// </summary>
+    public TimeSpan? ResignInterval { get; set; }
 }

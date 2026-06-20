@@ -10,7 +10,8 @@ public sealed record RefreshState(
     DateTimeOffset? ExpiresAt,
     DateTimeOffset? LastAttemptUtc,
     bool LastSucceeded,
-    string? LastError)
+    string? LastError,
+    DateTimeOffset? LastSucceededUtc = null)
 {
     /// <summary>Time until the signature expires (null if never refreshed).</summary>
     public TimeSpan? TimeUntilExpiry(DateTimeOffset now) =>
@@ -18,8 +19,16 @@ public sealed record RefreshState(
 
     /// <summary>
     /// Whether this app is due for a proactive refresh: it has never been signed,
-    /// or it expires within <paramref name="leadTime"/>.
+    /// it expires within <paramref name="leadTime"/>, or — when
+    /// <paramref name="resignInterval"/> is set — its last successful sign is
+    /// older than that cadence (keeps a fresh margin, e.g. daily re-signing).
     /// </summary>
-    public bool IsDue(DateTimeOffset now, TimeSpan leadTime) =>
-        ExpiresAt is not { } e || e - now <= leadTime;
+    public bool IsDue(DateTimeOffset now, TimeSpan leadTime, TimeSpan? resignInterval = null)
+    {
+        if (ExpiresAt is not { } e || e - now <= leadTime)
+            return true;
+        if (resignInterval is { } interval && (LastSucceededUtc is not { } signed || now - signed >= interval))
+            return true;
+        return false;
+    }
 }

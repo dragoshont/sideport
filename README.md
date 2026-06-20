@@ -501,6 +501,7 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `SIDEPORT_API_TOKEN` | recommended | *(unset)* | Bearer token guarding `/api/*`. If unset, the API is **open** and logs a loud warning. |
 | `Sideport__Signer__BinaryPath` | — | `/opt/sideport/zsign` | The signer binary (baked into the image). |
 | `Sideport__Scheduler__Enabled` | — | `true` | Turn the automatic 7-day refresh loop on/off. |
+| `Sideport__Scheduler__ResignInterval` | — | *(unset)* | Re-sign each app on a fixed cadence (e.g. `1.00:00:00` = daily) to keep a fresh margin well before the 7-day profile expiry, instead of only just before it. Unset = refresh near expiry only. The signing certificate is reused either way, so this does **not** make you re-trust the developer more often. |
 | `Sideport__Oidc__Enabled` | — | `false` | Gate the **admin web UI** behind OpenID Connect login (e.g. Authentik). When off, the UI is open and `/api/*` uses the bearer token only. |
 | `Sideport__Oidc__Authority` | when OIDC on | — | OIDC issuer URL, e.g. `https://auth.example.com/application/o/sideport/`. |
 | `Sideport__Oidc__ClientId` | when OIDC on | — | OIDC client ID for the Sideport application. |

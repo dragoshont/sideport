@@ -36,6 +36,10 @@ var orchestratorOptions = new OrchestratorOptions
     WorkDirectory = builder.Configuration["Sideport:Orchestrator:WorkDirectory"]
         ?? Path.Combine(stateDirectory, "signed"),
 };
+// Optional fixed re-sign cadence (e.g. "1.00:00:00" = daily) so signatures are
+// renewed well before the 7-day profile expiry, keeping a fresh safety margin.
+if (TimeSpan.TryParse(builder.Configuration["Sideport:Scheduler:ResignInterval"], out TimeSpan resignInterval))
+    orchestratorOptions.ResignInterval = resignInterval;
 var certClockSeedPath = builder.Configuration["Sideport:Catalog:SeedCertClockPath"]
     ?? Environment.GetEnvironmentVariable("SIDEPORT_CERT_CLOCK_IPA")
     ?? "/var/lib/altserver/ipa/CertCountdown.ipa";
@@ -88,7 +92,13 @@ builder.Services.AddDeviceController();
 
 // GrandSlam auth (P3) + developer portal, with their configured HttpClients.
 var allowInsecureTls = builder.Configuration.GetValue("Sideport:Apple:AllowInsecureTls", false);
-builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, allowInsecureTls);
+// The signing identity (minted cert + key) MUST persist on the PVC, not the
+// pod's ephemeral /tmp — otherwise every restart loses it, the next refresh mints
+// a NEW certificate, and the user has to re-trust the developer on the device
+// (and the free-tier cert quota churns). The per-call signer staging stays
+// ephemeral under the default WorkDirectory.
+builder.Services.AddAppleDeveloperPortal(new Uri(anisetteBaseUrl), deviceId, allowInsecureTls,
+    signingIdentityDirectory: Path.Combine(stateDirectory, "identities"));
 
 // Refresh orchestrator + scheduler (P6): the single-flight re-sign loop.
 var runScheduler = builder.Configuration.GetValue("Sideport:Scheduler:Enabled", true);

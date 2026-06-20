@@ -17,6 +17,17 @@ public sealed class PortalSigningOptions
         Path.Combine(Path.GetTempPath(), "sideport", "identities");
 
     /// <summary>
+    /// Durable, owner-private directory where the persisted signing IDENTITY (the
+    /// minted certificate + private key) lives. Null derives it from
+    /// <see cref="WorkDirectory"/> (back-compat). In production this MUST be on a
+    /// persistent volume: if it is lost, the next refresh mints a NEW certificate,
+    /// which forces the user to re-trust the developer on the device and churns
+    /// the free-tier certificate quota. The ephemeral per-call signer staging
+    /// stays under <see cref="WorkDirectory"/>.
+    /// </summary>
+    public string? IdentityDirectory { get; set; }
+
+    /// <summary>
     /// Re-mint the development certificate when it would otherwise expire within
     /// this window. Development certs last ~1 year; the profile (not the cert) is
     /// what expires weekly, so this lead time is deliberately generous and the

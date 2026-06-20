@@ -144,8 +144,12 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
     private RefreshResult Record(
         string udid, string bundleId, DateTimeOffset? expiry, bool success, string? error)
     {
-        _states[KeyOf(udid, bundleId)] = new RefreshState(
-            udid, bundleId, expiry, DateTimeOffset.UtcNow, success, error);
+        string key = KeyOf(udid, bundleId);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        // Carry the last SUCCESSFUL sign time forward so the re-sign cadence
+        // measures success recency, not failed attempts.
+        DateTimeOffset? lastSucceeded = success ? now : _states.GetValueOrDefault(key)?.LastSucceededUtc;
+        _states[key] = new RefreshState(udid, bundleId, expiry, now, success, error, lastSucceeded);
 
         if (!success)
             _logger.LogWarning("refresh of {Bundle} on {Udid} failed: {Error}", bundleId, udid, error);
