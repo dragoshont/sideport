@@ -215,26 +215,26 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     }
 
     /// <summary>
-    /// Decode the muxer's <c>NetworkAddress</c> (a BSD <c>sockaddr</c>: byte 0 =
-    /// length, byte 1 = family; Darwin <c>AF_INET</c>=2, <c>AF_INET6</c>=30) into
-    /// an IP string. IPv6 link-local (<c>fe80::/10</c>) needs a pod-local scope
-    /// id we cannot supply and is treated as unusable.
+    /// Convert <see cref="UsbmuxdDevice.NetworkAddress"/> to an IP string.
+    /// Netimobiledevice already decodes the muxer sockaddr down to the raw
+    /// address bytes in its constructor, so this is 4 bytes (IPv4) or 16 bytes
+    /// (IPv6). IPv6 link-local (<c>fe80::/10</c>) needs a pod-local scope id we
+    /// cannot supply and is treated as unusable.
     /// </summary>
-    internal static string? DecodeNetworkAddress(byte[]? sockaddr)
+    internal static string? DecodeNetworkAddress(byte[]? address)
     {
-        if (sockaddr is null || sockaddr.Length < 8)
+        if (address is null)
             return null;
 
-        int family = sockaddr[1];
-        if (family == 2) // AF_INET — IPv4 address at offset 4
-            return new IPAddress(sockaddr.AsSpan(4, 4).ToArray()).ToString();
+        if (address.Length == 4) // IPv4
+            return new IPAddress(address).ToString();
 
-        if (family is 10 or 28 or 30 && sockaddr.Length >= 24) // AF_INET6
+        if (address.Length == 16) // IPv6
         {
             // Link-local (fe80::/10) is not routable from the pod.
-            if (sockaddr[8] == 0xFE && (sockaddr[9] & 0xC0) == 0x80)
+            if (address[0] == 0xFE && (address[1] & 0xC0) == 0x80)
                 return null;
-            return new IPAddress(sockaddr.AsSpan(8, 16).ToArray()).ToString();
+            return new IPAddress(address).ToString();
         }
 
         return null;
