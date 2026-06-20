@@ -462,6 +462,30 @@ public class ApiSmokeTests
     }
 
     [Fact]
+    public async Task AppRegistration_PersistsInputIpaIntoState_SurvivingSourceLoss()
+    {
+        string dir = TestDir();
+        string ipaPath = WriteTestIpa(dir, "ro.hont.certcountdown", "Cert Clock", "1", "0.1.0");
+        string stateDir = Path.Combine(dir, "state");
+
+        using var factory = Factory(apiToken: "s3cr3t-token", stateDirectory: stateDir);
+        using HttpClient client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "s3cr3t-token");
+
+        HttpResponseMessage created = await client.PostAsJsonAsync("/api/apps", Registration("ro.hont.certcountdown", ipaPath));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        // The ephemeral upload path is wiped (as a pod restart would) ...
+        File.Delete(ipaPath);
+
+        // ... but a durable copy lives under the PVC state dir, so the scheduler's
+        // refresh inputs survive the restart.
+        string ipasDir = Path.Combine(stateDir, "ipas");
+        Assert.True(Directory.Exists(ipasDir));
+        Assert.Single(Directory.GetFiles(ipasDir, "*.ipa", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task AppRegistration_RejectsBundleMismatch()
     {
         string dir = TestDir();

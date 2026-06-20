@@ -651,7 +651,7 @@ app.MapGet("/api/apps", async (IAppRegistry registry, RefreshOrchestrator orches
     }));
 });
 
-app.MapPost("/api/apps", async (AppRegistration registration, IAppRegistry registry, CancellationToken ct) =>
+app.MapPost("/api/apps", async (AppRegistration registration, IAppRegistry registry, IpaStore ipaStore, CancellationToken ct) =>
 {
     var validationErrors = ValidateRegistration(registration);
     if (validationErrors.Count > 0)
@@ -695,12 +695,38 @@ app.MapPost("/api/apps", async (AppRegistration registration, IAppRegistry regis
         });
     }
 
-    await registry.UpsertAsync(registration, ct);
-    return Results.Created($"/api/apps/{registration.DeviceUdid}/{registration.BundleId}", registration);
+    // Copy the IPA into durable PVC storage and point the registration at it, so
+    // a pod restart (which wipes the ephemeral upload path) doesn't strand the
+    // scheduler with "input IPA not found". The registration JSON alone isn't
+    // enough — the artifact has to persist too.
+    string durableIpaPath;
+    try
+    {
+        durableIpaPath = await ipaStore.StoreAsync(
+            registration.DeviceUdid, registration.BundleId, registration.InputIpaPath, ct);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return Results.Problem(
+            detail: $"could not persist the IPA to durable storage: {ex.Message}",
+            statusCode: 500);
+    }
+
+    AppRegistration stored = registration with { InputIpaPath = durableIpaPath };
+    await registry.UpsertAsync(stored, ct);
+    return Results.Created($"/api/apps/{stored.DeviceUdid}/{stored.BundleId}", stored);
 });
 
-app.MapDelete("/api/apps/{udid}/{bundleId}", async (string udid, string bundleId, IAppRegistry registry, CancellationToken ct) =>
-    await registry.RemoveAsync(udid, bundleId, ct) ? Results.NoContent() : Results.NotFound());
+app.MapDelete("/api/apps/{udid}/{bundleId}", async (string udid, string bundleId, IAppRegistry registry, IpaStore ipaStore, CancellationToken ct) =>
+{
+    bool removed = await registry.RemoveAsync(udid, bundleId, ct);
+    if (removed)
+    {
+        try { ipaStore.Remove(udid, bundleId); }
+        catch (IOException) { /* best-effort: the registration is already gone */ }
+    }
+    return removed ? Results.NoContent() : Results.NotFound();
+});
 
 app.MapPost("/api/apps/{udid}/{bundleId}/refresh",
     async (string udid, string bundleId, IRefreshOrchestrator orchestrator, CancellationToken ct) =>

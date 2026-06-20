@@ -15,6 +15,14 @@ public sealed class OrchestratorOptions
     public string AppRegistryPath => Path.Combine(StateDirectory, "apps.json");
 
     /// <summary>
+    /// Durable directory for the INPUT IPAs registrations point at (one per app),
+    /// on the same PVC as <see cref="AppRegistryPath"/>. Copying the IPA here at
+    /// registration time is what lets the scheduler re-sign unattended after a
+    /// pod restart wipes the ephemeral upload path.
+    /// </summary>
+    public string IpaStoreDirectory => Path.Combine(StateDirectory, "ipas");
+
+    /// <summary>
     /// Directory where signed output IPAs are written. Defaults to a Sideport
     /// work directory under the system temp path.
     /// </summary>

@@ -25,6 +25,10 @@ public static class OrchestratorServiceCollectionExtensions
         services.AddSingleton(options ?? new OrchestratorOptions());
         services.AddSingleton<IAppRegistry>(sp => new FileAppRegistry(
             sp.GetRequiredService<OrchestratorOptions>().AppRegistryPath));
+        // Durable, PVC-backed store for the input IPAs registrations point at, so
+        // the scheduler can re-sign unattended after a restart wipes /tmp.
+        services.AddSingleton(sp => new IpaStore(
+            sp.GetRequiredService<OrchestratorOptions>().IpaStoreDirectory));
         // Default credential source. TryAdd so a host that pre-registers a
         // different IAppleCredentialProvider (e.g. AppleKeychainCredentialProvider
         // when Sideport:Apple:CredentialSource=keychain) wins; env stays the default.
