@@ -1,0 +1,32 @@
+name: DiceRoll
+options:
+  bundleIdPrefix: ro.hont.diceroll
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: "" # leave blank for an unsigned build (Sideport re-signs with your own identity), or set your Apple Team ID to build signed locally
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.9"
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: DiceRoll
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+
+targets:
+  DiceRoll:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ro.hont.diceroll
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
