@@ -319,6 +319,7 @@ async function requestJson<T>(config: ApiConfig, path: string, protectedApi: boo
   try {
     const response = await fetch(joinUrl(config.baseUrl, path), {
       headers,
+      credentials: 'same-origin',
       signal: controller.signal,
     })
     const data = await readJsonBody<T>(response)
@@ -403,7 +404,7 @@ async function mutateJson<T>(config: ApiConfig, path: string, init: RequestInit)
   if (init.body) headers.set('Content-Type', 'application/json')
   if (config.token) headers.set('Authorization', `Bearer ${config.token}`)
 
-  const response = await fetch(joinUrl(config.baseUrl, path), { ...init, headers })
+  const response = await fetch(joinUrl(config.baseUrl, path), { ...init, headers, credentials: 'same-origin' })
   if (!response.ok) throw new Error(await responseError(response))
   if (response.status === 204) return undefined as T
   return await response.json() as T

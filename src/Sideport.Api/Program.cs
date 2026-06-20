@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.HttpOverrides;
 using Sideport.Api.AppleAccess;
 using Sideport.Api.Catalog;
 using Sideport.Api.Diagnostics;
@@ -60,6 +64,17 @@ var personalAppleOptions = new PersonalAppleAccessOptions(
 var apiToken = builder.Configuration["Sideport:Api:AuthToken"]
     ?? Environment.GetEnvironmentVariable("SIDEPORT_API_TOKEN");
 
+// OIDC (Authentik) interactive login for the admin UI (native relying party).
+// Optional: when Sideport:Oidc:Enabled is false (default) the service behaves
+// exactly as before (bearer-only /api, open UI shell) so tests + local dev are
+// unaffected. When true, the browser UI is gated behind OpenID Connect and the
+// authenticated session cookie additionally authorizes /api/* (the bearer token
+// stays valid for machine clients).
+var oidcEnabled = builder.Configuration.GetValue("Sideport:Oidc:Enabled", false);
+var oidcAuthority = builder.Configuration["Sideport:Oidc:Authority"];
+var oidcClientId = builder.Configuration["Sideport:Oidc:ClientId"];
+var oidcClientSecret = builder.Configuration["Sideport:Oidc:ClientSecret"];
+
 var operationLogs = new OperationLogStore(
     builder.Configuration.GetValue("Sideport:Logs:Capacity", 500));
 builder.Services.AddSingleton(operationLogs);
@@ -115,9 +130,99 @@ builder.Services.AddSingleton<IAppleAccessProbe>(sp => new AppStoreConnectProbe(
     sp.GetRequiredService<AppStoreConnectOptions>()));
 builder.Services.AddSingleton<IPersonalAppleAccess, PersonalAppleAccess>();
 
+// --- OIDC + cookie auth (only when enabled, so tests/local dev are unchanged) ---
+if (oidcEnabled)
+{
+    if (string.IsNullOrWhiteSpace(oidcAuthority) ||
+        string.IsNullOrWhiteSpace(oidcClientId) ||
+        string.IsNullOrWhiteSpace(oidcClientSecret))
+    {
+        throw new InvalidOperationException(
+            "Sideport:Oidc:Enabled is true but Sideport:Oidc:Authority/ClientId/ClientSecret are not all set.");
+    }
+
+    // Behind Traefik (TLS terminated at the edge) the pod sees plain HTTP. Honour
+    // X-Forwarded-Proto/Host so the OIDC redirect_uri is built as https://<host>.
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
+    builder.Services
+        .AddAuthentication(options =>
+        {
+            options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+        })
+        .AddCookie(options =>
+        {
+            options.Cookie.Name = "sideport.session";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.ExpireTimeSpan = TimeSpan.FromHours(8);
+            options.SlidingExpiration = true;
+        })
+        .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
+        {
+            options.Authority = oidcAuthority;
+            options.ClientId = oidcClientId;
+            options.ClientSecret = oidcClientSecret;
+            options.ResponseType = "code";
+            options.UsePkce = true;
+            options.SaveTokens = false;
+            options.GetClaimsFromUserInfoEndpoint = true;
+            options.MapInboundClaims = false;
+            options.CallbackPath = "/signin-oidc";
+            options.SignedOutCallbackPath = "/signout-callback-oidc";
+            options.Scope.Clear();
+            options.Scope.Add("openid");
+            options.Scope.Add("profile");
+            options.Scope.Add("email");
+            options.TokenValidationParameters.NameClaimType = "preferred_username";
+        });
+
+    builder.Services.AddAuthorization();
+}
+
 var app = builder.Build();
 bool hasAdminBundle = app.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists;
 var requestLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Sideport.Api.Requests");
+
+// OIDC pipeline (when enabled): forwarded headers -> auth -> gate the UI shell so
+// the SPA is only served to an authenticated session; everything else 302s to
+// Authentik. Must run before the static-file middleware below.
+if (oidcEnabled)
+{
+    app.UseForwardedHeaders();
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.Use(async (context, next) =>
+    {
+        PathString path = context.Request.Path;
+        bool isApi = path.StartsWithSegments("/api");
+        bool isProbe = path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase);
+        bool isAuthRoute = path.StartsWithSegments("/signin-oidc")
+            || path.StartsWithSegments("/signout-callback-oidc")
+            || path.Equals("/login", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/logout", StringComparison.OrdinalIgnoreCase);
+
+        if (!isApi && !isProbe && !isAuthRoute &&
+            context.User?.Identity?.IsAuthenticated != true)
+        {
+            await context.ChallengeAsync(
+                OpenIdConnectDefaults.AuthenticationScheme,
+                new AuthenticationProperties { RedirectUri = path + context.Request.QueryString });
+            return;
+        }
+
+        await next();
+    });
+}
 
 if (hasAdminBundle)
 {
@@ -125,7 +230,7 @@ if (hasAdminBundle)
     app.UseStaticFiles();
 }
 
-if (string.IsNullOrEmpty(apiToken))
+if (string.IsNullOrEmpty(apiToken) && !oidcEnabled)
 {
     app.Logger.LogWarning(
         "Sideport:Api:AuthToken is not set — the /api surface is UNAUTHENTICATED. " +
@@ -159,18 +264,33 @@ app.Use(async (context, next) =>
 
 app.Use(async (context, next) =>
 {
-    if (!string.IsNullOrEmpty(apiToken) &&
-        context.Request.Path.StartsWithSegments("/api"))
+    if (context.Request.Path.StartsWithSegments("/api"))
     {
-        string? provided = null;
-        if (context.Request.Headers.TryGetValue("Authorization", out var auth))
+        bool tokenConfigured = !string.IsNullOrEmpty(apiToken);
+        bool authorized = false;
+
+        // Machine clients: constant-time bearer-token match.
+        if (tokenConfigured &&
+            context.Request.Headers.TryGetValue("Authorization", out var auth))
         {
             string raw = auth.ToString();
-            if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                provided = raw["Bearer ".Length..].Trim();
+            if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) &&
+                FixedTimeEquals(raw["Bearer ".Length..].Trim(), apiToken!))
+            {
+                authorized = true;
+            }
         }
 
-        if (provided is null || !FixedTimeEquals(provided, apiToken))
+        // Browser clients: an authenticated OIDC session cookie also authorizes /api/*.
+        if (!authorized && oidcEnabled && context.User?.Identity?.IsAuthenticated == true)
+            authorized = true;
+
+        // Back-compat: with neither a token nor OIDC configured, /api stays open
+        // (the loud startup warning above still fires).
+        if (!authorized && !tokenConfigured && !oidcEnabled)
+            authorized = true;
+
+        if (!authorized)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsJsonAsync(new { error = "unauthorized" });
@@ -194,6 +314,36 @@ if (!hasAdminBundle)
     app.MapGet("/", () => Results.Ok(ServiceInfo()));
 
 app.MapGet("/api/about", () => Results.Ok(ServiceInfo()));
+
+// Who am I — lets the admin UI show the signed-in identity. Reached only after the
+// /api gate above authorizes the request (OIDC session cookie or bearer token).
+app.MapGet("/api/me", (HttpContext ctx) =>
+    ctx.User?.Identity?.IsAuthenticated == true
+        ? Results.Ok(new
+        {
+            authenticated = true,
+            user = ctx.User.Identity!.Name,
+            email = ctx.User.FindFirst("email")?.Value,
+            via = "oidc",
+        })
+        : Results.Ok(new { authenticated = true, user = (string?)null, email = (string?)null, via = "token" }));
+
+// Interactive login/logout (only meaningful when OIDC is enabled).
+if (oidcEnabled)
+{
+    app.MapGet("/login", (string? returnUrl) =>
+        Results.Challenge(
+            new AuthenticationProperties { RedirectUri = string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl },
+            [OpenIdConnectDefaults.AuthenticationScheme]));
+
+    // GET logout: a plain link works for the SPA. RP-initiated logout clears the
+    // local cookie and ends the Authentik session. (Logout-CSRF is low-risk for a
+    // single-tenant admin tool; revisit if the surface widens.)
+    app.MapGet("/logout", () =>
+        Results.SignOut(
+            new AuthenticationProperties { RedirectUri = "/" },
+            [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]));
+}
 
 // Liveness: the process is up. Cheap, dependency-free (k8s livenessProbe).
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));

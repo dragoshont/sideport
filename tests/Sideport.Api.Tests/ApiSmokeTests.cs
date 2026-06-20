@@ -35,7 +35,8 @@ public class ApiSmokeTests
         HttpMessageHandler? ascHandler = null,
         string? personalAppleId = null,
         string? personalApplePassword = null,
-        StubApplePortal? personalApplePortal = null)
+        StubApplePortal? personalApplePortal = null,
+        bool oidc = false)
     {
         signerPath ??= typeof(ApiSmokeTests).Assembly.Location; // a file that exists
         stateDirectory ??= Path.Combine(Path.GetTempPath(), "sideport-api-tests", Guid.NewGuid().ToString("N"));
@@ -60,6 +61,13 @@ public class ApiSmokeTests
                 builder.UseSetting("Sideport:AppStoreConnect:BaseUrl", "https://apple.test");
             if (personalAppleId is not null)
                 builder.UseSetting("Sideport:Apple:PersonalAppleId", personalAppleId);
+            if (oidc)
+            {
+                builder.UseSetting("Sideport:Oidc:Enabled", "true");
+                builder.UseSetting("Sideport:Oidc:Authority", "https://authentik.invalid/application/o/sideport/");
+                builder.UseSetting("Sideport:Oidc:ClientId", "test-client");
+                builder.UseSetting("Sideport:Oidc:ClientSecret", "test-secret");
+            }
 
             builder.ConfigureServices(services =>
             {
@@ -156,6 +164,46 @@ public class ApiSmokeTests
 
         HttpResponseMessage response = await client.GetAsync("/api/anisette/info");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Api_WithOidcEnabled_StillAcceptsBearerToken()
+    {
+        // The machine path must survive turning OIDC on: a valid bearer token
+        // authorizes /api/* even when interactive OIDC login is enabled.
+        using var factory = Factory(apiToken: "s3cr3t-token", oidc: true);
+        using HttpClient client = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "s3cr3t-token");
+
+        HttpResponseMessage response = await client.GetAsync("/api/anisette/info");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Api_WithOidcEnabled_RejectsUnauthenticated()
+    {
+        // No bearer token and no session cookie -> /api/* is 401 (not redirected).
+        using var factory = Factory(apiToken: "s3cr3t-token", oidc: true);
+        using HttpClient client = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        HttpResponseMessage response = await client.GetAsync("/api/anisette/info");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Probes_StayOpen_WithOidcEnabled()
+    {
+        // Liveness/readiness must never be gated behind login (k8s probes).
+        using var factory = Factory(apiToken: "s3cr3t-token", oidc: true);
+        using HttpClient client = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/healthz")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/readyz")).StatusCode);
     }
 
     [Fact]

@@ -488,8 +488,17 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `SIDEPORT_API_TOKEN` | recommended | *(unset)* | Bearer token guarding `/api/*`. If unset, the API is **open** and logs a loud warning. |
 | `Sideport__Signer__BinaryPath` | — | `/opt/sideport/zsign` | The signer binary (baked into the image). |
 | `Sideport__Scheduler__Enabled` | — | `true` | Turn the automatic 7-day refresh loop on/off. |
+| `Sideport__Oidc__Enabled` | — | `false` | Gate the **admin web UI** behind OpenID Connect login (e.g. Authentik). When off, the UI is open and `/api/*` uses the bearer token only. |
+| `Sideport__Oidc__Authority` | when OIDC on | — | OIDC issuer URL, e.g. `https://auth.example.com/application/o/sideport/`. |
+| `Sideport__Oidc__ClientId` | when OIDC on | — | OIDC client ID for the Sideport application. |
+| `Sideport__Oidc__ClientSecret` | when OIDC on | — | OIDC client secret (keep in your secret store, never in the image). |
 
-### HTTP API
+When OIDC is enabled the browser UI requires an interactive login and the
+authenticated session cookie also authorizes `/api/*`, so the bearer token stays
+valid for scripts/automation. The app expects the reverse proxy to forward
+`X-Forwarded-Proto`/`Host` (it honours them so the `redirect_uri` is `https`).
+Register `https://<host>/signin-oidc` as the redirect URI (and
+`https://<host>/signout-callback-oidc` for logout) on the provider.
 
 | Method & path | Auth | Purpose |
 |---|---|---|
