@@ -54,6 +54,61 @@ public class NetimobiledeviceControllerTests
         Assert.Empty(await Build().ListDevicesAsync());
     }
 
+    // --- device connectivity self-test (DiagnoseAsync) --------------------
+
+    [Fact]
+    public async Task Diagnose_TransportDown_IsBlockedWithRemediation()
+    {
+        _backend.DiagnoseTransportReachable = false;
+        _backend.DiagnoseTransportError = "Can't connect to Usbmux socket";
+
+        DeviceDiagnostics result = await Build().DiagnoseAsync();
+
+        Assert.Equal("blocked", result.Status);
+        DeviceCheck usbmux = Assert.Single(result.Checks);
+        Assert.Equal("usbmux", usbmux.Id);
+        Assert.Equal("blocked", usbmux.Status);
+        Assert.False(string.IsNullOrWhiteSpace(usbmux.Remediation));
+    }
+
+    [Fact]
+    public async Task Diagnose_NoDevices_IsBlockedAtEnumeration()
+    {
+        DeviceDiagnostics result = await Build().DiagnoseAsync();
+
+        Assert.Equal("blocked", result.Status);
+        Assert.Contains(result.Checks, c => c.Id == "usbmux" && c.Status == "ok");
+        Assert.Contains(result.Checks, c => c.Id == "devices" && c.Status == "blocked");
+    }
+
+    [Fact]
+    public async Task Diagnose_UnpairedDevice_IsBlockedAtTrust()
+    {
+        _backend.DiagnoseProbes.Add(new BackendDeviceProbe(
+            "UDID-1", DeviceConnection.Wifi, LockdownOk: false, Name: null, LockdownError: "trust not accepted"));
+
+        DeviceDiagnostics result = await Build().DiagnoseAsync();
+
+        Assert.Equal("blocked", result.Status);
+        Assert.Contains(result.Checks, c => c.Id == "devices" && c.Status == "ok");
+        DeviceCheck trust = Assert.Single(result.Checks, c => c.Id.StartsWith("trust:"));
+        Assert.Equal("blocked", trust.Status);
+        Assert.Contains("Trust This Computer", trust.Remediation!);
+    }
+
+    [Fact]
+    public async Task Diagnose_HealthyDevice_IsOk()
+    {
+        _backend.DiagnoseProbes.Add(new BackendDeviceProbe(
+            "UDID-1", DeviceConnection.Usb, LockdownOk: true, Name: "Test iPhone", LockdownError: null));
+
+        DeviceDiagnostics result = await Build().DiagnoseAsync();
+
+        Assert.Equal("ok", result.Status);
+        Assert.All(result.Checks, c => Assert.Equal("ok", c.Status));
+        Assert.Contains(result.Checks, c => c.Detail.Contains("Test iPhone"));
+    }
+
     // --- installed apps + expiry join -------------------------------------
 
     [Fact]

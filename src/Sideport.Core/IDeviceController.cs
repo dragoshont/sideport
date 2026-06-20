@@ -17,6 +17,13 @@ public interface IDeviceController
 
     /// <summary>Install (or upgrade) an IPA onto a device.</summary>
     Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default);
+
+    /// <summary>
+    /// Run a connectivity self-test of the device transport chain
+    /// (usbmux socket → device enumeration → per-device trust/lockdown), returning
+    /// human-readable remediation for whichever layer fails first.
+    /// </summary>
+    Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default);
 }
 
 /// <summary>A reachable iOS device.</summary>
@@ -29,6 +36,23 @@ public sealed record DeviceInfo(
 
 /// <summary>How a device is currently reachable.</summary>
 public enum DeviceConnection { Usb, Wifi }
+
+/// <summary>Result of a device-connectivity self-test (worst layer wins).</summary>
+public sealed record DeviceDiagnostics(
+    string Status,
+    IReadOnlyList<DeviceCheck> Checks);
+
+/// <summary>
+/// One step of the device-connectivity self-test. <paramref name="Status"/> is
+/// <c>ok</c>, <c>warning</c>, or <c>blocked</c>; <paramref name="Remediation"/>
+/// is the operator-facing fix when not <c>ok</c>.
+/// </summary>
+public sealed record DeviceCheck(
+    string Id,
+    string Label,
+    string Status,
+    string Detail,
+    string? Remediation = null);
 
 /// <summary>An installed app and the date its signature expires.</summary>
 public sealed record InstalledApp(

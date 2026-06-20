@@ -27,6 +27,12 @@ internal interface IDeviceBackend
 
     /// <summary>Install (or upgrade) an IPA already validated by the controller.</summary>
     Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct);
+
+    /// <summary>
+    /// Probe the device transport: whether the usbmux socket is reachable and,
+    /// per enumerated device, whether the lockdown/trust handshake succeeds.
+    /// </summary>
+    Task<BackendDiagnostics> DiagnoseAsync(CancellationToken ct);
 }
 
 /// <summary>A device as seen by the backend, with lockdown-derived metadata.</summary>
@@ -43,3 +49,17 @@ internal sealed record BackendApp(
     string Name,
     string Version,
     bool IsUserApp);
+
+/// <summary>Outcome of a transport probe: usbmux reachability + per-device trust.</summary>
+internal sealed record BackendDiagnostics(
+    bool TransportReachable,
+    string? TransportError,
+    IReadOnlyList<BackendDeviceProbe> Devices);
+
+/// <summary>A single device's reachability + lockdown/trust handshake result.</summary>
+internal sealed record BackendDeviceProbe(
+    string Udid,
+    DeviceConnection Connection,
+    bool LockdownOk,
+    string? Name,
+    string? LockdownError);

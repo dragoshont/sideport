@@ -435,6 +435,12 @@ app.MapPost("/api/apple-access/personal/2fa", async (PersonalAppleCompleteTwoFac
 app.MapGet("/api/devices", async (IDeviceController devices, CancellationToken ct) =>
     Results.Ok(await devices.ListDevicesAsync(ct)));
 
+// Device connectivity self-test (built-in troubleshooting): walks the transport
+// chain usbmux -> device enumeration -> per-device trust/lockdown and reports
+// where it breaks, with operator-facing remediation for each failing layer.
+app.MapGet("/api/devices/diagnostics", async (IDeviceController devices, CancellationToken ct) =>
+    Results.Ok(await devices.DiagnoseAsync(ct)));
+
 app.MapGet("/api/devices/{udid}/installed-apps", async (string udid, IDeviceController devices, CancellationToken ct) =>
 {
     try

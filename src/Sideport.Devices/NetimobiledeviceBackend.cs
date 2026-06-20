@@ -115,6 +115,39 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         await installProxy.Install(ipaPath, ct, options: null, progress).ConfigureAwait(false);
     }
 
+    public Task<BackendDiagnostics> DiagnoseAsync(CancellationToken ct)
+    {
+        List<UsbmuxdDevice> muxDevices;
+        try
+        {
+            muxDevices = Usbmux.GetDeviceList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("usbmux transport probe failed: {Error}", ex.Message);
+            return Task.FromResult<BackendDiagnostics>(new BackendDiagnostics(false, ex.Message, []));
+        }
+
+        var probes = new List<BackendDeviceProbe>(muxDevices.Count);
+        foreach (UsbmuxdDevice muxDevice in muxDevices)
+        {
+            DeviceConnection connection = muxDevice.ConnectionType == UsbmuxdConnectionType.Network
+                ? DeviceConnection.Wifi
+                : DeviceConnection.Usb;
+            try
+            {
+                using UsbmuxLockdownClient lockdown = MobileDevice.CreateUsingUsbmux(muxDevice.Serial, logger: _logger);
+                probes.Add(new BackendDeviceProbe(muxDevice.Serial, connection, true, lockdown.DeviceName, null));
+            }
+            catch (Exception ex)
+            {
+                probes.Add(new BackendDeviceProbe(muxDevice.Serial, connection, false, null, ex.Message));
+            }
+        }
+
+        return Task.FromResult<BackendDiagnostics>(new BackendDiagnostics(true, null, probes));
+    }
+
     private static string ReadString(DictionaryNode dict, string key) =>
         dict.TryGetValue(key, out PropertyNode? node) ? node.AsStringNode().Value : "";
 }

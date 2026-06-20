@@ -97,4 +97,7 @@ internal sealed class FakeDeviceController : IDeviceController
         Installs.Add((udid, ipaPath));
         return Task.CompletedTask;
     }
+
+    public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>
+        Task.FromResult(new DeviceDiagnostics("ok", []));
 }

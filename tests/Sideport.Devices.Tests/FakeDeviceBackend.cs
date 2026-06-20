@@ -31,6 +31,14 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
         Installs.Add((udid, ipaPath));
         return Task.CompletedTask;
     }
+
+    public bool DiagnoseTransportReachable { get; set; } = true;
+    public string? DiagnoseTransportError { get; set; }
+    public List<BackendDeviceProbe> DiagnoseProbes { get; } = [];
+
+    public Task<BackendDiagnostics> DiagnoseAsync(CancellationToken ct) =>
+        Task.FromResult<BackendDiagnostics>(
+            new BackendDiagnostics(DiagnoseTransportReachable, DiagnoseTransportError, DiagnoseProbes));
 }
 
 /// <summary>

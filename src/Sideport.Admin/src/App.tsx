@@ -37,7 +37,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import './App.css'
-import { completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, refreshSideportApp, registerSideportApp, saveSideportApiToken, signInPersonalApple, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload } from './api/sideportApi'
+import { completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, refreshSideportApp, registerSideportApp, runDeviceDiagnostics, saveSideportApiToken, signInPersonalApple, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload, type DeviceDiagnosticsDto } from './api/sideportApi'
 import type { OnboardingStep, OnboardingStepState } from './api/sideportApi'
 import {
   runtimeEmptyData,
@@ -988,10 +988,53 @@ function AppleAccessCapabilityList({ capabilities }: { capabilities: AppleAccess
   )
 }
 
+function DeviceConnectivitySelfTest() {
+  const [result, setResult] = useState<DeviceDiagnosticsDto | null>(null)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async () => {
+    setRunning(true)
+    setError(null)
+    try {
+      setResult(await runDeviceDiagnostics())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <Panel title="Device connectivity self-test">
+      <p className="muted">Walks the device transport chain — usbmux socket → device discovery → trust/pairing — and shows the first layer that fails, with how to fix it.</p>
+      <button className="primary-action" disabled={running} onClick={run} type="button">
+        <Stethoscope size={16} /> {running ? 'Running check…' : 'Run connectivity check'}
+      </button>
+      {error && <p className="muted" style={{ marginTop: 12 }}>Could not run the check: {error}</p>}
+      {result && (
+        <ul style={{ listStyle: 'none', margin: '14px 0 0', padding: 0, display: 'grid', gap: 12 }}>
+          {result.checks.map((check) => (
+            <li key={check.id} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <StatusPill state={check.status === 'ok' ? 'healthy' : check.status === 'warning' ? 'warning' : 'blocked'} label={check.status} />
+              <div style={{ minWidth: 0 }}>
+                <strong>{check.label}</strong>
+                <p className="muted" style={{ margin: '2px 0 0' }}>{check.detail}</p>
+                {check.remediation && <p style={{ margin: '4px 0 0', fontSize: 13 }}>→ {check.remediation}</p>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  )
+}
+
 export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Diagnostics" title="Runtime failure evidence" description="Live evidence comes from readiness checks, API fetch failures, app lastError fields, and the protected API log stream." />
+      <DeviceConnectivitySelfTest />
       {data.issues.length ? <DiagnosticIssueList issues={data.issues} /> : <EmptyState icon={Stethoscope} title="No diagnostic issues" detail="When OpenTelemetry is wired, this page will group refresh/sign/install failures by operation and trace ID." />}
       <Panel title="Log highlights">
         {data.logs.length ? <OperationLogList logs={data.logs.slice(0, 10)} /> : <EmptyState icon={Activity} title="No API logs yet" detail="The runtime log endpoint has not returned entries for this snapshot." />}

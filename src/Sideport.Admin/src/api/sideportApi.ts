@@ -396,6 +396,28 @@ export async function deleteSideportApp(deviceUdid: string, bundleId: string, co
   })
 }
 
+export interface DeviceCheckDto {
+  id: string
+  label: string
+  status: 'ok' | 'warning' | 'blocked' | string
+  detail: string
+  remediation?: string | null
+}
+
+export interface DeviceDiagnosticsDto {
+  status: 'ok' | 'warning' | 'blocked' | string
+  checks: DeviceCheckDto[]
+}
+
+/** Run the backend device-connectivity self-test (usbmux -> enumerate -> trust). */
+export async function runDeviceDiagnostics(config = getSideportApiConfig()): Promise<DeviceDiagnosticsDto> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (config.token) headers.Authorization = `Bearer ${config.token}`
+  const response = await fetch(joinUrl(config.baseUrl, '/api/devices/diagnostics'), { headers, credentials: 'same-origin' })
+  if (!response.ok) throw new Error(await responseError(response))
+  return await response.json() as DeviceDiagnosticsDto
+}
+
 async function mutateJson<T>(config: ApiConfig, path: string, init: RequestInit): Promise<T> {
   if (!config.canMutate) throw new Error('Mutations are disabled for this admin build.')
 

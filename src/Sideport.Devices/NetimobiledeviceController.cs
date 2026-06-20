@@ -49,6 +49,61 @@ public sealed class NetimobiledeviceController : IDeviceController
         ];
     }
 
+    public async Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default)
+    {
+        BackendDiagnostics probe = await _backend.DiagnoseAsync(ct);
+        var checks = new List<DeviceCheck>();
+
+        // Layer 1 — usbmux transport (the pod's socket to usbmuxd/netmuxd).
+        if (!probe.TransportReachable)
+        {
+            checks.Add(new DeviceCheck(
+                "usbmux", "usbmux transport", "blocked",
+                $"Could not reach the usbmux socket: {probe.TransportError}",
+                "usbmuxd/netmuxd is down on the host, or the pod's /var/run/usbmuxd socket is stale because the host daemon restarted. Restart the daemon and roll out the Sideport pod again."));
+            return new DeviceDiagnostics("blocked", checks);
+        }
+        checks.Add(new DeviceCheck("usbmux", "usbmux transport", "ok", "Connected to the usbmux socket.", null));
+
+        // Layer 2 — device enumeration (USB and/or Wi-Fi).
+        int usb = probe.Devices.Count(d => d.Connection == DeviceConnection.Usb);
+        int wifi = probe.Devices.Count(d => d.Connection == DeviceConnection.Wifi);
+        if (probe.Devices.Count == 0)
+        {
+            checks.Add(new DeviceCheck(
+                "devices", "Device reachable", "blocked",
+                "No devices are visible over USB or Wi-Fi.",
+                "Connect the iPhone with a USB cable, or enable Wi-Fi sync and keep the iPhone unlocked on the same network as the host."));
+            return new DeviceDiagnostics("blocked", checks);
+        }
+        checks.Add(new DeviceCheck(
+            "devices", "Device reachable", "ok",
+            $"{probe.Devices.Count} device(s): {usb} over USB, {wifi} over Wi-Fi.", null));
+
+        // Layer 3 — per-device trust / lockdown handshake.
+        foreach (BackendDeviceProbe d in probe.Devices)
+        {
+            string tag = d.Udid.Length > 8 ? d.Udid[^8..] : d.Udid;
+            if (d.LockdownOk)
+            {
+                checks.Add(new DeviceCheck(
+                    $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "ok",
+                    $"{d.Name} is paired and reachable over {d.Connection}.", null));
+            }
+            else
+            {
+                checks.Add(new DeviceCheck(
+                    $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "blocked",
+                    $"Discovered over {d.Connection}, but the lockdown/trust handshake failed: {d.LockdownError}",
+                    "Unlock the iPhone and tap “Trust This Computer”. If it persists, Sideport cannot read the device's pairing record — pair the device from the host and make sure the lockdown pairing records are reachable by Sideport."));
+            }
+        }
+
+        string status = checks.Any(c => c.Status == "blocked") ? "blocked"
+            : checks.Any(c => c.Status == "warning") ? "warning" : "ok";
+        return new DeviceDiagnostics(status, checks);
+    }
+
     public async Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(udid);
