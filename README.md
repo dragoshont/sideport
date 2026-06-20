@@ -288,7 +288,9 @@ units (Synology/QNAP), and typical home servers.
 
 1. An **Apple ID** (free is fine) and its password.
 2. An **iPhone or iPad you own**, and its **UDID** (how to find it: below).
-3. The **`.ipa` file(s)** of the app(s) you want to keep installed.
+3. The **`.ipa` file(s)** of the app(s) you want to keep installed. *No app
+   handy? Grab a ready-made one from the
+   [sample apps release](https://github.com/dragoshont/sideport/releases/tag/sample-apps).*
 4. An **always-on host** with **Docker** (or a Kubernetes cluster).
 5. On that host: the **`usbmuxd`** package installed, and the iPhone connected by
    **USB at least once** with **"Trust This Computer"** tapped. After that, USB or
@@ -309,6 +311,8 @@ app keeps itself signed.* This uses **Docker Compose** on an x86-64 host.
 ```bash
 mkdir sideport && cd sideport
 mkdir ipa
+# No .ipa yet? Download a sample (CertClock / DiceRoll / Concentration) from:
+#   https://github.com/dragoshont/sideport/releases/tag/sample-apps
 cp /path/to/MyApp.ipa ./ipa/        # the app you want to keep alive
 ```
 
