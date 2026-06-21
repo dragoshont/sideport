@@ -141,6 +141,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
             return (
               <button
                 className={route === item.id ? 'nav-item active' : 'nav-item'}
+                aria-current={route === item.id ? 'page' : undefined}
                 key={item.id}
                 onClick={() => setRoute(item.id)}
                 type="button"
@@ -222,7 +223,7 @@ export function OnboardingPage({ data, apiStatus, onNavigate, onInstallFirstApp 
         <section className="setup-wizard" aria-label="Focused setup wizard">
           <aside className="setup-stepper">
             {wizardSteps.map((step, index) => (
-              <button className={step.id === activeStep.id ? 'setup-step-tab active' : 'setup-step-tab'} key={step.id} onClick={() => setActiveStepId(step.id)} type="button">
+              <button className={step.id === activeStep.id ? 'setup-step-tab active' : 'setup-step-tab'} aria-current={step.id === activeStep.id ? 'step' : undefined} key={step.id} onClick={() => setActiveStepId(step.id)} type="button">
                 <span>{index + 1}</span>
                 <div><strong>{step.title}</strong><small>{step.kicker}</small></div>
                 <StatusPill state={step.health} label={step.statusLabel} />
