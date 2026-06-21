@@ -1,17 +1,22 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
   Apple,
+  Building2,
   Cable,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
+  Command,
+  Filter,
   Gauge,
   HardDrive,
+  History,
   KeyRound,
   ListChecks,
+  Loader2,
   Network,
   Package,
   Play,
@@ -24,10 +29,14 @@ import {
   Stethoscope,
   Terminal,
   TimerReset,
+  UserPlus,
+  Users,
   Wifi,
+  X,
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   flexRender,
   getCoreRowModel,
@@ -47,21 +56,26 @@ import {
   type DiagnosticIssue,
   type HealthState,
   type InstalledAppSummary,
+  type IssueStatus,
+  type MemberStatus,
   type OperationLogEntry,
   type PersonalAppleSummary,
   type RegisteredAppSummary,
   type RenewalItem,
   type RenewalRisk,
   type RenewalStatus,
+  type Severity,
   type SideportReadModel,
   type SourceKind,
   type SystemStatus,
   type AppleAccessCapabilitySummary,
   type AppleAccessSummary,
+  type WorkspaceRole,
+  type WorkspaceSummary,
 } from './data/sideportTypes'
 import { compactUdid, relativeTime, shortDateTime, sourceLabel, timeUntil } from './lib/format'
 
-export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'apple-access' | 'diagnostics' | 'settings'
+export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'apple-access' | 'diagnostics' | 'teams' | 'users' | 'settings'
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
   { id: 'onboarding', label: 'Onboarding', icon: ListChecks },
@@ -71,6 +85,8 @@ const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
   { id: 'renewals', label: 'Renewals', icon: TimerReset },
   { id: 'apple-access', label: 'Apple Access', icon: KeyRound },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
+  { id: 'teams', label: 'Teams', icon: Building2 },
+  { id: 'users', label: 'Users', icon: Users },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
@@ -102,6 +118,7 @@ export interface SideportAdminAppProps {
   data?: SideportReadModel
   apiStatus?: AdminDataStatus
   initialRoute?: RouteId
+  initialCommandOpen?: boolean
   onApiTokenSaved?: () => void
 }
 
@@ -112,17 +129,34 @@ const runtimeStatus: AdminDataStatus = {
   canMutate: false,
 }
 
-export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding', onApiTokenSaved }: SideportAdminAppProps) {
+export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding', initialCommandOpen = false, onApiTokenSaved }: SideportAdminAppProps) {
   const viewData = data ?? runtimeEmptyData
   const viewStatus = apiStatus ?? runtimeStatus
   const catalogApps = viewData.catalogApps
   const [route, setRoute] = useState<RouteId>(initialRoute)
   const [selectedCatalogAppId, setSelectedCatalogAppId] = useState(catalogApps[0]?.id ?? '')
-  const selectedDevice = viewData.devices[0]
+  const [selectedDeviceUdid, setSelectedDeviceUdid] = useState(viewData.devices[0]?.udid ?? '')
+  const [commandOpen, setCommandOpen] = useState(initialCommandOpen)
+  const selectedDevice = viewData.devices.find((device) => device.udid === selectedDeviceUdid) ?? viewData.devices[0]
+  const openDevice = (device: DeviceSummary) => {
+    setSelectedDeviceUdid(device.udid)
+    setRoute('device-detail')
+  }
   const openInstallWizard = (catalogAppId = selectedCatalogAppId) => {
     setSelectedCatalogAppId(catalogAppId || catalogApps[0]?.id || '')
     setRoute('install-app')
   }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="admin-root">
@@ -159,20 +193,23 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
       </aside>
 
       <div className="workspace">
-        <TopBar system={viewData.system} apiStatus={viewStatus} />
+        <TopBar system={viewData.system} apiStatus={viewStatus} onOpenCommand={() => setCommandOpen(true)} />
         <main className="content-area">
           {route === 'onboarding' && <OnboardingPage data={viewData} apiStatus={viewStatus} onNavigate={setRoute} onInstallFirstApp={() => openInstallWizard(catalogApps[0]?.id)} />}
           {route === 'overview' && <OverviewPage data={viewData} onNavigate={setRoute} />}
-          {route === 'devices' && <DevicesPage data={viewData} onOpenDevice={() => setRoute('device-detail')} />}
+          {route === 'devices' && <DevicesPage data={viewData} onOpenDevice={openDevice} />}
           {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} apiStatus={viewStatus} onInstallApp={() => openInstallWizard(catalogApps[0]?.id)} />}
           {route === 'catalog' && <AppCatalogPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} onInstallApp={openInstallWizard} />}
           {route === 'install-app' && <InstallWizardPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} initialCatalogAppId={selectedCatalogAppId} onOpenCatalog={() => setRoute('catalog')} />}
           {route === 'renewals' && <RenewalsPage data={viewData} apiStatus={viewStatus} />}
           {route === 'apple-access' && <AppleAccessPage appleAccess={viewData.appleAccess} personalApple={viewData.personalApple} apiStatus={viewStatus} />}
           {route === 'diagnostics' && <DiagnosticsPage data={viewData} />}
+          {route === 'teams' && <TeamsPage data={viewData} onNavigate={setRoute} />}
+          {route === 'users' && <UsersPage workspace={viewData.workspace} activity={viewData.activity} apiStatus={viewStatus} />}
           {route === 'settings' && <SettingsPage system={viewData.system} apiStatus={viewStatus} onApiTokenSaved={onApiTokenSaved} />}
         </main>
       </div>
+      <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} data={viewData} onNavigate={setRoute} onOpenDevice={openDevice} />
     </div>
   )
 }
@@ -379,13 +416,14 @@ function CatalogReadinessList({ apps }: { apps: CatalogAppSummary[] }) {
   )
 }
 
-function TopBar({ system, apiStatus }: { system: SystemStatus; apiStatus: AdminDataStatus }) {
+function TopBar({ system, apiStatus, onOpenCommand }: { system: SystemStatus; apiStatus: AdminDataStatus; onOpenCommand: () => void }) {
   return (
     <header className="topbar">
-      <div className="search-shell">
+      <button className="search-shell" onClick={onOpenCommand} type="button" aria-label="Search devices, apps, and screens">
         <Search size={17} />
-        <span>Search devices, bundle IDs, blockers</span>
-      </div>
+        <span className="search-label">Search devices, bundle IDs, blockers</span>
+        <span className="search-kbd"><kbd>⌘</kbd><kbd>K</kbd></span>
+      </button>
       <div className="topbar-actions">
         <span className={`api-mode ${apiStatus.mode}`}>{apiModeLabel(apiStatus.mode)}</span>
         <span className="api-base">{apiStatus.baseUrl}</span>
@@ -440,6 +478,10 @@ export function OverviewPage({ data, onNavigate }: { data: SideportReadModel; on
 }
 
 export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; onOpenDevice?: (device: DeviceSummary) => void }) {
+  const [query, setQuery] = useState('')
+  const [connectionFacet, setConnectionFacet] = useState<'all' | DeviceSummary['connection']>('all')
+  const [healthFacet, setHealthFacet] = useState<'all' | HealthState>('all')
+
   if (data.devices.length === 0) {
     return (
       <div className="page-stack">
@@ -449,24 +491,82 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
     )
   }
 
+  const q = query.trim().toLowerCase()
+  const filtered = data.devices.filter((device) => {
+    const haystack = `${device.name} ${device.udid} ${device.productType} ${device.teamId} ${appsForDevice(data.apps, device.udid).map((app) => app.bundleId).join(' ')}`.toLowerCase()
+    const matchesQuery = !q || haystack.includes(q)
+    const matchesConnection = connectionFacet === 'all' || device.connection === connectionFacet
+    const matchesHealth = healthFacet === 'all' || device.health === healthFacet
+    return matchesQuery && matchesConnection && matchesHealth
+  })
+
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Devices" title="Device inventory" description="Reachability comes from /api/devices. App counts and expiry dates come from apps registered in Sideport, not from every app already installed on the phone." />
-      <DeviceInventoryTable devices={data.devices} apps={data.apps} onOpenDevice={onOpenDevice} />
-      <div className="device-card-list">
-        {data.devices.map((device) => <DeviceCard key={device.udid} device={device} apps={appsForDevice(data.apps, device.udid)} onOpen={() => onOpenDevice?.(device)} />)}
+
+      <div className="devices-toolbar">
+        <div className="devices-search">
+          <Search size={16} />
+          <input aria-label="Search devices" onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Name, UDID, bundle ID, team" value={query} />
+        </div>
+        <div className="facet-group" role="group" aria-label="Filter by connection">
+          <span className="facet-label"><Filter size={13} /> Connection</span>
+          {(['all', 'usb', 'wifi', 'offline'] as const).map((value) => (
+            <button aria-pressed={connectionFacet === value} className="facet-chip" key={value} onClick={() => setConnectionFacet(value)} type="button">{value === 'all' ? 'All' : connectionLabel(value)}</button>
+          ))}
+        </div>
+        <div className="facet-group" role="group" aria-label="Filter by health">
+          <span className="facet-label">Health</span>
+          {(['all', 'healthy', 'warning', 'blocked', 'offline'] as const).map((value) => (
+            <button aria-pressed={healthFacet === value} className="facet-chip" key={value} onClick={() => setHealthFacet(value)} type="button">{value === 'all' ? 'All' : healthCopy[value]}</button>
+          ))}
+        </div>
+        <span className="devices-count">{filtered.length} of {data.devices.length} {data.devices.length === 1 ? 'device' : 'devices'}</span>
       </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon={Search} title="No devices match this filter" detail="Clear the search box or reset the connection and health filters to see the full inventory again." />
+      ) : (
+        <>
+          <DeviceInventoryTable devices={filtered} apps={data.apps} onOpenDevice={onOpenDevice} />
+          <div className="device-card-list">
+            {filtered.map((device) => <DeviceCard key={device.udid} device={device} apps={appsForDevice(data.apps, device.udid)} onOpen={() => onOpenDevice?.(device)} />)}
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
 export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { data: SideportReadModel; device?: DeviceSummary; apiStatus: AdminDataStatus; onInstallApp?: () => void }) {
+  const queryClient = useQueryClient()
+  const tabs: Array<{ id: 'apps' | 'signing' | 'network' | 'diagnostics' | 'activity'; label: string; count?: number }> = [
+    { id: 'apps', label: 'Apps', count: device ? appsForDevice(data.apps, device.udid).length : undefined },
+    { id: 'signing', label: 'Signing' },
+    { id: 'network', label: 'Network' },
+    { id: 'diagnostics', label: 'Diagnostics', count: device ? data.issues.filter((issue) => issue.deviceUdid === device.udid).length || undefined : undefined },
+    { id: 'activity', label: 'Activity' },
+  ]
+  type DeviceTab = (typeof tabs)[number]['id']
+  const [activeTab, setActiveTab] = useState<DeviceTab>('apps')
+  const apps = device ? appsForDevice(data.apps, device.udid) : []
+  const refreshTarget = [...apps].sort((a, b) => (a.expiresAt?.value ?? '').localeCompare(b.expiresAt?.value ?? ''))[0]
+  const refreshMutation = useMutation({
+    mutationFn: () => refreshSideportApp(device!.udid, refreshTarget!.bundleId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+
   if (!device) {
     return <EmptyState icon={Smartphone} title="No selected device" detail="Device detail needs a reachable or known device read model." />
   }
-  const apps = appsForDevice(data.apps, device.udid)
   const installedApps = data.installedApps.filter((app) => app.deviceUdid === device.udid)
   const issues = data.issues.filter((issue) => issue.deviceUdid === device.udid)
+  const canRefresh = apiStatus.canMutate && Boolean(refreshTarget) && !refreshMutation.isPending
+  const refreshHelp = !apiStatus.canMutate
+    ? 'Refresh runs from a live, mutations-enabled backend. It is disabled in this read-only build.'
+    : !refreshTarget
+      ? 'No Sideport-registered apps on this device to refresh yet.'
+      : null
 
   return (
     <div className="page-stack">
@@ -478,7 +578,9 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
         </div>
         <div className="hero-actions">
           <StatusPill state={device.health} label={healthCopy[device.health]} />
-          <button className="primary-action" disabled type="button"><RefreshCw size={16} /> Refresh disabled</button>
+          <button className="primary-action" disabled={!canRefresh} onClick={() => refreshMutation.mutate()} type="button">
+            <RefreshCw size={16} /> {refreshMutation.isPending ? 'Refreshing…' : 'Refresh due apps'}
+          </button>
         </div>
       </div>
 
@@ -490,25 +592,89 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
         <FactTile label="Unmanaged installed" value={String(device.unmanagedAppCount)} source={installedApps.length ? 'derived' : 'planned'} />
       </section>
 
-      <Panel title="Sideport-registered app slots">
-        <AppSlotGrid apps={apps} canRegister={apiStatus.canMutate} onInstallApp={onInstallApp} />
-      </Panel>
+      {refreshHelp && <p className="muted">{refreshHelp}</p>}
+      {refreshMutation.isSuccess && <p className="mutation-message success">Refresh request finished. The device snapshot will reload from the API.</p>}
+      {refreshMutation.error && <p className="mutation-message error">{refreshMutation.error.message}</p>}
 
-      <Panel title="Installed on phone">
-        {installedApps.length ? <InstalledAppList apps={installedApps} /> : <EmptyState icon={Package} title="Installed app list unavailable" detail="Sideport could not read installation_proxy data for this reachable phone in the current snapshot." />}
-      </Panel>
+      <div className="device-tablist" role="tablist" aria-label="Device sections">
+        {tabs.map((tab) => (
+          <button
+            aria-controls={`devpanel-${tab.id}`}
+            aria-selected={activeTab === tab.id}
+            className="device-tab"
+            id={`devtab-${tab.id}`}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+            {tab.count ? <span className="tab-count">{tab.count}</span> : null}
+          </button>
+        ))}
+      </div>
 
-      <div className="two-column-layout">
-        <Panel title="Signing and network">
-          <dl className="detail-list">
-            <div><dt>Apple Developer Team</dt><dd>{device.teamId}</dd></div>
-            <div><dt>Single-flight signer</dt><dd>Visible in renewals. Parallel refresh is intentionally blocked.</dd></div>
-            <div><dt>Wi-Fi pairing</dt><dd>{device.connection === 'wifi' ? 'Reachable through host netmuxd/usbmuxd.' : 'No Wi-Fi pairing data reported by the API yet.'}</dd></div>
-          </dl>
-        </Panel>
-        <Panel title="Diagnostics for this device">
-          {issues.length ? <DiagnosticIssueList issues={issues} compact /> : <EmptyState icon={CheckCircle2} title="No open device issues" detail="Trace-linked issue grouping will appear when OpenTelemetry-backed diagnostics are wired." />}
-        </Panel>
+      <div aria-labelledby={`devtab-${activeTab}`} className="device-tabpanel" id={`devpanel-${activeTab}`} role="tabpanel">
+        {activeTab === 'apps' && (
+          <>
+            <Panel title="Sideport-registered app slots">
+              <AppSlotGrid apps={apps} canRegister={apiStatus.canMutate} onInstallApp={onInstallApp} />
+              {apps.length >= 3 && <p className="singleflight-note"><AlertTriangle size={14} /> This device has 3 of 3 app slots in use. Remove an app registration before adding another — this is the Apple free-tier limit, not a Sideport one.</p>}
+            </Panel>
+            <Panel title="Installed on phone">
+              {installedApps.length ? <InstalledAppList apps={installedApps} /> : <EmptyState icon={Package} title="Installed app list unavailable" detail="Sideport could not read installation_proxy data for this reachable phone in the current snapshot." />}
+            </Panel>
+          </>
+        )}
+
+        {activeTab === 'signing' && (
+          <>
+            <Panel title="Signing identity">
+              <dl className="detail-list">
+                <div><dt>Apple Developer Team</dt><dd>{device.teamId}</dd></div>
+                <div><dt>Signing certificate</dt><dd>Reused across refreshes; re-minted only near its ~1-year expiry, so you trust it once.</dd></div>
+                <div><dt>Single-flight signer</dt><dd>One signing operation at a time. Parallel refresh is intentionally serialized — see Renewals.</dd></div>
+              </dl>
+            </Panel>
+            <Panel title="Per-app profile expiry">
+              {apps.length ? (
+                <dl className="detail-list">
+                  {apps.map((app) => (
+                    <div key={app.bundleId}>
+                      <dt>{app.displayName.value}</dt>
+                      <dd>Profile {expiryCopy(app.expiresAt?.value)} · {app.lastSucceeded === false ? 'last refresh failed' : 'healthy'}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : <EmptyState icon={KeyRound} title="No registered apps" detail="Register an app on this device to see its provisioning-profile expiry." />}
+            </Panel>
+          </>
+        )}
+
+        {activeTab === 'network' && (
+          <Panel title="Network & trust">
+            <dl className="detail-list">
+              <div><dt>Current connection</dt><dd>{connectionLabel(device.connection)}</dd></div>
+              <div><dt>Last seen</dt><dd>{relativeTime(device.lastSeenAt.value)}</dd></div>
+              <div><dt>Wi-Fi pairing</dt><dd>{device.connection === 'wifi' ? 'Reachable through host netmuxd/usbmuxd over the network.' : device.connection === 'usb' ? 'Connected over USB. Wi-Fi pairing not reported in this snapshot.' : 'Offline. Showing the last known reachable state only.'}</dd></div>
+              <div><dt>Trust state</dt><dd>{device.connection === 'offline' ? 'Unknown while the device is offline.' : 'Paired and trusted — the lockdown handshake succeeded.'}</dd></div>
+            </dl>
+            {device.blocker && <p className="pipeline-note"><AlertTriangle size={14} /> {device.blocker}</p>}
+          </Panel>
+        )}
+
+        {activeTab === 'diagnostics' && (
+          <Panel title="Diagnostics for this device">
+            {issues.length ? <DiagnosticIssueList issues={issues} /> : <EmptyState icon={CheckCircle2} title="No open device issues" detail="Trace-linked issue grouping will appear when OpenTelemetry-backed diagnostics are wired." />}
+          </Panel>
+        )}
+
+        {activeTab === 'activity' && (
+          <Panel title="Device activity">
+            {data.activity.length ? <ActivityTimeline events={data.activity} /> : <EmptyState icon={Activity} title="No recent activity" detail="Sign, install, and refresh events will appear here." />}
+            <p className="pipeline-note"><AlertTriangle size={14} /> Showing the workspace activity feed. Per-device filtering activates once the API tags each event with a device UDID.</p>
+          </Panel>
+        )}
       </div>
     </div>
   )
@@ -716,6 +882,20 @@ export function InstallWizardPage({ data, apiStatus, catalogApps, initialCatalog
             {registerMutation.error && <p className="mutation-message error">{registerMutation.error.message}</p>}
             <button className="ghost-action" onClick={onOpenCatalog} type="button">Back to catalog<ChevronRight size={15} /></button>
           </Panel>
+
+          <Panel title="What happens when you refresh">
+            <SigningPipeline
+              title="Operation preview"
+              stages={[
+                { id: 'authorize', label: 'Authorize', detail: 'GrandSlam login', state: 'pending' },
+                { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'pending' },
+                { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'pending' },
+                { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
+                { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+              ]}
+              note="Saving a registration records intent only. These stages run when the refresh operation is wired to this device."
+            />
+          </Panel>
         </div>
       </div>
     </div>
@@ -752,19 +932,41 @@ function CatalogAppCard({ catalogApp, installationCount, onInstall }: { catalogA
 }
 
 function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) {
+  const [view, setView] = useState<'all' | 'healthy' | 'failed'>('all')
+  const filtered = apps.filter((app) => {
+    if (view === 'failed') return app.lastSucceeded === false
+    if (view === 'healthy') return app.lastSucceeded !== false
+    return true
+  })
+
   return (
-    <div className="registration-list">
-      {apps.map((app) => (
-        <article className="registration-card" key={`${app.deviceUdid}:${app.bundleId}`}>
-          <AppSummary app={app} />
-          <div className="registration-meta">
-            <span>{compactUdid(app.deviceUdid)}</span>
-            <span>{app.teamId}</span>
-            <span>{expiryCopy(app.expiresAt?.value)}</span>
-          </div>
-        </article>
-      ))}
-    </div>
+    <>
+      <div className="devices-toolbar">
+        <div className="facet-group" role="group" aria-label="Filter installations">
+          <span className="facet-label"><Filter size={13} /> View</span>
+          {([['all', 'All'], ['healthy', 'Healthy'], ['failed', 'Failed refresh']] as const).map(([value, label]) => (
+            <button aria-pressed={view === value} className="facet-chip" key={value} onClick={() => setView(value)} type="button">{label}</button>
+          ))}
+        </div>
+        <span className="devices-count">{filtered.length} of {apps.length} installations</span>
+      </div>
+      {filtered.length ? (
+        <div className="registration-list">
+          {filtered.map((app) => (
+            <article className="registration-card" key={`${app.deviceUdid}:${app.bundleId}`}>
+              <AppSummary app={app} />
+              <div className="registration-meta">
+                <span>{compactUdid(app.deviceUdid)}</span>
+                <span>{app.teamId}</span>
+                <span>{expiryCopy(app.expiresAt?.value)}</span>
+                <StatusPill state={app.lastSucceeded === false ? 'failed' : 'healthy'} label={app.lastSucceeded === false ? 'Last refresh failed' : 'Healthy'} />
+              </div>
+              {app.lastError && <p className="registration-error">{app.lastError}</p>}
+            </article>
+          ))}
+        </div>
+      ) : <EmptyState icon={Filter} title="No installations match this view" detail="Switch the view filter back to All to see every Sideport registration." />}
+    </>
   )
 }
 
@@ -815,13 +1017,75 @@ function InfoStep({ title, detail, index }: { title: string; detail: string; ind
   )
 }
 
+function SingleFlightStrip({ data }: { data: SideportReadModel }) {
+  const running = data.renewals.find((item) => item.status === 'running')
+  const queued = data.renewals.filter((item) => item.status === 'queued')
+  const appName = (item: RenewalItem) => data.apps.find((app) => app.bundleId === item.bundleId && app.deviceUdid === item.deviceUdid)?.displayName.value ?? item.bundleId
+
+  return (
+    <section className="singleflight" aria-label="Signing queue">
+      <div className="singleflight-head">
+        <RefreshCw size={17} />
+        <h2>Single-flight signer</h2>
+        <StatusPill state={running ? 'warning' : 'healthy'} label={running ? 'Signing now' : 'Idle'} />
+      </div>
+
+      {running ? (
+        <div className="singleflight-now">
+          <div className="singleflight-row">
+            <div>
+              <strong>{appName(running)}</strong>
+              <div className="muted">{running.bundleId} · {compactUdid(running.deviceUdid)}</div>
+            </div>
+            <span className="status-pill warning"><Loader2 className="stage-spin" size={14} /> Signing</span>
+          </div>
+          <SigningPipeline
+            title="Current operation"
+            stages={[
+              { id: 'authorize', label: 'Authorize', detail: 'GrandSlam', state: 'done' },
+              { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'done' },
+              { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'active' },
+              { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
+              { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+            ]}
+          />
+        </div>
+      ) : (
+        <p className="singleflight-note"><CheckCircle2 size={14} /> No signing operation is running. The next due app starts automatically.</p>
+      )}
+
+      <div>
+        <div className="command-section-label queue-label">Queue ({queued.length})</div>
+        {queued.length ? (
+          <div className="queue-list">
+            {queued.map((item, index) => (
+              <div className="queue-item" key={item.id}>
+                <span className="queue-pos">{index + 1}</span>
+                <div className="queue-body">
+                  <strong>{appName(item)}</strong>
+                  <span>{item.blocker ?? 'Waiting for the signer to free up.'}</span>
+                </div>
+                <button className="row-action queue-action" disabled title="Cancel is available only before signing starts" type="button"><X size={13} /> Cancel</button>
+              </div>
+            ))}
+          </div>
+        ) : <p className="singleflight-note"><CheckCircle2 size={14} /> Nothing queued behind the current operation.</p>}
+      </div>
+
+      <p className="singleflight-note"><AlertTriangle size={14} /> Refresh is serialized: Sideport signs one app at a time to protect the single free-tier certificate. A queued item can be canceled only before its signing starts.</p>
+    </section>
+  )
+}
+
 export function RenewalsPage({ data, apiStatus }: { data: SideportReadModel; apiStatus: AdminDataStatus }) {
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Renewals" title="Renewal risk" description="Current backend data comes from registered apps, expiry fields, refresh status, and last error details." />
+      <SingleFlightStrip data={data} />
       <RenewalLane title="Blocked" items={data.renewals.filter((item) => item.risk === 'blocked')} apps={data.apps} apiStatus={apiStatus} />
       <RenewalLane title="Due now" items={data.renewals.filter((item) => item.risk === 'due-now')} apps={data.apps} apiStatus={apiStatus} />
       <RenewalLane title="Upcoming" items={data.renewals.filter((item) => item.risk === 'upcoming')} apps={data.apps} apiStatus={apiStatus} />
+      <RenewalLane title="Healthy" items={data.renewals.filter((item) => item.risk === 'healthy')} apps={data.apps} apiStatus={apiStatus} />
     </div>
   )
 }
@@ -1011,16 +1275,16 @@ function DeviceConnectivitySelfTest() {
       <button className="primary-action" disabled={running} onClick={run} type="button">
         <Stethoscope size={16} /> {running ? 'Running check…' : 'Run connectivity check'}
       </button>
-      {error && <p className="muted" style={{ marginTop: 12 }}>Could not run the check: {error}</p>}
+      {error && <p className="muted selftest-error">Could not run the check: {error}</p>}
       {result && (
-        <ul style={{ listStyle: 'none', margin: '14px 0 0', padding: 0, display: 'grid', gap: 12 }}>
+        <ul className="selftest-list">
           {result.checks.map((check) => (
-            <li key={check.id} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <li className="selftest-item" key={check.id}>
               <StatusPill state={check.status === 'ok' ? 'healthy' : check.status === 'warning' ? 'warning' : 'blocked'} label={check.status} />
-              <div style={{ minWidth: 0 }}>
+              <div className="selftest-body">
                 <strong>{check.label}</strong>
-                <p className="muted" style={{ margin: '2px 0 0' }}>{check.detail}</p>
-                {check.remediation && <p style={{ margin: '4px 0 0', fontSize: 13 }}>→ {check.remediation}</p>}
+                <p className="muted selftest-detail">{check.detail}</p>
+                {check.remediation && <p className="selftest-remediation">→ {check.remediation}</p>}
               </div>
             </li>
           ))}
@@ -1030,12 +1294,50 @@ function DeviceConnectivitySelfTest() {
   )
 }
 
+function severityLabel(severity: Severity): string {
+  return severity.charAt(0).toUpperCase() + severity.slice(1)
+}
+
+function issueStatusLabel(status: IssueStatus): string {
+  if (status === 'unresolved') return 'Unresolved'
+  if (status === 'investigating') return 'Investigating'
+  if (status === 'resolved') return 'Resolved'
+  return 'Ignored'
+}
+
 export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
+  const [severityFacet, setSeverityFacet] = useState<'all' | Severity>('all')
+  const [statusFacet, setStatusFacet] = useState<'all' | IssueStatus>('all')
+  const filteredIssues = data.issues.filter((issue) => (severityFacet === 'all' || issue.severity === severityFacet) && (statusFacet === 'all' || issue.status === statusFacet))
+
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Diagnostics" title="Runtime failure evidence" description="Live evidence comes from readiness checks, API fetch failures, app lastError fields, and the protected API log stream." />
       <DeviceConnectivitySelfTest />
-      {data.issues.length ? <DiagnosticIssueList issues={data.issues} /> : <EmptyState icon={Stethoscope} title="No diagnostic issues" detail="When OpenTelemetry is wired, this page will group refresh/sign/install failures by operation and trace ID." />}
+
+      <Panel title={`Issues (${filteredIssues.length})`}>
+        {data.issues.length ? (
+          <>
+            <div className="devices-toolbar">
+              <div className="facet-group" role="group" aria-label="Filter by severity">
+                <span className="facet-label"><Filter size={13} /> Severity</span>
+                {(['all', 'info', 'warning', 'error', 'fatal'] as const).map((value) => (
+                  <button aria-pressed={severityFacet === value} className="facet-chip" key={value} onClick={() => setSeverityFacet(value)} type="button">{value === 'all' ? 'All' : severityLabel(value)}</button>
+                ))}
+              </div>
+              <div className="facet-group" role="group" aria-label="Filter by status">
+                <span className="facet-label">Status</span>
+                {(['all', 'unresolved', 'investigating', 'resolved', 'ignored'] as const).map((value) => (
+                  <button aria-pressed={statusFacet === value} className="facet-chip" key={value} onClick={() => setStatusFacet(value)} type="button">{value === 'all' ? 'All' : issueStatusLabel(value)}</button>
+                ))}
+              </div>
+              <span className="devices-count">{filteredIssues.length} of {data.issues.length} issues</span>
+            </div>
+            {filteredIssues.length ? <DiagnosticIssueList issues={filteredIssues} /> : <EmptyState icon={Filter} title="No issues match this filter" detail="Reset the severity and status filters to see all diagnostic issues." />}
+          </>
+        ) : <EmptyState icon={Stethoscope} title="No diagnostic issues" detail="When OpenTelemetry is wired, this page will group refresh/sign/install failures by operation and trace ID." />}
+      </Panel>
+
       <Panel title="Log highlights">
         {data.logs.length ? <OperationLogList logs={data.logs.slice(0, 10)} /> : <EmptyState icon={Activity} title="No API logs yet" detail="The runtime log endpoint has not returned entries for this snapshot." />}
       </Panel>
@@ -1071,6 +1373,40 @@ export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: S
           <p>{saved ? 'Token saved for this browser session. The live API snapshot will retry with the new bearer token.' : apiStatus.mode === 'partial' ? 'If protected API calls return 401, save the Sideport API token here. It is stored in sessionStorage, not bundled into the image.' : 'Use this only when Sideport:Api:AuthToken is enabled and the portal is served from the same origin.'}</p>
         </div>
       </Panel>
+      <Panel title="Scheduler">
+        <dl className="detail-list">
+          <div><dt>Automatic refresh</dt><dd>{system.scheduler.enabled ? 'Enabled' : 'Disabled'}</dd></div>
+          <div><dt>Cadence</dt><dd>Every 6 hours (Sideport__Scheduler__ResignInterval).</dd></div>
+          <div><dt>Behavior</dt><dd>Re-signs apps due within the lead time, soonest first, single-flight.</dd></div>
+        </dl>
+        <SourcePill source={system.scheduler.source} label={sourceLabel(system.scheduler.source)} />
+      </Panel>
+
+      <Panel title="Signer binary">
+        <dl className="detail-list">
+          <div><dt>Status</dt><dd>{system.ready.checks.signer.ok ? 'Ready' : 'Not found'}</dd></div>
+          <div><dt>Path</dt><dd>{system.ready.checks.signer.path}</dd></div>
+          <div><dt>Method</dt><dd>Bundled zsign re-signs each IPA before install.</dd></div>
+        </dl>
+        <SourcePill source={system.ready.checks.signer.source} label={sourceLabel(system.ready.checks.signer.source)} />
+      </Panel>
+
+      <Panel title="Device bridge">
+        <dl className="detail-list">
+          <div><dt>Transport</dt><dd>usbmuxd socket with netmuxd for cable-free Wi-Fi reach.</dd></div>
+          <div><dt>Health</dt><dd>Run the device connectivity self-test on the Diagnostics page.</dd></div>
+        </dl>
+        <SourcePill source="derived" label={sourceLabel('derived')} />
+      </Panel>
+
+      <Panel title="Data retention">
+        <dl className="detail-list">
+          <div><dt>Operation logs</dt><dd>Held in the API log store; the retention window is not yet configurable from the UI.</dd></div>
+          <div><dt>Traces</dt><dd>Exported to the OpenTelemetry collector; retention is owned by the collector.</dd></div>
+        </dl>
+        <SourcePill source="planned" label={sourceLabel('planned')} />
+      </Panel>
+
       <Panel title="Observability">
         <div className="observability-panel">
           <Network size={22} />
@@ -1080,6 +1416,15 @@ export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: S
           </div>
           <SourcePill source={system.observability.source} label={sourceLabel(system.observability.source)} />
         </div>
+      </Panel>
+
+      <Panel title="Integrations">
+        <dl className="detail-list">
+          <div><dt>Storybook</dt><dd>This admin UI is developed and reviewed in Storybook before wiring live data.</dd></div>
+          <div><dt>OpenTelemetry collector</dt><dd>{system.observability.exporter}</dd></div>
+          <div><dt>Crash reporting</dt><dd>Sentry / Firebase Crashlytics are future, opt-in app-SDK integrations.</dd></div>
+        </dl>
+        <SourcePill source="planned" label={sourceLabel('planned')} />
       </Panel>
     </div>
   )
@@ -1119,7 +1464,7 @@ function Panel({ title, children, actionLabel, onAction }: { title: string; chil
   )
 }
 
-function StatusPill({ state, label }: { state: HealthState; label: string }) {
+export function StatusPill({ state, label }: { state: HealthState; label: string }) {
   const Icon = state === 'healthy' ? CheckCircle2 : state === 'offline' ? CircleDashed : state === 'warning' ? AlertTriangle : XCircle
   return <span className={`status-pill ${state}`}><Icon size={14} />{label}</span>
 }
@@ -1192,7 +1537,7 @@ function apiModeLabel(mode: AdminDataStatus['mode']): string {
   return 'API unavailable'
 }
 
-function SourcePill({ source, label }: { source: SourceKind; label: string }) {
+export function SourcePill({ source, label }: { source: SourceKind; label: string }) {
   return <span className={`source-pill ${source}`}>{label}</span>
 }
 
@@ -1309,7 +1654,7 @@ function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: Device
   )
 }
 
-function DeviceCard({ device, apps, onOpen }: { device: DeviceSummary; apps: RegisteredAppSummary[]; onOpen?: () => void }) {
+export function DeviceCard({ device, apps, onOpen }: { device: DeviceSummary; apps: RegisteredAppSummary[]; onOpen?: () => void }) {
   return (
     <article className="device-card">
       <div className="device-card-top">
@@ -1327,7 +1672,7 @@ function DeviceCard({ device, apps, onOpen }: { device: DeviceSummary; apps: Reg
   )
 }
 
-function AppSlotGrid({ apps, canRegister, onInstallApp }: { apps: RegisteredAppSummary[]; canRegister: boolean; onInstallApp?: () => void }) {
+export function AppSlotGrid({ apps, canRegister, onInstallApp }: { apps: RegisteredAppSummary[]; canRegister: boolean; onInstallApp?: () => void }) {
   const slots = [0, 1, 2].map((index) => apps[index] ?? null)
   return (
     <div className="slot-grid">
@@ -1365,7 +1710,7 @@ function RenewalLane({ title, items, apps, apiStatus }: { title: string; items: 
   return <Panel title={`${title} (${items.length})`}>{items.length ? <RenewalQueueList items={items} apps={apps} apiStatus={apiStatus} /> : <EmptyState icon={CheckCircle2} title={`No ${title.toLowerCase()} renewals`} detail="Nothing in this risk lane for the current API snapshot." />}</Panel>
 }
 
-function RenewalQueueList({ items, apps, compact = false, apiStatus }: { items: RenewalItem[]; apps: RegisteredAppSummary[]; compact?: boolean; apiStatus?: AdminDataStatus }) {
+export function RenewalQueueList({ items, apps, compact = false, apiStatus }: { items: RenewalItem[]; apps: RegisteredAppSummary[]; compact?: boolean; apiStatus?: AdminDataStatus }) {
   const queryClient = useQueryClient()
   const refreshMutation = useMutation({
     mutationFn: (item: RenewalItem) => refreshSideportApp(item.deviceUdid, item.bundleId),
@@ -1399,7 +1744,7 @@ function RenewalQueueList({ items, apps, compact = false, apiStatus }: { items: 
   )
 }
 
-function DiagnosticIssueList({ issues, compact = false }: { issues: DiagnosticIssue[]; compact?: boolean }) {
+export function DiagnosticIssueList({ issues, compact = false }: { issues: DiagnosticIssue[]; compact?: boolean }) {
   return (
     <div className={compact ? 'issue-list compact' : 'issue-list'}>
       {issues.map((issue) => (
@@ -1537,6 +1882,315 @@ function connectionLabel(connection: DeviceSummary['connection']) {
   if (connection === 'wifi') return 'Wi-Fi'
   if (connection === 'usb') return 'USB'
   return 'Offline'
+}
+
+export type PipelineStageState = 'pending' | 'active' | 'done' | 'failed'
+
+export interface PipelineStage {
+  id: string
+  label: string
+  detail?: string
+  state: PipelineStageState
+}
+
+const defaultPipelineStages: PipelineStage[] = [
+  { id: 'authorize', label: 'Authorize', detail: 'GrandSlam login', state: 'pending' },
+  { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'pending' },
+  { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'pending' },
+  { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
+  { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+]
+
+export function SigningPipeline({ title = 'Sign · install · verify', stages = defaultPipelineStages, note }: { title?: string; stages?: PipelineStage[]; note?: string }) {
+  const failed = stages.some((stage) => stage.state === 'failed')
+  const active = stages.find((stage) => stage.state === 'active')
+  const allDone = stages.length > 0 && stages.every((stage) => stage.state === 'done')
+  const overall: HealthState = failed ? 'failed' : allDone ? 'healthy' : active ? 'warning' : 'offline'
+  const overallLabel = failed ? 'Failed' : allDone ? 'Verified' : active ? `Running · ${active.label}` : 'Not started'
+
+  return (
+    <section className="signing-pipeline" aria-label="Signing pipeline">
+      <div className="pipeline-head">
+        <div>
+          <h3>{title}</h3>
+          <span className="pipeline-sub">One operation at a time, in order, on the single-flight signer.</span>
+        </div>
+        <StatusPill state={overall} label={overallLabel} />
+      </div>
+      <div className="pipeline-stages">
+        {stages.map((stage) => (
+          <div className={`pipeline-stage ${stage.state}`} key={stage.id}>
+            <span className="stage-icon">
+              {stage.state === 'done' ? <CheckCircle2 size={17} />
+                : stage.state === 'failed' ? <XCircle size={17} />
+                : stage.state === 'active' ? <Loader2 className="stage-spin" size={17} />
+                : <CircleDashed size={17} />}
+            </span>
+            <strong>{stage.label}</strong>
+            {stage.detail && <small>{stage.detail}</small>}
+          </div>
+        ))}
+      </div>
+      {note && <p className="pipeline-note"><AlertTriangle size={14} /> {note}</p>}
+    </section>
+  )
+}
+
+interface CommandTarget {
+  id: string
+  label: string
+  meta?: string
+  group: 'Go to' | 'Devices' | 'Apps'
+  icon: LucideIcon
+  run: () => void
+}
+
+function CommandMenu({ open, onOpenChange, data, onNavigate, onOpenDevice }: { open: boolean; onOpenChange: (open: boolean) => void; data: SideportReadModel; onNavigate: (route: RouteId) => void; onOpenDevice: (device: DeviceSummary) => void }) {
+  const [query, setQuery] = useState('')
+  const dismiss = (run: () => void) => {
+    run()
+    onOpenChange(false)
+    setQuery('')
+  }
+
+  const targets: CommandTarget[] = [
+    ...routeItems.map((item) => ({ id: `route:${item.id}`, label: item.label, meta: 'Screen', group: 'Go to' as const, icon: item.icon, run: () => onNavigate(item.id) })),
+    ...data.devices.map((device) => ({ id: `device:${device.udid}`, label: device.name, meta: `${connectionLabel(device.connection)} · ${compactUdid(device.udid)}`, group: 'Devices' as const, icon: Smartphone, run: () => onOpenDevice(device) })),
+    ...data.apps.map((app) => ({ id: `app:${app.deviceUdid}:${app.bundleId}`, label: app.displayName.value, meta: app.bundleId, group: 'Apps' as const, icon: Package, run: () => onNavigate('catalog') })),
+  ]
+  const q = query.trim().toLowerCase()
+  const filtered = q ? targets.filter((target) => `${target.label} ${target.meta ?? ''}`.toLowerCase().includes(q)) : targets
+  const groups = (['Go to', 'Devices', 'Apps'] as const).map((group) => ({ group, items: filtered.filter((target) => target.group === group) })).filter((entry) => entry.items.length)
+
+  return (
+    <Dialog.Root onOpenChange={onOpenChange} open={open}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="command-overlay" />
+        <Dialog.Content aria-describedby={undefined} className="command-content">
+          <Dialog.Title className="visually-hidden">Search and commands</Dialog.Title>
+          <div className="command-search">
+            <Command size={18} />
+            <input autoFocus onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search devices, apps, screens…" value={query} />
+            <span className="search-kbd"><kbd>esc</kbd></span>
+          </div>
+          <div className="command-list">
+            {groups.length ? groups.map((entry) => (
+              <div key={entry.group}>
+                <div className="command-section-label">{entry.group}</div>
+                {entry.items.map((target) => {
+                  const Icon = target.icon
+                  return (
+                    <button className="command-item" key={target.id} onClick={() => dismiss(target.run)} type="button">
+                      <Icon size={16} />
+                      <span>{target.label}</span>
+                      {target.meta && <span className="ci-meta">{target.meta}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            )) : <div className="command-empty">No matches for “{query}”.</div>}
+          </div>
+          <div className="command-foot">
+            <span><kbd>tab</kbd> move</span>
+            <span><kbd>↵</kbd> open</span>
+            <span><kbd>esc</kbd> close</span>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+interface DerivedAppleTeam {
+  teamId: string
+  name: string
+  type: string
+  appsUsing: number
+  devicesRegistered: number
+  certificateLabel: string
+  certificateState: HealthState
+  source: SourceKind
+}
+
+function deriveAppleTeams(data: SideportReadModel): DerivedAppleTeam[] {
+  const ids = new Set<string>()
+  data.devices.forEach((device) => { if (device.teamId && device.teamId !== 'Unknown') ids.add(device.teamId) })
+  data.apps.forEach((app) => { if (app.teamId && app.teamId !== 'Unknown') ids.add(app.teamId) })
+  data.personalApple.teams.forEach((team) => ids.add(team.teamId))
+  const certCap = data.appleAccess.capabilities.find((capability) => capability.id === 'certificates')
+
+  return Array.from(ids).map((teamId) => {
+    const personalTeam = data.personalApple.teams.find((team) => team.teamId === teamId)
+    let certificateState: HealthState = 'offline'
+    let certificateLabel = 'Not probed'
+    if (certCap) {
+      if (certCap.state === 'verified') { certificateState = 'healthy'; certificateLabel = `Readable (${certCap.count ?? 0})` }
+      else if (certCap.state === 'denied' || certCap.state === 'unauthorized') { certificateState = 'warning'; certificateLabel = 'Access denied by role' }
+      else { certificateState = 'blocked'; certificateLabel = capabilityStateLabel(certCap.state) }
+    }
+    return {
+      teamId,
+      name: personalTeam?.name ?? 'Apple Developer Team',
+      type: personalTeam?.type ?? (data.personalApple.connector === 'personal-apple-id' ? 'Free (personal)' : 'Unknown'),
+      appsUsing: data.apps.filter((app) => app.teamId === teamId).length,
+      devicesRegistered: data.devices.filter((device) => device.teamId === teamId).length,
+      certificateLabel,
+      certificateState,
+      source: 'derived',
+    }
+  })
+}
+
+export function TeamsPage({ data, onNavigate }: { data: SideportReadModel; onNavigate?: (route: RouteId) => void }) {
+  const appleTeams = deriveAppleTeams(data)
+  const workspace = data.workspace
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Teams"
+        title="Two different kinds of team"
+        description="An Apple Developer Team is where certificates, App IDs, and provisioning profiles come from. The Sideport workspace is who can operate this console. They are intentionally kept separate."
+      />
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Apple Developer Teams</h2>
+          <button className="ghost-action" onClick={() => onNavigate?.('apple-access')} type="button">Apple Access<ChevronRight size={15} /></button>
+        </div>
+        {appleTeams.length ? (
+          <div className="teams-grid">
+            {appleTeams.map((team) => (
+              <article className="team-card" key={team.teamId}>
+                <div className="team-card-top">
+                  <div className="team-mark"><Apple size={18} /></div>
+                  <div>
+                    <h3>{team.name}</h3>
+                    <span>{team.teamId} · {team.type}</span>
+                  </div>
+                  <SourcePill source={team.source} label={sourceLabel(team.source)} />
+                </div>
+                <div className="team-stats">
+                  <div><strong>{team.appsUsing}</strong><span>Apps using it</span></div>
+                  <div><strong>{team.devicesRegistered}</strong><span>Devices registered</span></div>
+                </div>
+                <StatusPill state={team.certificateState} label={`Certificates: ${team.certificateLabel}`} />
+              </article>
+            ))}
+          </div>
+        ) : <EmptyState icon={Apple} title="No Apple team detected yet" detail="Connect a Personal Apple ID or App Store Connect key in Apple Access. Teams are derived from devices, registered apps, and the Apple connector." />}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Sideport workspace</h2>
+          <button className="ghost-action" onClick={() => onNavigate?.('users')} type="button">Manage users<ChevronRight size={15} /></button>
+        </div>
+        <div className="workspace-row">
+          <div className="team-mark workspace-mark"><Building2 size={18} /></div>
+          <dl className="detail-list workspace-detail">
+            <div><dt>Workspace</dt><dd>{workspace.name}</dd></div>
+            <div><dt>Members</dt><dd>{workspace.members.length} {workspace.members.length === 1 ? 'person' : 'people'}</dd></div>
+            <div><dt>Authentication</dt><dd>{workspace.authMode}</dd></div>
+          </dl>
+          <SourcePill source={workspace.source} label={sourceLabel(workspace.source)} />
+        </div>
+        <p className="pipeline-note"><AlertTriangle size={14} /> The workspace controls who can use Sideport. It does not grant Apple signing access — that always comes from an Apple Developer Team above.</p>
+      </section>
+    </div>
+  )
+}
+
+const roleCopy: Record<WorkspaceRole, { label: string; permissions: string }> = {
+  owner: { label: 'Owner', permissions: 'Credentials, settings, users, refresh, and destructive actions.' },
+  admin: { label: 'Admin', permissions: 'Teams, devices, apps, refresh, and diagnostics.' },
+  operator: { label: 'Operator', permissions: 'Refresh and diagnostics; read-only on devices and apps.' },
+  viewer: { label: 'Viewer', permissions: 'Read-only status and diagnostics.' },
+}
+
+const memberStatusCopy: Record<MemberStatus, string> = {
+  active: 'Active',
+  invited: 'Invite pending',
+  suspended: 'Suspended',
+}
+
+export function RoleBadge({ role }: { role: WorkspaceRole }) {
+  return <span className={`role-badge role-${role}`}>{roleCopy[role].label}</span>
+}
+
+export function UsersPage({ workspace, activity, apiStatus }: { workspace: WorkspaceSummary; activity: ActivityEvent[]; apiStatus: AdminDataStatus }) {
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<WorkspaceRole>('viewer')
+  const canInvite = apiStatus.canMutate && inviteEmail.trim().length > 3 && !workspace.authDelegated
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Users & roles"
+        title="Who can operate Sideport"
+        description="Roles scope what each person can do — from read-only status to destructive credential actions. These are workspace roles, separate from any Apple Developer Team."
+      />
+
+      {workspace.authDelegated && (
+        <p className="pipeline-note"><AlertTriangle size={14} /> Authentication is delegated to {workspace.authMode}. Sideport models roles here so it can own identity later; invites and role changes apply once Sideport manages its own users.</p>
+      )}
+
+      <Panel title="Roles">
+        <div className="role-legend">
+          {(Object.keys(roleCopy) as WorkspaceRole[]).map((role) => (
+            <div className="role-legend-row" key={role}>
+              <RoleBadge role={role} />
+              <span>{roleCopy[role].permissions}</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title={`Members (${workspace.members.length})`}>
+        {workspace.members.length ? (
+          <div className="members-table">
+            <div className="members-head">
+              <span>Member</span><span>Role</span><span>Status</span><span>Last active</span><span aria-hidden="true" />
+            </div>
+            {workspace.members.map((member) => (
+              <div className="members-row" key={member.id}>
+                <div className="member-id">
+                  <span className="member-avatar">{member.name.slice(0, 1)}</span>
+                  <div><strong>{member.name}</strong><span>{member.email}</span></div>
+                </div>
+                <RoleBadge role={member.role} />
+                <span className={`status-label ${member.status === 'active' ? 'complete' : member.status === 'invited' ? 'pending' : 'blocked'}`}>{memberStatusCopy[member.status]}</span>
+                <span className="muted">{member.status === 'invited' ? `Invited ${member.invitedAt ? relativeTime(member.invitedAt) : ''}` : member.lastActiveAt ? relativeTime(member.lastActiveAt) : '—'}</span>
+                <button className="row-action member-action" disabled type="button">Manage</button>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState icon={Users} title="No workspace members yet" detail="When Sideport owns identity, invited members and their roles will appear here." />}
+      </Panel>
+
+      <div className="two-column-layout">
+        <Panel title="Invite a member">
+          <div className="invite-form">
+            <label className="form-field">
+              <span>Email</span>
+              <input autoComplete="off" onChange={(event) => setInviteEmail(event.currentTarget.value)} placeholder="name@example.com" value={inviteEmail} />
+            </label>
+            <label className="form-field">
+              <span>Role</span>
+              <select onChange={(event) => setInviteRole(event.currentTarget.value as WorkspaceRole)} value={inviteRole}>
+                {(Object.keys(roleCopy) as WorkspaceRole[]).map((role) => <option key={role} value={role}>{roleCopy[role].label}</option>)}
+              </select>
+            </label>
+            <button className="primary-action" disabled={!canInvite} type="button"><UserPlus size={16} /> Send invite</button>
+            {workspace.authDelegated && <p className="mutation-message">Invites are disabled while authentication is delegated to the reverse proxy.</p>}
+          </div>
+        </Panel>
+        <Panel title="Audit trail">
+          {activity.length ? <ActivityTimeline events={activity} /> : <EmptyState icon={History} title="No audit events yet" detail="Sign-in, role change, and operator actions will be recorded here." />}
+        </Panel>
+      </div>
+    </div>
+  )
 }
 
 function App() {

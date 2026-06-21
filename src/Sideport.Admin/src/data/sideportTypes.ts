@@ -179,6 +179,28 @@ export interface PersonalAppleSummary {
   source: SourceKind
 }
 
+export type WorkspaceRole = 'owner' | 'admin' | 'operator' | 'viewer'
+export type MemberStatus = 'active' | 'invited' | 'suspended'
+
+export interface WorkspaceMember {
+  id: string
+  name: string
+  email: string
+  role: WorkspaceRole
+  status: MemberStatus
+  lastActiveAt?: string
+  invitedAt?: string
+  source: SourceKind
+}
+
+export interface WorkspaceSummary {
+  name: string
+  authMode: string
+  authDelegated: boolean
+  members: WorkspaceMember[]
+  source: SourceKind
+}
+
 export interface SideportReadModel {
   system: SystemStatus
   devices: DeviceSummary[]
@@ -191,6 +213,7 @@ export interface SideportReadModel {
   issues: DiagnosticIssue[]
   activity: ActivityEvent[]
   logs: OperationLogEntry[]
+  workspace: WorkspaceSummary
 }
 
 export const runtimeEmptyData: SideportReadModel = {
@@ -232,4 +255,11 @@ export const runtimeEmptyData: SideportReadModel = {
   issues: [],
   activity: [],
   logs: [],
+  workspace: {
+    name: 'Sideport workspace',
+    authMode: 'Reverse proxy (not yet reported)',
+    authDelegated: true,
+    members: [],
+    source: 'planned',
+  },
 }

@@ -57,8 +57,10 @@ export const AppCatalogSeed = routeStory('catalog', 'App catalog - Cert Clock se
 export const InstallWizardShell = routeStory('install-app', 'Install wizard shell - save registration')
 export const RenewalsSingleFlight = routeStory('renewals', 'Renewals - running and queued')
 export const AppleAccessProbe = routeStory('apple-access', 'Apple Access - read-only probe')
-export const DiagnosticsTraceLinked = routeStory('diagnostics', 'Diagnostics - trace linked issues')
-export const SettingsSessionAccess = routeStory('settings', 'Settings - session token and checks')
+export const DiagnosticsTraceLinked = routeStory('diagnostics', 'Diagnostics - filters + trace linked issues')
+export const TeamsView = routeStory('teams', 'Teams - Apple teams and workspace')
+export const UsersRoles = routeStory('users', 'Users - roles, members, invite, audit')
+export const SettingsSessionAccess = routeStory('settings', 'Settings - full control-plane sections')
 
 export const EmptyFleet: Story = {
   args: { data: emptyFixtures, apiStatus: demoStatus, initialRoute: 'devices' },
@@ -74,4 +76,14 @@ export const ApiUnavailableRuntime: Story = {
 
 export const TokenRequiredSettings: Story = {
   args: { data: fixtures, apiStatus: tokenRequiredStatus, initialRoute: 'settings' },
+}
+
+export const CommandMenuOpen: Story = {
+  name: 'Command menu - ⌘K search',
+  args: { data: fixtures, apiStatus: demoStatus, initialRoute: 'overview', initialCommandOpen: true },
+}
+
+export const DeviceDetailTabbed: Story = {
+  name: 'Device detail - tabs + working refresh',
+  args: { data: fixtures, apiStatus: demoStatus, initialRoute: 'device-detail' },
 }

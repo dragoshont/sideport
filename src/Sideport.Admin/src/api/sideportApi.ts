@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus } from '../data/sideportTypes'
+import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus, type MemberStatus, type WorkspaceRole, type WorkspaceSummary } from '../data/sideportTypes'
 import { compactUdid } from '../lib/format'
 
 const DEFAULT_API_BASE_URL = '/sideport-api'
@@ -209,6 +209,44 @@ interface OnboardingStepDto {
   detail?: string | null
 }
 
+interface WorkspaceMemberDto {
+  id?: string
+  name?: string
+  email?: string
+  role?: string
+  status?: string
+  lastActiveAt?: string | null
+  invitedAt?: string | null
+}
+
+interface WorkspaceDto {
+  name?: string
+  authMode?: string
+  authDelegated?: boolean
+  members?: WorkspaceMemberDto[]
+}
+
+function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
+  const validRoles: WorkspaceRole[] = ['owner', 'admin', 'operator', 'viewer']
+  const validStatuses: MemberStatus[] = ['active', 'invited', 'suspended']
+  return {
+    name: dto.name?.trim() || 'Sideport workspace',
+    authMode: dto.authMode?.trim() || 'Reverse proxy',
+    authDelegated: dto.authDelegated ?? true,
+    source: 'live',
+    members: (dto.members ?? []).map((member, index) => ({
+      id: member.id ?? `member-${index}`,
+      name: member.name?.trim() || member.email?.trim() || 'Unknown member',
+      email: member.email?.trim() || '',
+      role: validRoles.includes((member.role ?? '') as WorkspaceRole) ? (member.role as WorkspaceRole) : 'viewer',
+      status: validStatuses.includes((member.status ?? '') as MemberStatus) ? (member.status as MemberStatus) : 'active',
+      lastActiveAt: member.lastActiveAt ?? undefined,
+      invitedAt: member.invitedAt ?? undefined,
+      source: 'live',
+    })),
+  }
+}
+
 interface ApiSnapshot {
   fetchedAt: string
   config: ApiConfig
@@ -223,6 +261,7 @@ interface ApiSnapshot {
   anisette: ApiResult<AnisetteInfoDto>
   onboarding: ApiResult<OnboardingStatusDto>
   logs: ApiResult<OperationLogDto[]>
+  workspace: ApiResult<WorkspaceDto>
 }
 
 export function getSideportApiConfig(): ApiConfig {
@@ -270,7 +309,7 @@ export function useSideportAdminData(apiTokenRevision = 0) {
 
 async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
   const fetchedAt = new Date().toISOString()
-  const [health, ready, devices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs] = await Promise.all([
+  const [health, ready, devices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs, workspace] = await Promise.all([
     requestJson<HealthResponse>(config, '/healthz', false),
     requestJson<ReadyResponse>(config, '/readyz', false),
     requestJson<DeviceDto[]>(config, '/api/devices', true),
@@ -281,10 +320,11 @@ async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
     requestJson<AnisetteInfoDto>(config, '/api/anisette/info', true),
     requestJson<OnboardingStatusDto>(config, '/api/onboarding/status', true),
     requestJson<OperationLogDto[]>(config, '/api/logs?limit=80', true),
+    requestJson<WorkspaceDto>(config, '/api/workspace', true),
   ])
   const installedApps = await fetchInstalledApps(config, devices)
 
-  return { fetchedAt, config, health, ready, devices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs }
+  return { fetchedAt, config, health, ready, devices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs, workspace }
 }
 
 async function fetchInstalledApps(config: ApiConfig, devices: ApiResult<DeviceDto[]>): Promise<ApiResult<InstalledAppDto[]>> {
@@ -483,6 +523,7 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
       issues,
       activity: buildActivity(snapshot, partial, logs),
       logs,
+      workspace: snapshot.workspace.ok && snapshot.workspace.data ? toWorkspace(snapshot.workspace.data) : runtimeEmptyData.workspace,
     },
     status,
   }
