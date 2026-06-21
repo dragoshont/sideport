@@ -18,4 +18,17 @@
     <Project Path="tools/probe-gsa-pinning/probe-gsa-pinning.csproj" />
     <Project Path="tools/sideport-live-probe/sideport-live-probe.csproj" />
   </Folder>
+  <Project Path="../tessera/src/Tessera.Broker/Tessera.Broker.csproj" />
+  <Project Path="../tessera/src/Tessera.Cli/Tessera.Cli.csproj" />
+  <Project Path="../tessera/src/Tessera.Core/Tessera.Core.csproj" />
+  <Project Path="../tessera/src/Tessera.Identity/Tessera.Identity.csproj" />
+  <Project Path="../tessera/src/Tessera.Mcp/Tessera.Mcp.csproj" />
+  <Project Path="../tessera/src/Tessera.Providers/Tessera.Providers.csproj" />
+  <Project Path="../tessera/src/Tessera.Stores.AzureKeyVault/Tessera.Stores.AzureKeyVault.csproj" />
+  <Project Path="../tessera/tests/Tessera.Broker.Tests/Tessera.Broker.Tests.csproj" />
+  <Project Path="../tessera/tests/Tessera.Core.Tests/Tessera.Core.Tests.csproj" />
+  <Project Path="../tessera/tests/Tessera.Identity.Tests/Tessera.Identity.Tests.csproj" />
+  <Project Path="../tessera/tests/Tessera.Mcp.Tests/Tessera.Mcp.Tests.csproj" />
+  <Project Path="../tessera/tests/Tessera.Providers.Tests/Tessera.Providers.Tests.csproj" />
+  <Project Path="../tessera/tests/Tessera.Stores.AzureKeyVault.Tests/Tessera.Stores.AzureKeyVault.Tests.csproj" />
 </Solution>
