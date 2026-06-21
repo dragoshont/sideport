@@ -34,6 +34,24 @@
       "deploy/**"
     ]
   },
+  "ops": {
+    "kind": "homelab-mcp",
+    "mode": "read-only",
+    "mcpServer": "homelab",
+    "purpose": [
+      "runtime-health",
+      "logs",
+      "deployment-verification",
+      "version-drift"
+    ],
+    "requiresApprovalFor": [
+      "mutations",
+      "reconcile",
+      "restart",
+      "secret-access",
+      "network-change"
+    ]
+  },
   "build": "npm --prefix src/Sideport.Admin run build",
   "test": "npm --prefix src/Sideport.Admin run lint",
   "screenshot": "npm --prefix src/Sideport.Admin run test:screens"
