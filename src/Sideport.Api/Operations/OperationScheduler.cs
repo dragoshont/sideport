@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Sideport.Core;
+using Sideport.DeveloperApi;
 using Sideport.Orchestrator;
 
 namespace Sideport.Api.Operations;
@@ -10,6 +12,8 @@ public sealed class OperationScheduler(
     RefreshOrchestrator orchestrator,
     OperationService operations,
     OrchestratorOptions options,
+    IAnisetteProvider anisette,
+    SignerOptions signerOptions,
     TimeProvider? timeProvider = null,
     ILogger<OperationScheduler>? logger = null) : BackgroundService
 {
@@ -40,6 +44,9 @@ public sealed class OperationScheduler(
 
     public async Task RunOnceAsync(CancellationToken ct)
     {
+        if (!await SchedulerDependenciesReadyAsync(ct).ConfigureAwait(false))
+            return;
+
         DateTimeOffset now = _time.GetUtcNow();
         IReadOnlyList<AppRegistration> apps = await registry.ListAsync(ct).ConfigureAwait(false);
         var due = apps
@@ -57,6 +64,28 @@ public sealed class OperationScheduler(
             ct.ThrowIfCancellationRequested();
             string idempotencyKey = $"scheduler:{app.DeviceUdid}:{app.BundleId}:{now:yyyyMMddHH}";
             await operations.RefreshAsync(app.DeviceUdid, app.BundleId, SchedulerActor, idempotencyKey, ct: ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> SchedulerDependenciesReadyAsync(CancellationToken ct)
+    {
+        if (!File.Exists(signerOptions.SignerBinaryPath))
+        {
+            _logger.LogWarning("scheduler: skipping tick because signer binary is missing at {Path}", signerOptions.SignerBinaryPath);
+            return false;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            _ = await anisette.GetClientInfoAsync(timeout.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("scheduler: skipping tick because anisette is not ready: {Error}", ex.GetType().Name);
+            return false;
         }
     }
 

@@ -13,6 +13,7 @@ using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Hosting;
 using Sideport.Api.Operations;
 using Sideport.Core;
+using Sideport.DeveloperApi;
 using Sideport.Orchestrator;
 
 namespace Sideport.Api.Tests;
@@ -1218,7 +1219,9 @@ public class ApiSmokeTests
                     factory.Services.GetRequiredService<IAppRegistry>(),
                     factory.Services.GetRequiredService<RefreshOrchestrator>(),
                     factory.Services.GetRequiredService<OperationService>(),
-                    factory.Services.GetRequiredService<OrchestratorOptions>());
+                    factory.Services.GetRequiredService<OrchestratorOptions>(),
+                    factory.Services.GetRequiredService<IAnisetteProvider>(),
+                    factory.Services.GetRequiredService<SignerOptions>());
 
                 await scheduler.RunOnceAsync(CancellationToken.None);
                 var operations = await client.GetFromJsonAsync<IReadOnlyList<OperationRecordDto>>("/api/operations");
@@ -1228,6 +1231,30 @@ public class ApiSmokeTests
                 Assert.Equal("system", operation.actor.kind);
                 Assert.Equal("system:scheduler", operation.actor.displayName);
                 await WaitForTerminalOperationAsync(client, operation.operationId);
+            }
+
+            [Fact]
+            public async Task Scheduler_WhenAnisetteNotReady_DoesNotEnqueueRefresh()
+            {
+                string dir = TestDir();
+                string ipaPath = WriteTestIpa(dir, "ro.hont.certcountdown", "Cert Clock", "1", "0.1.0");
+                using var factory = Factory(apiToken: "s3cr3t-token", anisetteHealthy: false, personalAppleId: "developer@example.com", personalApplePassword: "configured-host-secret", personalApplePortal: new StubApplePortal());
+                using HttpClient client = factory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "s3cr3t-token");
+                Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/apps", Registration("ro.hont.certcountdown", ipaPath))).StatusCode);
+                var scheduler = new OperationScheduler(
+                    factory.Services.GetRequiredService<IAppRegistry>(),
+                    factory.Services.GetRequiredService<RefreshOrchestrator>(),
+                    factory.Services.GetRequiredService<OperationService>(),
+                    factory.Services.GetRequiredService<OrchestratorOptions>(),
+                    factory.Services.GetRequiredService<IAnisetteProvider>(),
+                    factory.Services.GetRequiredService<SignerOptions>());
+
+                await scheduler.RunOnceAsync(CancellationToken.None);
+                var operations = await client.GetFromJsonAsync<IReadOnlyList<OperationRecordDto>>("/api/operations");
+
+                Assert.NotNull(operations);
+                Assert.Empty(operations!);
             }
 
         [Fact]
