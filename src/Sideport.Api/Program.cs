@@ -243,7 +243,8 @@ if (oidcEnabled)
         PathString path = context.Request.Path;
         bool isApi = path.StartsWithSegments("/api");
         bool isProbe = path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase);
+            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/metrics", StringComparison.OrdinalIgnoreCase);
         bool isAuthRoute = path.StartsWithSegments("/signin-oidc")
             || path.StartsWithSegments("/signout-callback-oidc")
             || path.Equals("/login", StringComparison.OrdinalIgnoreCase)
@@ -387,6 +388,9 @@ if (oidcEnabled)
 
 // Liveness: the process is up. Cheap, dependency-free (k8s livenessProbe).
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));
+
+app.MapGet("/metrics", (DeviceMetrics metrics) =>
+    Results.Text(metrics.ToPrometheusText(), "text/plain; version=0.0.4; charset=utf-8"));
 
 // Readiness: the load-bearing dependencies are usable (k8s readinessProbe).
 //   - anisette reachable (the ADI sidecar — without it nothing authenticates)

@@ -13,9 +13,11 @@ public static class DevicesServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddDeviceController(this IServiceCollection services)
     {
+        services.AddSingleton<DeviceMetrics>();
         services.AddSingleton<IDeviceBackend>(sp =>
             new NetimobiledeviceBackend(
                 sp.GetService<ILogger<NetimobiledeviceBackend>>(),
+                sp.GetRequiredService<DeviceMetrics>(),
                 // Where the host keeps the trusted lockdown pairing records, so the
                 // Wi-Fi direct-TCP path can reuse the existing trust. Defaults to
                 // /var/lib/lockdown when unset.
@@ -23,7 +25,8 @@ public static class DevicesServiceCollectionExtensions
         services.AddSingleton<IDeviceController>(sp =>
             new NetimobiledeviceController(
                 sp.GetRequiredService<IDeviceBackend>(),
-                sp.GetService<ILogger<NetimobiledeviceController>>()));
+                sp.GetService<ILogger<NetimobiledeviceController>>(),
+                sp.GetRequiredService<DeviceMetrics>()));
         return services;
     }
 }

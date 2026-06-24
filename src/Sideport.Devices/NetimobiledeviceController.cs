@@ -17,11 +17,16 @@ public sealed class NetimobiledeviceController : IDeviceController
 {
     private readonly IDeviceBackend _backend;
     private readonly ILogger<NetimobiledeviceController> _logger;
+    private readonly DeviceMetrics _metrics;
 
-    internal NetimobiledeviceController(IDeviceBackend backend, ILogger<NetimobiledeviceController>? logger = null)
+    internal NetimobiledeviceController(
+        IDeviceBackend backend,
+        ILogger<NetimobiledeviceController>? logger = null,
+        DeviceMetrics? metrics = null)
     {
         _backend = backend;
         _logger = logger ?? NullLogger<NetimobiledeviceController>.Instance;
+        _metrics = metrics ?? new DeviceMetrics();
     }
 
     public async Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default)
@@ -108,18 +113,29 @@ public sealed class NetimobiledeviceController : IDeviceController
     {
         ArgumentException.ThrowIfNullOrEmpty(udid);
 
-        IReadOnlyList<BackendApp> apps = await _backend.ListInstalledAppsAsync(udid, ct);
-        IReadOnlyList<ProvisioningProfileInfo> profiles =
-            ParseProfiles(await _backend.ListProvisioningProfilesAsync(udid, ct));
+        using var metric = _metrics.TrackInstalledAppsRequest();
+        try
+        {
+            IReadOnlyList<BackendApp> apps = await _backend.ListInstalledAppsAsync(udid, ct);
+            IReadOnlyList<ProvisioningProfileInfo> profiles =
+                ParseProfiles(await _backend.ListProvisioningProfilesAsync(udid, ct));
 
-        return
-        [
-            .. apps
-                .Where(a => a.IsUserApp) // sideloadable user apps, not system apps
-                .Select(a => new InstalledApp(a.BundleId, a.Name, a.Version, ResolveExpiry(a.BundleId, profiles)))
-                .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(a => a.BundleId, StringComparer.OrdinalIgnoreCase),
-        ];
+            InstalledApp[] result =
+            [
+                .. apps
+                    .Where(a => a.IsUserApp) // sideloadable user apps, not system apps
+                    .Select(a => new InstalledApp(a.BundleId, a.Name, a.Version, ResolveExpiry(a.BundleId, profiles)))
+                    .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(a => a.BundleId, StringComparer.OrdinalIgnoreCase),
+            ];
+            metric.Succeed(result.Length);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            metric.Cancel();
+            throw;
+        }
     }
 
     public async Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)

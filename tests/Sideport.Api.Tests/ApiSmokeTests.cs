@@ -115,6 +115,31 @@ public class ApiSmokeTests
     }
 
     [Fact]
+    public async Task Metrics_IsOpen_AndReturnsPrometheusText()
+    {
+        using var factory = Factory();
+        using HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/metrics");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("# HELP sideport_device_installed_apps_requests_total", body);
+    }
+
+    [Fact]
+    public async Task Metrics_WithOidcEnabled_RemainsOpenForScraping()
+    {
+        using var factory = Factory(oidc: true);
+        using HttpClient client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        HttpResponseMessage response = await client.GetAsync("/metrics");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Readyz_AllDependenciesHealthy_Returns200Ready()
     {
         using var factory = Factory(anisetteHealthy: true);

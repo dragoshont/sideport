@@ -32,13 +32,16 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     private const string DefaultPairingRecordsDir = "/var/lib/lockdown";
 
     private readonly ILogger<NetimobiledeviceBackend> _logger;
+    private readonly DeviceMetrics _metrics;
     private readonly string _pairingRecordsDir;
 
     public NetimobiledeviceBackend(
         ILogger<NetimobiledeviceBackend>? logger = null,
+        DeviceMetrics? metrics = null,
         string? pairingRecordsDir = null)
     {
         _logger = logger ?? NullLogger<NetimobiledeviceBackend>.Instance;
+        _metrics = metrics ?? new DeviceMetrics();
         _pairingRecordsDir = string.IsNullOrWhiteSpace(pairingRecordsDir)
             ? DefaultPairingRecordsDir
             : pairingRecordsDir;
@@ -75,54 +78,79 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     public async Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct)
     {
-        using LockdownClient lockdown = CreateLockdown(udid);
+        UsbmuxdDevice mux = FindPreferredMuxDevice(udid);
+        string connectionType = ConnectionLabel(mux);
+        using var metric = _metrics.TrackBackendOperation("installation_proxy_browse", connectionType);
+        using LockdownClient lockdown = CreateLockdown(mux);
         using var installProxy = new InstallationProxyService(lockdown, _logger);
 
-        ArrayNode apps = await installProxy.Browse(cancellationToken: ct).ConfigureAwait(false);
-
-        var result = new List<BackendApp>(apps.Count);
-        foreach (PropertyNode node in apps)
+        try
         {
-            DictionaryNode app = node.AsDictionaryNode();
+            ArrayNode apps = await installProxy.Browse(cancellationToken: ct).ConfigureAwait(false);
 
-            string bundleId = ReadString(app, "CFBundleIdentifier");
-            if (string.IsNullOrEmpty(bundleId))
-                continue;
+            var result = new List<BackendApp>(apps.Count);
+            foreach (PropertyNode node in apps)
+            {
+                DictionaryNode app = node.AsDictionaryNode();
 
-            string name = ReadString(app, "CFBundleDisplayName");
-            if (string.IsNullOrEmpty(name))
-                name = ReadString(app, "CFBundleName");
-            string version = ReadString(app, "CFBundleShortVersionString");
-            if (string.IsNullOrEmpty(version))
-                version = ReadString(app, "CFBundleVersion");
+                string bundleId = ReadString(app, "CFBundleIdentifier");
+                if (string.IsNullOrEmpty(bundleId))
+                    continue;
 
-            bool isUser = string.Equals(ReadString(app, "ApplicationType"), "User", StringComparison.OrdinalIgnoreCase);
+                string name = ReadString(app, "CFBundleDisplayName");
+                if (string.IsNullOrEmpty(name))
+                    name = ReadString(app, "CFBundleName");
+                string version = ReadString(app, "CFBundleShortVersionString");
+                if (string.IsNullOrEmpty(version))
+                    version = ReadString(app, "CFBundleVersion");
 
-            result.Add(new BackendApp(bundleId, name, version, isUser));
+                bool isUser = string.Equals(ReadString(app, "ApplicationType"), "User", StringComparison.OrdinalIgnoreCase);
+
+                result.Add(new BackendApp(bundleId, name, version, isUser));
+            }
+            metric.Succeed(result.Count);
+            return result;
         }
-        return result;
+        catch (OperationCanceledException)
+        {
+            metric.Cancel();
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<byte[]>> ListProvisioningProfilesAsync(string udid, CancellationToken ct)
     {
-        using LockdownClient lockdown = CreateLockdown(udid);
+        UsbmuxdDevice mux = FindPreferredMuxDevice(udid);
+        string connectionType = ConnectionLabel(mux);
+        using var metric = _metrics.TrackBackendOperation("misagent_profiles", connectionType);
+        using LockdownClient lockdown = CreateLockdown(mux);
         using var misagent = new MisagentService(lockdown, _logger);
 
-        List<PropertyNode> profiles = await misagent.GetInstalledProvisioningProfiles().ConfigureAwait(false);
-
-        var result = new List<byte[]>(profiles.Count);
-        foreach (PropertyNode profile in profiles)
+        try
         {
-            try
+            List<PropertyNode> profiles = await misagent.GetInstalledProvisioningProfiles().ConfigureAwait(false);
+
+            var result = new List<byte[]>(profiles.Count);
+            foreach (PropertyNode profile in profiles)
             {
-                result.Add(profile.AsDataNode().Value);
+                try
+                {
+                    result.Add(profile.AsDataNode().Value);
+                }
+                catch (Exception ex)
+                {
+                    _metrics.RecordProvisioningProfileShapeWarning(ProfileNodeType(profile));
+                    _logger.LogWarning("unexpected provisioning-profile node shape: {Error}", ex.Message);
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("unexpected provisioning-profile node shape: {Error}", ex.Message);
-            }
+            metric.Succeed(result.Count);
+            return result;
         }
-        return result;
+        catch (OperationCanceledException)
+        {
+            metric.Cancel();
+            throw;
+        }
     }
 
     public async Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct)
@@ -179,6 +207,11 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     /// </summary>
     private LockdownClient CreateLockdown(string udid)
     {
+        return CreateLockdown(FindPreferredMuxDevice(udid));
+    }
+
+    private static UsbmuxdDevice FindPreferredMuxDevice(string udid)
+    {
         List<UsbmuxdDevice> matches = Usbmux.GetDeviceList()
             .Where(d => string.Equals(d.Serial, udid, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -187,8 +220,14 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                              ?? matches.FirstOrDefault();
         if (mux is null)
             throw new InvalidOperationException($"device {udid} is not currently reachable over usbmux");
-        return CreateLockdown(mux);
+        return mux;
     }
+
+    private static string ConnectionLabel(UsbmuxdDevice mux) =>
+        mux.ConnectionType == UsbmuxdConnectionType.Network ? "wifi" : "usb";
+
+    private static string ProfileNodeType(PropertyNode node) =>
+        node.GetType().Name.Replace("Node", "", StringComparison.OrdinalIgnoreCase);
 
     private LockdownClient CreateLockdown(UsbmuxdDevice mux)
     {
