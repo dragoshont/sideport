@@ -18,15 +18,24 @@ public sealed class NetimobiledeviceController : IDeviceController
     private readonly IDeviceBackend _backend;
     private readonly ILogger<NetimobiledeviceController> _logger;
     private readonly DeviceMetrics _metrics;
+    private readonly TimeSpan _installedAppsCacheTtl;
+    private readonly TimeProvider _timeProvider;
+    private readonly object _installedAppsCacheGate = new();
+    private readonly Dictionary<string, InstalledAppsCacheEntry> _installedAppsCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SemaphoreSlim> _installedAppsLocks = new(StringComparer.OrdinalIgnoreCase);
 
     internal NetimobiledeviceController(
         IDeviceBackend backend,
         ILogger<NetimobiledeviceController>? logger = null,
-        DeviceMetrics? metrics = null)
+        DeviceMetrics? metrics = null,
+        TimeSpan? installedAppsCacheTtl = null,
+        TimeProvider? timeProvider = null)
     {
         _backend = backend;
         _logger = logger ?? NullLogger<NetimobiledeviceController>.Instance;
         _metrics = metrics ?? new DeviceMetrics();
+        _installedAppsCacheTtl = installedAppsCacheTtl ?? TimeSpan.FromMinutes(5);
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default)
@@ -116,20 +125,48 @@ public sealed class NetimobiledeviceController : IDeviceController
         using var metric = _metrics.TrackInstalledAppsRequest();
         try
         {
-            IReadOnlyList<BackendApp> apps = await _backend.ListInstalledAppsAsync(udid, ct);
-            IReadOnlyList<ProvisioningProfileInfo> profiles =
-                ParseProfiles(await _backend.ListProvisioningProfilesAsync(udid, ct));
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            if (TryGetInstalledAppsCache(udid, now, out IReadOnlyList<InstalledApp>? cached))
+            {
+                _metrics.RecordInstalledAppsCacheEvent("hit");
+                metric.Succeed(cached!.Count);
+                return cached;
+            }
 
-            InstalledApp[] result =
-            [
-                .. apps
-                    .Where(a => a.IsUserApp) // sideloadable user apps, not system apps
-                    .Select(a => new InstalledApp(a.BundleId, a.Name, a.Version, ResolveExpiry(a.BundleId, profiles)))
-                    .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(a => a.BundleId, StringComparer.OrdinalIgnoreCase),
-            ];
-            metric.Succeed(result.Length);
-            return result;
+            SemaphoreSlim readLock = GetInstalledAppsLock(udid);
+            await readLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                now = _timeProvider.GetUtcNow();
+                if (TryGetInstalledAppsCache(udid, now, out cached))
+                {
+                    _metrics.RecordInstalledAppsCacheEvent("hit_after_wait");
+                    metric.Succeed(cached!.Count);
+                    return cached;
+                }
+
+                _metrics.RecordInstalledAppsCacheEvent(CacheEnabled ? "miss" : "disabled");
+
+                IReadOnlyList<BackendApp> apps = await _backend.ListInstalledAppsAsync(udid, ct);
+                IReadOnlyList<ProvisioningProfileInfo> profiles =
+                    ParseProfiles(await _backend.ListProvisioningProfilesAsync(udid, ct));
+
+                InstalledApp[] result =
+                [
+                    .. apps
+                        .Where(a => a.IsUserApp) // sideloadable user apps, not system apps
+                        .Select(a => new InstalledApp(a.BundleId, a.Name, a.Version, ResolveExpiry(a.BundleId, profiles)))
+                        .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(a => a.BundleId, StringComparer.OrdinalIgnoreCase),
+                ];
+                StoreInstalledAppsCache(udid, result, _timeProvider.GetUtcNow());
+                metric.Succeed(result.Length);
+                return result;
+            }
+            finally
+            {
+                readLock.Release();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -160,7 +197,67 @@ public sealed class NetimobiledeviceController : IDeviceController
 
         _logger.LogInformation("installing {Bundle} onto {Udid}", info.BundleIdentifier, udid);
         await _backend.InstallAsync(udid, ipaPath, progress: null, ct);
+        InvalidateInstalledAppsCache(udid);
     }
+
+    private bool CacheEnabled => _installedAppsCacheTtl > TimeSpan.Zero;
+
+    private bool TryGetInstalledAppsCache(string udid, DateTimeOffset now, out IReadOnlyList<InstalledApp>? apps)
+    {
+        apps = null;
+        if (!CacheEnabled)
+            return false;
+
+        lock (_installedAppsCacheGate)
+        {
+            if (!_installedAppsCache.TryGetValue(udid, out InstalledAppsCacheEntry? entry))
+                return false;
+
+            if (entry.ExpiresAt <= now)
+            {
+                _installedAppsCache.Remove(udid);
+                _metrics.RecordInstalledAppsCacheEvent("expired");
+                return false;
+            }
+
+            apps = entry.Apps;
+            return true;
+        }
+    }
+
+    private void StoreInstalledAppsCache(string udid, IReadOnlyList<InstalledApp> apps, DateTimeOffset now)
+    {
+        if (!CacheEnabled)
+            return;
+
+        lock (_installedAppsCacheGate)
+            _installedAppsCache[udid] = new InstalledAppsCacheEntry([.. apps], now.Add(_installedAppsCacheTtl));
+    }
+
+    private void InvalidateInstalledAppsCache(string udid)
+    {
+        lock (_installedAppsCacheGate)
+        {
+            if (_installedAppsCache.Remove(udid))
+                _metrics.RecordInstalledAppsCacheEvent("invalidated");
+        }
+    }
+
+    private SemaphoreSlim GetInstalledAppsLock(string udid)
+    {
+        lock (_installedAppsCacheGate)
+        {
+            if (!_installedAppsLocks.TryGetValue(udid, out SemaphoreSlim? readLock))
+            {
+                readLock = new SemaphoreSlim(1, 1);
+                _installedAppsLocks[udid] = readLock;
+            }
+
+            return readLock;
+        }
+    }
+
+    private sealed record InstalledAppsCacheEntry(IReadOnlyList<InstalledApp> Apps, DateTimeOffset ExpiresAt);
 
     /// <summary>
     /// Resolve the signing expiry for a bundle id from the device's profiles: the

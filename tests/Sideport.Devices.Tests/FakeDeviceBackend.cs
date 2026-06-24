@@ -11,18 +11,26 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
     public Dictionary<string, List<BackendApp>> AppsByUdid { get; } = [];
     public Dictionary<string, List<byte[]>> ProfilesByUdid { get; } = [];
     public List<(string Udid, string IpaPath)> Installs { get; } = [];
+    public Dictionary<string, int> ListInstalledAppsCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, int> ListProvisioningProfilesCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Exception? ThrowOnInstall { get; set; }
 
     public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<BackendDevice>>(Devices);
 
-    public Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<BackendApp>>(
+    public Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct)
+    {
+        ListInstalledAppsCalls[udid] = ListInstalledAppsCalls.GetValueOrDefault(udid) + 1;
+        return Task.FromResult<IReadOnlyList<BackendApp>>(
             AppsByUdid.TryGetValue(udid, out List<BackendApp>? apps) ? apps : []);
+    }
 
-    public Task<IReadOnlyList<byte[]>> ListProvisioningProfilesAsync(string udid, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<byte[]>>(
+    public Task<IReadOnlyList<byte[]>> ListProvisioningProfilesAsync(string udid, CancellationToken ct)
+    {
+        ListProvisioningProfilesCalls[udid] = ListProvisioningProfilesCalls.GetValueOrDefault(udid) + 1;
+        return Task.FromResult<IReadOnlyList<byte[]>>(
             ProfilesByUdid.TryGetValue(udid, out List<byte[]>? p) ? p : []);
+    }
 
     public Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct)
     {

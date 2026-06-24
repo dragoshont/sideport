@@ -13,6 +13,7 @@ public sealed class DeviceMetrics
     private readonly Dictionary<string, RequestStats> _installedApps = new(StringComparer.Ordinal);
     private readonly Dictionary<BackendOperationKey, RequestStats> _backendOperations = new();
     private readonly Dictionary<string, long> _profileShapeWarnings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _installedAppsCacheEvents = new(StringComparer.Ordinal);
 
     public DeviceMetricScope TrackInstalledAppsRequest() =>
         new(this, MetricKind.InstalledApps, operation: null, connectionType: null, Stopwatch.StartNew());
@@ -29,21 +30,33 @@ public sealed class DeviceMetrics
         }
     }
 
+    internal void RecordInstalledAppsCacheEvent(string cacheEvent)
+    {
+        cacheEvent = NormalizeLabelValue(cacheEvent);
+        lock (_gate)
+        {
+            _installedAppsCacheEvents[cacheEvent] = _installedAppsCacheEvents.GetValueOrDefault(cacheEvent) + 1;
+        }
+    }
+
     public string ToPrometheusText()
     {
         Dictionary<string, RequestStats> installedApps;
         Dictionary<BackendOperationKey, RequestStats> backendOperations;
         Dictionary<string, long> profileShapeWarnings;
+        Dictionary<string, long> installedAppsCacheEvents;
 
         lock (_gate)
         {
             installedApps = new Dictionary<string, RequestStats>(_installedApps, StringComparer.Ordinal);
             backendOperations = new Dictionary<BackendOperationKey, RequestStats>(_backendOperations);
             profileShapeWarnings = new Dictionary<string, long>(_profileShapeWarnings, StringComparer.Ordinal);
+            installedAppsCacheEvents = new Dictionary<string, long>(_installedAppsCacheEvents, StringComparer.Ordinal);
         }
 
         var text = new StringBuilder();
         AppendInstalledApps(text, installedApps);
+        AppendInstalledAppsCacheEvents(text, installedAppsCacheEvents);
         AppendBackendOperations(text, backendOperations);
         AppendProfileShapeWarnings(text, profileShapeWarnings);
         return text.ToString();
@@ -124,6 +137,19 @@ public sealed class DeviceMetrics
         {
             string labels = BackendLabels(key);
             text.Append("sideport_device_backend_operation_items_total{").Append(labels).Append("} ").AppendLine(stats.ItemCount.ToString(CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static void AppendInstalledAppsCacheEvents(StringBuilder text, Dictionary<string, long> metrics)
+    {
+        text.AppendLine("# HELP sideport_device_installed_apps_cache_events_total Installed-apps cache events by event type.");
+        text.AppendLine("# TYPE sideport_device_installed_apps_cache_events_total counter");
+        foreach ((string cacheEvent, long count) in metrics.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            text.Append("sideport_device_installed_apps_cache_events_total{event=\"")
+                .Append(EscapeLabel(cacheEvent))
+                .Append("\"} ")
+                .AppendLine(count.ToString(CultureInfo.InvariantCulture));
         }
     }
 

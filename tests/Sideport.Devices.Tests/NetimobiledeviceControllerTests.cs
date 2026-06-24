@@ -7,8 +7,12 @@ public class NetimobiledeviceControllerTests
 {
     private readonly FakeDeviceBackend _backend = new();
 
-    private NetimobiledeviceController Build() =>
-        new(_backend, NullLogger<NetimobiledeviceController>.Instance);
+    private NetimobiledeviceController Build(TimeSpan? installedAppsCacheTtl = null, TimeProvider? timeProvider = null) =>
+        new(
+            _backend,
+            NullLogger<NetimobiledeviceController>.Instance,
+            installedAppsCacheTtl: installedAppsCacheTtl,
+            timeProvider: timeProvider);
 
     // --- device discovery + dedup -----------------------------------------
 
@@ -222,6 +226,58 @@ public class NetimobiledeviceControllerTests
         Assert.Equal("Zebra", apps[1].Name);
     }
 
+    [Fact]
+    public async Task ListApps_WithinCacheTtl_ReusesInstalledAppsSnapshot()
+    {
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.one", "One", "1.0", true)];
+        NetimobiledeviceController controller = Build(installedAppsCacheTtl: TimeSpan.FromMinutes(5));
+
+        InstalledApp first = Assert.Single(await controller.ListInstalledAppsAsync("U"));
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.two", "Two", "1.0", true)];
+        InstalledApp second = Assert.Single(await controller.ListInstalledAppsAsync("U"));
+
+        Assert.Equal("One", first.Name);
+        Assert.Equal("One", second.Name);
+        Assert.Equal(1, _backend.ListInstalledAppsCalls["U"]);
+        Assert.Equal(1, _backend.ListProvisioningProfilesCalls["U"]);
+    }
+
+    [Fact]
+    public async Task ListApps_AfterCacheTtl_ReloadsDeviceInventory()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-06-24T12:00:00Z"));
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.one", "One", "1.0", true)];
+        NetimobiledeviceController controller = Build(TimeSpan.FromMinutes(1), clock);
+
+        Assert.Equal("One", Assert.Single(await controller.ListInstalledAppsAsync("U")).Name);
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.two", "Two", "1.0", true)];
+        clock.Advance(TimeSpan.FromMinutes(2));
+
+        Assert.Equal("Two", Assert.Single(await controller.ListInstalledAppsAsync("U")).Name);
+        Assert.Equal(2, _backend.ListInstalledAppsCalls["U"]);
+        Assert.Equal(2, _backend.ListProvisioningProfilesCalls["U"]);
+    }
+
+    [Fact]
+    public async Task Install_Success_InvalidatesInstalledAppsCache()
+    {
+        string dir = NewDir();
+        try
+        {
+            _backend.AppsByUdid["UDID-1"] = [new BackendApp("com.example.old", "Old", "1.0", true)];
+            NetimobiledeviceController controller = Build(installedAppsCacheTtl: TimeSpan.FromMinutes(5));
+            Assert.Equal("Old", Assert.Single(await controller.ListInstalledAppsAsync("UDID-1")).Name);
+
+            string ipa = DeviceFixtures.WriteMinimalIpa(dir, "com.example.new");
+            await controller.InstallAsync("UDID-1", ipa);
+            _backend.AppsByUdid["UDID-1"] = [new BackendApp("com.example.new", "New", "1.0", true)];
+
+            Assert.Equal("New", Assert.Single(await controller.ListInstalledAppsAsync("UDID-1")).Name);
+            Assert.Equal(2, _backend.ListInstalledAppsCalls["UDID-1"]);
+        }
+        finally { Cleanup(dir); }
+    }
+
     // --- install validation -----------------------------------------------
 
     [Fact]
@@ -287,5 +343,14 @@ public class NetimobiledeviceControllerTests
     private static void Cleanup(string dir)
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan value) => _utcNow = _utcNow.Add(value);
     }
 }

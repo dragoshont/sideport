@@ -23,10 +23,19 @@ public static class DevicesServiceCollectionExtensions
                 // /var/lib/lockdown when unset.
                 sp.GetService<IConfiguration>()?["Sideport:Devices:PairingRecordsDir"]));
         services.AddSingleton<IDeviceController>(sp =>
+        {
+            TimeSpan? installedAppsCacheTtl = null;
+            string? configuredTtl = sp.GetService<IConfiguration>()?["Sideport:Devices:InstalledAppsCacheTtl"];
+            if (TimeSpan.TryParse(configuredTtl, out TimeSpan parsedTtl))
+                installedAppsCacheTtl = parsedTtl;
+
+            return
             new NetimobiledeviceController(
                 sp.GetRequiredService<IDeviceBackend>(),
                 sp.GetService<ILogger<NetimobiledeviceController>>(),
-                sp.GetRequiredService<DeviceMetrics>()));
+                sp.GetRequiredService<DeviceMetrics>(),
+                installedAppsCacheTtl);
+        });
         return services;
     }
 }
