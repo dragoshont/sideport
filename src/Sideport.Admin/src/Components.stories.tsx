@@ -62,7 +62,7 @@ export const SlotsPartial: Story = { name: 'AppSlotGrid — 1/3 used', render: (
 export const SlotsFull: Story = { name: 'AppSlotGrid — 3/3 full', render: () => <AppSlotGrid apps={nApps(3, 'demo-device')} canRegister={false} /> }
 
 // ---------- RenewalQueueList ----------
-export const RenewalRunningQueued: Story = { name: 'RenewalQueue — running + queued', render: () => <RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /> }
+export const RenewalRunningQueued: Story = { name: 'RenewalQueue — operation states', render: () => <RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /> }
 export const RenewalBlocked: Story = { name: 'RenewalQueue — blocked', render: () => <RenewalQueueList items={fixtures.renewals.filter((item) => item.risk === 'blocked')} apps={fixtures.apps} apiStatus={liveStatus} /> }
 export const RenewalEmpty: Story = { name: 'RenewalQueue — empty', render: () => <RenewalQueueList items={[]} apps={fixtures.apps} apiStatus={liveStatus} /> }
 

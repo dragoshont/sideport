@@ -6,6 +6,7 @@ const routes = [
   { name: 'Devices', button: 'Devices', heading: /Device inventory|No devices known yet/ },
   { name: 'AppCatalog', button: 'App Catalog', heading: 'Reusable apps, separate from phone slots' },
   { name: 'Renewals', button: 'Renewals', heading: 'Renewal risk' },
+  { name: 'Operations', button: 'Operations', heading: 'Operation history' },
   { name: 'AppleAccess', button: 'Apple Access', heading: 'Connect Apple data without over-trusting it' },
   { name: 'Diagnostics', button: 'Diagnostics', heading: 'Runtime failure evidence' },
   { name: 'Settings', button: 'Settings', heading: 'Control plane status and session access' },
@@ -26,6 +27,6 @@ test.describe('Sideport admin runtime UI', () => {
     await page.locator('.nav-list').getByRole('button', { name: 'App Catalog', exact: true }).click({ force: true })
     await expect(page.getByRole('button', { name: /Inspect IPA|Register on phone/ }).first()).toBeDisabled()
     await page.locator('.nav-list').getByRole('button', { name: 'Devices', exact: true }).click({ force: true })
-    await expect(page.getByText(/No devices returned by \/api\/devices|Device inventory/)).toBeVisible()
+    await expect(page.getByText(/No known devices returned|Device inventory/)).toBeVisible()
   })
 })

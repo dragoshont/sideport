@@ -1,11 +1,16 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.HttpOverrides;
 using Sideport.Api.AppleAccess;
 using Sideport.Api.Catalog;
+using Sideport.Api.DeviceInventory;
 using Sideport.Api.Diagnostics;
+using Sideport.Api.DiagnosticsIssues;
+using Sideport.Api.Operations;
+using Sideport.Api.Workspace;
 using Sideport.Core;
 using Sideport.DeveloperApi;
 using Sideport.DeveloperApi.Packaging;
@@ -43,6 +48,12 @@ if (TimeSpan.TryParse(builder.Configuration["Sideport:Scheduler:ResignInterval"]
 var certClockSeedPath = builder.Configuration["Sideport:Catalog:SeedCertClockPath"]
     ?? Environment.GetEnvironmentVariable("SIDEPORT_CERT_CLOCK_IPA")
     ?? "/var/lib/altserver/ipa/CertCountdown.ipa";
+long catalogMaxUploadBytes = builder.Configuration.GetValue<long?>("Sideport:Catalog:MaxUploadBytes")
+    ?? 268_435_456;
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = catalogMaxUploadBytes + 1_048_576;
+});
 var appStoreConnectOptions = new AppStoreConnectOptions(
     builder.Configuration["Sideport:AppStoreConnect:KeyId"]
         ?? Environment.GetEnvironmentVariable("SIDEPORT_ASC_KEY_ID"),
@@ -83,6 +94,11 @@ var operationLogs = new OperationLogStore(
     builder.Configuration.GetValue("Sideport:Logs:Capacity", 500));
 builder.Services.AddSingleton(operationLogs);
 builder.Logging.AddProvider(new OperationLogProvider(operationLogs));
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = catalogMaxUploadBytes + 1_048_576;
+    options.ValueLengthLimit = 16_384;
+});
 
 // --- Seams (design §4): IAnisetteProvider / ISigner / IDeviceController /
 //     IAppleDeveloperPortal. -----------------------------------------------
@@ -122,9 +138,11 @@ if (string.Equals(credentialSource, "keychain", StringComparison.OrdinalIgnoreCa
         sp => new AppleKeychainCredentialProvider(sp.GetRequiredService<KeychainCredentialOptions>()));
 }
 
-builder.Services.AddRefreshOrchestrator(orchestratorOptions, runScheduler: runScheduler);
+builder.Services.AddRefreshOrchestrator(orchestratorOptions, runScheduler: false);
 builder.Services.AddSingleton(new AppCatalogOptions(
     Path.Combine(stateDirectory, "catalog.json"),
+    Path.Combine(stateDirectory, "imports"),
+    catalogMaxUploadBytes,
     [new AppCatalogSeed(
         "cert-clock",
         "Cert Clock",
@@ -134,6 +152,16 @@ builder.Services.AddSingleton(new AppCatalogOptions(
 builder.Services.AddSingleton<IAppCatalog, FileAppCatalog>();
 builder.Services.AddSingleton(appStoreConnectOptions);
 builder.Services.AddSingleton(personalAppleOptions);
+builder.Services.AddSingleton(_ => new OperationStore(Path.Combine(stateDirectory, "operations.json")));
+builder.Services.AddSingleton<OperationQueue>();
+builder.Services.AddSingleton<OperationService>();
+builder.Services.AddHostedService<OperationWorker>();
+if (runScheduler)
+    builder.Services.AddHostedService<OperationScheduler>();
+builder.Services.AddSingleton(_ => new KnownDeviceStore(Path.Combine(stateDirectory, "known-devices.json")));
+builder.Services.AddSingleton<KnownDeviceService>();
+builder.Services.AddSingleton(_ => new DiagnosticIssueStore(Path.Combine(stateDirectory, "diagnostic-issues.json")));
+builder.Services.AddSingleton<DiagnosticIssueService>();
 builder.Services.AddHttpClient("app-store-connect");
 builder.Services.AddSingleton<IAppleAccessProbe>(sp => new AppStoreConnectProbe(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient("app-store-connect"),
@@ -338,6 +366,8 @@ app.MapGet("/api/me", (HttpContext ctx) =>
         })
         : Results.Ok(new { authenticated = true, user = (string?)null, email = (string?)null, via = "token" }));
 
+app.MapGet("/api/workspace", (HttpContext ctx) => Results.Ok(WorkspaceFor(ctx, oidcEnabled, !string.IsNullOrWhiteSpace(apiToken))));
+
 // Interactive login/logout (only meaningful when OIDC is enabled).
 if (oidcEnabled)
 {
@@ -403,6 +433,60 @@ app.MapGet("/api/anisette/info", async (IAnisetteProvider anisette, Cancellation
 app.MapGet("/api/logs", (OperationLogStore logs, int? limit) =>
     Results.Ok(logs.Read(limit ?? 100)));
 
+app.MapGet("/api/diagnostics/issues", async (DiagnosticIssueService issues, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await issues.ListAsync(ct));
+    }
+    catch (DiagnosticIssueStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("diagnostics-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/api/diagnostics/issues/{issueId}", async (string issueId, DiagnosticIssueService issues, CancellationToken ct) =>
+{
+    try
+    {
+        DiagnosticIssueDto? issue = await issues.FindAsync(issueId, ct);
+        return issue is null ? Results.NotFound(new DiagnosticIssueErrorDto("diagnostic-issue-not-found", "Diagnostic issue not found.")) : Results.Ok(issue);
+    }
+    catch (DiagnosticIssueStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("diagnostics-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPatch("/api/diagnostics/issues/{issueId}", async (string issueId, DiagnosticIssuePatchRequest request, DiagnosticIssueService issues, CancellationToken ct) =>
+{
+    try
+    {
+        DiagnosticIssueDto? issue = await issues.PatchAsync(issueId, request, ct);
+        return issue is null ? Results.NotFound(new DiagnosticIssueErrorDto("diagnostic-issue-not-found", "Diagnostic issue not found.")) : Results.Ok(issue);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["status"] = [ex.Message] });
+    }
+    catch (DiagnosticIssueStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("diagnostics-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(new DiagnosticIssueErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
 app.MapGet("/api/apple-access/status", async (IAppleAccessProbe probe, CancellationToken ct) =>
     Results.Ok(await probe.ProbeAsync(ct)));
 
@@ -444,6 +528,85 @@ app.MapPost("/api/apple-access/personal/2fa", async (PersonalAppleCompleteTwoFac
 // Device plane (design §8 phase 1) — wired to the seam, implementation pending.
 app.MapGet("/api/devices", async (IDeviceController devices, CancellationToken ct) =>
     Results.Ok(await devices.ListDevicesAsync(ct)));
+
+app.MapGet("/api/devices/known", async (KnownDeviceService inventory, bool? includeReachable, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await inventory.ListAsync(includeReachable ?? true, ct));
+    }
+    catch (KnownDeviceStoreException ex)
+    {
+        return Results.Json(
+            new KnownDeviceErrorDto("known-device-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPost("/api/devices/known", async (KnownDeviceUpsertRequest request, KnownDeviceService inventory, CancellationToken ct) =>
+{
+    try
+    {
+        (KnownDeviceDto device, bool created) = await inventory.UpsertAsync(request, ct);
+        return created ? Results.Created($"/api/devices/known/{Uri.EscapeDataString(device.Udid)}", device) : Results.Ok(device);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["udid"] = [ex.Message] });
+    }
+    catch (KnownDeviceStoreException ex)
+    {
+        return Results.Json(
+            new KnownDeviceErrorDto("known-device-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPatch("/api/devices/known/{udid}", async (string udid, KnownDevicePatchRequest request, KnownDeviceService inventory, CancellationToken ct) =>
+{
+    try
+    {
+        KnownDeviceDto? device = await inventory.PatchAsync(udid, request, ct);
+        return device is null ? Results.NotFound(new KnownDeviceErrorDto("known-device-not-found", "Known device not found.")) : Results.Ok(device);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["udid"] = [ex.Message] });
+    }
+    catch (KnownDeviceStoreException ex)
+    {
+        return Results.Json(
+            new KnownDeviceErrorDto("known-device-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapDelete("/api/devices/known/{udid}", async (string udid, KnownDeviceService inventory, CancellationToken ct) =>
+{
+    try
+    {
+        (bool removed, int registrationCount) = await inventory.RemoveAsync(udid, ct);
+        if (registrationCount > 0)
+        {
+            return Results.Conflict(new KnownDeviceErrorDto(
+                "device-has-registrations",
+                "Remove app registrations before deleting this known device record.",
+                RegistrationCount: registrationCount));
+        }
+
+        return removed ? Results.NoContent() : Results.NotFound(new KnownDeviceErrorDto("known-device-not-found", "Known device not found."));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["udid"] = [ex.Message] });
+    }
+    catch (KnownDeviceStoreException ex)
+    {
+        return Results.Json(
+            new KnownDeviceErrorDto("known-device-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 // Device connectivity self-test (built-in troubleshooting): walks the transport
 // chain usbmux -> device enumeration -> per-device trust/lockdown and reports
@@ -640,6 +803,68 @@ app.MapPost("/api/catalog/apps/inspect", async (CatalogInspectRequest request, I
     }
 });
 
+app.MapPost("/api/catalog/apps/upload", async (HttpRequest request, IAppCatalog catalog, AppCatalogOptions options, CancellationToken ct) =>
+{
+    if (!request.HasFormContentType)
+        return Results.Json(new { error = "unsupported-media-type", message = "Upload must be multipart/form-data." }, statusCode: StatusCodes.Status415UnsupportedMediaType);
+
+    IFormCollection form = await request.ReadFormAsync(ct);
+    IFormFile? ipa = form.Files.GetFile("ipa");
+    if (ipa is null || ipa.Length == 0)
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["ipa"] = ["An .ipa file is required."] });
+
+    if (ipa.Length > options.MaxUploadBytes)
+    {
+        return Results.Json(new
+        {
+            error = "upload-too-large",
+            message = "Uploaded IPA exceeds the configured Sideport:Catalog:MaxUploadBytes limit.",
+            limit = options.MaxUploadBytes,
+        }, statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
+
+    if (!string.Equals(Path.GetExtension(ipa.FileName), ".ipa", StringComparison.OrdinalIgnoreCase))
+        return Results.Json(new { error = "unsupported-media-type", message = "Catalog uploads must be .ipa files." }, statusCode: StatusCodes.Status415UnsupportedMediaType);
+
+    string tempDir = Path.Combine(Path.GetDirectoryName(options.CatalogPath) ?? Path.GetTempPath(), "upload-tmp");
+    Directory.CreateDirectory(tempDir);
+    string tempPath = Path.Combine(tempDir, $"{Guid.NewGuid():N}.ipa");
+
+    try
+    {
+        await using (FileStream stream = File.Create(tempPath))
+            await ipa.CopyToAsync(stream, ct);
+
+        bool replace = bool.TryParse(form["replace"].ToString(), out bool parsedReplace) && parsedReplace;
+        (CatalogAppDto entry, bool created) = await catalog.ImportUploadedIpaAsync(new CatalogUploadRequest(
+            tempPath,
+            form["id"].ToString(),
+            form["name"].ToString(),
+            form["purpose"].ToString(),
+            replace), ct);
+
+        return created ? Results.Created($"/api/catalog/apps/{entry.Id}", entry) : Results.Ok(entry);
+    }
+    catch (CatalogConflictException ex)
+    {
+        return Results.Conflict(new { error = "catalog-id-conflict", message = ex.Message, id = ex.Id });
+    }
+    catch (Exception ex) when (ex is FormatException || ex is InvalidDataException)
+    {
+        return Results.UnprocessableEntity(new { error = "ipa-inspection-failed", detail = ex.Message });
+    }
+    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is CatalogStoreException)
+    {
+        return Results.Json(new { error = "catalog-store-unavailable", message = ex.Message, detail = ex.GetType().Name }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    finally
+    {
+        try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+});
+
 app.MapGet("/api/apps", async (IAppRegistry registry, RefreshOrchestrator orchestrator, CancellationToken ct) =>
 {
     var apps = await registry.ListAsync(ct);
@@ -745,6 +970,140 @@ app.MapPost("/api/apps/{udid}/{bundleId}/refresh",
     return result.Success ? Results.Ok(result) : Results.UnprocessableEntity(result);
 });
 
+app.MapPost("/api/operations/preflight", async (OperationPreflightRequest request, OperationService operations, CancellationToken ct) =>
+{
+    var validationErrors = ValidateOperationTarget(request.Type, request.DeviceUdid, request.BundleId);
+    if (validationErrors.Count > 0)
+        return Results.ValidationProblem(validationErrors);
+
+    if (!string.Equals(request.Type, "refresh", StringComparison.OrdinalIgnoreCase))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { [nameof(request.Type)] = ["Only refresh operations are supported in this slice."] });
+
+    return Results.Ok(await operations.PreflightRefreshAsync(request.DeviceUdid, request.BundleId, ct));
+});
+
+app.MapPost("/api/operations/refresh", async (RefreshOperationRequest request, HttpContext context, OperationService operations, CancellationToken ct) =>
+{
+    var validationErrors = ValidateOperationTarget("refresh", request.DeviceUdid, request.BundleId);
+    if (validationErrors.Count > 0)
+        return Results.ValidationProblem(validationErrors);
+
+    try
+    {
+        (OperationRecordDto record, bool created) = await operations.RefreshAsync(
+            request.DeviceUdid,
+            request.BundleId,
+            ActorFrom(context),
+            request.IdempotencyKey,
+            ct: ct);
+        if (!created)
+            return Results.Ok(record);
+        return string.Equals(record.Status, "queued", StringComparison.Ordinal)
+            ? Results.Accepted($"/api/operations/{record.OperationId}", record)
+            : Results.Created($"/api/operations/{record.OperationId}", record);
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPost("/api/operations/{operationId}/cancel", async (string operationId, OperationActionRequest request, OperationService operations, CancellationToken ct) =>
+{
+    try
+    {
+        (OperationRecordDto? record, string? error) = await operations.CancelAsync(operationId, request.Reason, ct);
+        return error switch
+        {
+            null => Results.Accepted($"/api/operations/{record!.OperationId}", record),
+            "operation-not-found" => Results.NotFound(new OperationErrorDto("operation-not-found", "Operation not found.")),
+            "operation-not-cancelable" => Results.Conflict(new OperationErrorDto("operation-not-cancelable", "Only queued or waiting operations can be canceled in this phase.")),
+            _ => Results.Conflict(new OperationErrorDto(error, "Operation action failed.")),
+        };
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPost("/api/operations/{operationId}/retry", async (string operationId, OperationActionRequest request, HttpContext context, OperationService operations, CancellationToken ct) =>
+{
+    try
+    {
+        (OperationRecordDto? record, bool created, string? error) = await operations.RetryAsync(operationId, ActorFrom(context), request.IdempotencyKey, ct);
+        return OperationActionResult(record, created, error, "operation-not-retryable", "Operation is not retryable.");
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPost("/api/operations/{operationId}/rerun", async (string operationId, OperationActionRequest request, HttpContext context, OperationService operations, CancellationToken ct) =>
+{
+    try
+    {
+        (OperationRecordDto? record, bool created, string? error) = await operations.RerunAsync(operationId, ActorFrom(context), request.IdempotencyKey, ct);
+        return OperationActionResult(record, created, error, "operation-not-rerunnable", "Operation is not rerunnable yet.");
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/api/operations", async (OperationStore operations, string? deviceUdid, string? bundleId, int? limit, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await operations.ListAsync(deviceUdid, bundleId, limit ?? 25, ct));
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/api/operations/{operationId}", async (string operationId, OperationStore operations, CancellationToken ct) =>
+{
+    try
+    {
+        OperationRecordDto? record = await operations.FindAsync(operationId, ct);
+        return record is null ? Results.NotFound(new OperationErrorDto("operation-not-found", "Operation not found.")) : Results.Ok(record);
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/api/renewals", async (OperationService operations, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await operations.RenewalsAsync(ct));
+    }
+    catch (OperationStoreException ex)
+    {
+        return Results.Json(
+            new OperationErrorDto("operation-store-unavailable", ex.Message, ex.InnerException?.GetType().Name),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
 if (hasAdminBundle)
     app.MapFallbackToFile("index.html");
 
@@ -780,6 +1139,104 @@ static Dictionary<string, string[]> ValidateRegistration(AppRegistration registr
     AddRequired(errors, nameof(AppRegistration.TeamId), registration.TeamId);
     AddRequired(errors, nameof(AppRegistration.InputIpaPath), registration.InputIpaPath);
     return errors;
+}
+
+static Dictionary<string, string[]> ValidateOperationTarget(string? type, string? udid, string? bundleId)
+{
+    var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+    AddRequired(errors, "type", type);
+    AddRequired(errors, "deviceUdid", udid);
+    AddRequired(errors, "bundleId", bundleId);
+    return errors;
+}
+
+static OperationActorDto ActorFrom(HttpContext context)
+{
+    if (context.User?.Identity?.IsAuthenticated == true)
+    {
+        string displayName = context.User.Identity!.Name
+            ?? context.User.FindFirst("email")?.Value
+            ?? "oidc-user";
+        return new OperationActorDto("oidc-user", displayName);
+    }
+
+    return new OperationActorDto("api-token", "api-token-client");
+}
+
+static IResult OperationActionResult(OperationRecordDto? record, bool created, string? error, string conflictCode, string conflictMessage)
+{
+    return error switch
+    {
+        null when created => Results.Created($"/api/operations/{record!.OperationId}", record),
+        null => Results.Ok(record),
+        "operation-not-found" => Results.NotFound(new OperationErrorDto("operation-not-found", "Operation not found.")),
+        _ when error == conflictCode => Results.Conflict(new OperationErrorDto(conflictCode, conflictMessage)),
+        _ => Results.UnprocessableEntity(new OperationErrorDto(error, "Operation action failed.")),
+    };
+}
+
+static WorkspaceDto WorkspaceFor(HttpContext context, bool oidcEnabled, bool apiTokenConfigured)
+{
+    bool authenticatedUser = context.User?.Identity?.IsAuthenticated == true;
+    string authMode = oidcEnabled && apiTokenConfigured
+        ? "oidc-and-bearer"
+        : oidcEnabled
+            ? "oidc"
+            : apiTokenConfigured
+                ? "bearer-token"
+                : "open-behind-proxy";
+    WorkspaceMemberDto currentMember = authenticatedUser
+        ? new WorkspaceMemberDto(
+            context.User!.FindFirst("sub")?.Value ?? context.User.Identity!.Name ?? "oidc-user",
+            context.User.Identity!.Name ?? context.User.FindFirst("email")?.Value ?? "OIDC user",
+            context.User.FindFirst("email")?.Value,
+            "owner",
+            "active",
+            DateTimeOffset.UtcNow,
+            null,
+            "live")
+        : new WorkspaceMemberDto(
+            "api-token-client",
+            "api-token-client",
+            null,
+            "owner",
+            "active",
+            DateTimeOffset.UtcNow,
+            null,
+            "derived");
+
+    WorkspaceRoleDto[] roles =
+    [
+        new("owner", "Owner", ["workspace.read", "devices.read", "devices.manage", "catalog.import", "operations.run", "operations.cancel.queued", "operations.retry", "operations.rerun", "diagnostics.triage"]),
+        new("operator", "Operator", ["workspace.read", "devices.read", "catalog.import", "operations.run", "operations.cancel.queued", "operations.retry", "operations.rerun", "diagnostics.triage"]),
+        new("viewer", "Viewer", ["workspace.read", "devices.read"]),
+    ];
+    Dictionary<string, bool> capabilities = new(StringComparer.Ordinal)
+    {
+        ["users.invite"] = false,
+        ["users.suspend"] = false,
+        ["users.offboard"] = false,
+        ["devices.read"] = true,
+        ["devices.manage"] = true,
+        ["catalog.import"] = true,
+        ["operations.run"] = true,
+        ["operations.cancel.queued"] = true,
+        ["operations.cancel.running"] = false,
+        ["operations.retry"] = true,
+        ["operations.rerun"] = true,
+        ["diagnostics.triage"] = true,
+    };
+
+    return new WorkspaceDto(
+        "Sideport workspace",
+        authMode,
+        AuthDelegated: true,
+        RoleEnforcement: "advisory",
+        SupportsUserAdministration: false,
+        currentMember,
+        Members: [],
+        Roles: roles,
+        Capabilities: capabilities);
 }
 
 static void AddRequired(Dictionary<string, string[]> errors, string field, string? value)

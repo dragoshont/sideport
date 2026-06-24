@@ -302,16 +302,20 @@ loop with single-flight + countdowns + structured logs.
     (invariant #5). Persists per-app/device expiry + last-result.
   - A hosted `BackgroundService` scheduler that refreshes before the ~7-day
     cert lapse (configurable lead time).
-- API: `POST /api/refresh/{udid}/{bundleId}` (manual trigger),
-  `GET /api/apps` (expiry countdowns), `GET /api/logs` (SSE stream).
+- Current API note (2026-06-23): the legacy manual trigger is
+  `POST /api/apps/{udid}/{bundleId}/refresh`, and the SDD operation contract adds
+  `POST /api/operations/preflight`, `POST /api/operations/refresh`,
+  `GET /api/operations`, and `GET /api/renewals` for observable operation
+  history. `GET /api/logs` is a protected JSON log tail, not an SSE stream.
 
 **Tests**
 - Unit: single-flight (two concurrent refreshes → serialized, second waits);
   scheduler picks the soonest-expiring app.
 - Integration (host): full loop refreshes DiceRoll on the real device.
 
-**Exit gate:** a cold `POST /api/refresh/...` performs the whole chain on the
-real device and reports a new expiry; concurrent calls do not double-sign.
+**Exit gate:** a cold refresh operation performs the whole chain on the real
+device, records an operation ID/stages, and reports a new expiry; concurrent
+calls do not double-sign.
 
 **Risk:** the loop is the first place all five Apple-facing subsystems run
 together → cascading failure surface. Mitigation: each step already has its own

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus, type MemberStatus, type WorkspaceRole, type WorkspaceSummary } from '../data/sideportTypes'
+import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type OperationStageSummary, type OperationSummary, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus, type MemberStatus, type WorkspaceRole, type WorkspaceSummary } from '../data/sideportTypes'
 import { compactUdid } from '../lib/format'
 
 const DEFAULT_API_BASE_URL = '/sideport-api'
@@ -73,6 +73,22 @@ export interface RefreshResultDto {
   error?: string | null
 }
 
+export interface RefreshOperationDto {
+  operationId: string
+  status: string
+  result?: RefreshResultDto | null
+  error?: { code?: string; message?: string; detail?: string | null } | null
+}
+
+export interface OperationPreflightDto {
+  ready: boolean
+  blockers: Array<{ code: string; message: string; detail?: string | null }>
+  warnings: Array<{ code: string; message: string; detail?: string | null }>
+  plannedMutations: string[]
+  scarceLimits: Array<{ code: string; label: string; used: number; limit: number }>
+  requiresConfirmation: boolean
+}
+
 interface ApiResult<T> {
   ok: boolean
   source: SourceKind
@@ -99,6 +115,24 @@ interface DeviceDto {
   productType?: string
   osVersion?: string
   connection?: string | number
+}
+
+interface KnownDeviceDto {
+  udid?: string
+  displayName?: string
+  productType?: string | null
+  osVersion?: string | null
+  connection?: string
+  firstSeenAt?: string
+  lastSeenAt?: string | null
+  lastSeenSource?: string
+  currentPollAt?: string | null
+  trustState?: string
+  health?: { state?: string; reason?: string; source?: string; checkedAt?: string; nextAction?: string | null }
+  appSlots?: { used?: number; limit?: number; source?: string }
+  owner?: string | null
+  notes?: string | null
+  source?: string
 }
 
 interface RegisteredAppDto {
@@ -198,6 +232,62 @@ interface OperationLogDto {
   exceptionMessage?: string | null
 }
 
+interface OperationRecordDto {
+  operationId?: string
+  type?: string
+  status?: string
+  createdAt?: string
+  updatedAt?: string
+  completedAt?: string | null
+  actor?: { kind?: string; displayName?: string }
+  target?: { deviceUdid?: string; bundleId?: string }
+  stages?: OperationStageDto[]
+  error?: { message?: string; code?: string; detail?: string | null } | null
+  cancelable?: boolean
+  retryable?: boolean
+  rerunnable?: boolean
+  parentOperationId?: string | null
+}
+
+interface DiagnosticIssueDto {
+  issueId?: string
+  category?: string
+  severity?: string
+  status?: string
+  affected?: { deviceUdid?: string | null; bundleId?: string | null }
+  firstSeenAt?: string
+  lastSeenAt?: string
+  occurrenceCount?: number
+  lastOperationId?: string | null
+  correlationId?: string
+  evidence?: Array<{ type?: string; label?: string; message?: string; source?: string; operationId?: string | null; stageId?: string | null }>
+  remediation?: string
+  source?: string
+}
+
+interface OperationStageDto {
+  id?: string
+  label?: string
+  status?: string
+  startedAt?: string | null
+  completedAt?: string | null
+  message?: string
+  error?: { message?: string; code?: string; detail?: string | null } | null
+}
+
+interface RenewalItemDto {
+  id?: string
+  deviceUdid?: string
+  bundleId?: string
+  teamId?: string
+  risk?: string
+  status?: string
+  expiresAt?: string | null
+  blocker?: string | null
+  operationId?: string | null
+  source?: string
+}
+
 interface OnboardingStepDto {
   id?: string
   label?: string
@@ -217,13 +307,25 @@ interface WorkspaceMemberDto {
   status?: string
   lastActiveAt?: string | null
   invitedAt?: string | null
+  source?: string
+}
+
+interface WorkspaceRoleDto {
+  id?: string
+  label?: string
+  capabilities?: string[]
 }
 
 interface WorkspaceDto {
   name?: string
   authMode?: string
   authDelegated?: boolean
+  roleEnforcement?: string
+  supportsUserAdministration?: boolean
+  currentMember?: WorkspaceMemberDto
   members?: WorkspaceMemberDto[]
+  roles?: WorkspaceRoleDto[]
+  capabilities?: Record<string, boolean>
 }
 
 function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
@@ -233,17 +335,41 @@ function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
     name: dto.name?.trim() || 'Sideport workspace',
     authMode: dto.authMode?.trim() || 'Reverse proxy',
     authDelegated: dto.authDelegated ?? true,
+    roleEnforcement: dto.roleEnforcement,
+    supportsUserAdministration: dto.supportsUserAdministration ?? false,
+    currentMember: dto.currentMember ? toWorkspaceMember(dto.currentMember, 'current-member') : undefined,
+    roles: (dto.roles ?? []).map((role) => ({ id: role.id ?? 'viewer', label: role.label ?? role.id ?? 'Viewer', capabilities: role.capabilities ?? [] })),
+    capabilities: dto.capabilities ?? {},
     source: 'live',
-    members: (dto.members ?? []).map((member, index) => ({
-      id: member.id ?? `member-${index}`,
+    members: (dto.members ?? []).map((member, index) => toWorkspaceMember(member, `member-${index}`)),
+  }
+
+  function toWorkspaceMember(member: WorkspaceMemberDto, fallbackId: string) {
+    return {
+      id: member.id ?? fallbackId,
       name: member.name?.trim() || member.email?.trim() || 'Unknown member',
       email: member.email?.trim() || '',
       role: validRoles.includes((member.role ?? '') as WorkspaceRole) ? (member.role as WorkspaceRole) : 'viewer',
       status: validStatuses.includes((member.status ?? '') as MemberStatus) ? (member.status as MemberStatus) : 'active',
       lastActiveAt: member.lastActiveAt ?? undefined,
       invitedAt: member.invitedAt ?? undefined,
-      source: 'live',
-    })),
+      source: normalizeSource(member.source),
+    }
+  }
+}
+
+function plannedWorkspace(error?: string): WorkspaceSummary {
+  return {
+    ...runtimeEmptyData.workspace,
+    name: error ? `Workspace API planned (${error})` : runtimeEmptyData.workspace.name,
+    authMode: 'Delegated auth / planned workspace API',
+    authDelegated: true,
+    roleEnforcement: 'planned',
+    supportsUserAdministration: false,
+    members: [],
+    roles: [],
+    capabilities: {},
+    source: 'planned',
   }
 }
 
@@ -253,6 +379,7 @@ interface ApiSnapshot {
   health: ApiResult<HealthResponse>
   ready: ApiResult<ReadyResponse>
   devices: ApiResult<DeviceDto[]>
+  knownDevices: ApiResult<KnownDeviceDto[]>
   catalog: ApiResult<CatalogAppDto[]>
   appleAccess: ApiResult<AppleAccessStatusDto>
   personalApple: ApiResult<PersonalAppleStatusDto>
@@ -261,6 +388,9 @@ interface ApiSnapshot {
   anisette: ApiResult<AnisetteInfoDto>
   onboarding: ApiResult<OnboardingStatusDto>
   logs: ApiResult<OperationLogDto[]>
+  operations: ApiResult<OperationRecordDto[]>
+  renewals: ApiResult<RenewalItemDto[]>
+  diagnosticIssues: ApiResult<DiagnosticIssueDto[]>
   workspace: ApiResult<WorkspaceDto>
 }
 
@@ -309,10 +439,11 @@ export function useSideportAdminData(apiTokenRevision = 0) {
 
 async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
   const fetchedAt = new Date().toISOString()
-  const [health, ready, devices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs, workspace] = await Promise.all([
+  const [health, ready, devices, knownDevices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs, operations, renewals, diagnosticIssues, workspace] = await Promise.all([
     requestJson<HealthResponse>(config, '/healthz', false),
     requestJson<ReadyResponse>(config, '/readyz', false),
     requestJson<DeviceDto[]>(config, '/api/devices', true),
+    requestJson<KnownDeviceDto[]>(config, '/api/devices/known', true),
     requestJson<CatalogAppDto[]>(config, '/api/catalog/apps', true),
     requestJson<AppleAccessStatusDto>(config, '/api/apple-access/status', true),
     requestJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/status', true),
@@ -320,11 +451,14 @@ async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
     requestJson<AnisetteInfoDto>(config, '/api/anisette/info', true),
     requestJson<OnboardingStatusDto>(config, '/api/onboarding/status', true),
     requestJson<OperationLogDto[]>(config, '/api/logs?limit=80', true),
+    requestJson<OperationRecordDto[]>(config, '/api/operations?limit=25', true),
+    requestJson<RenewalItemDto[]>(config, '/api/renewals', true),
+    requestJson<DiagnosticIssueDto[]>(config, '/api/diagnostics/issues', true),
     requestJson<WorkspaceDto>(config, '/api/workspace', true),
   ])
   const installedApps = await fetchInstalledApps(config, devices)
 
-  return { fetchedAt, config, health, ready, devices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs, workspace }
+  return { fetchedAt, config, health, ready, devices, knownDevices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs, operations, renewals, diagnosticIssues, workspace }
 }
 
 async function fetchInstalledApps(config: ApiConfig, devices: ApiResult<DeviceDto[]>): Promise<ApiResult<InstalledAppDto[]>> {
@@ -410,9 +544,61 @@ export async function inspectCatalogApp(payload: CatalogInspectPayload, config =
   })
 }
 
+export async function uploadCatalogIpa(file: File, payload: { id?: string; name?: string; purpose?: string; replace?: boolean }, config = getSideportApiConfig()) {
+  if (!config.canMutate) throw new Error('Mutations are disabled for this admin build.')
+  const form = new FormData()
+  form.set('ipa', file)
+  if (payload.id?.trim()) form.set('id', payload.id.trim())
+  if (payload.name?.trim()) form.set('name', payload.name.trim())
+  if (payload.purpose?.trim()) form.set('purpose', payload.purpose.trim())
+  if (payload.replace) form.set('replace', 'true')
+  const headers: HeadersInit = { Accept: 'application/json' }
+  if (config.token) headers.Authorization = `Bearer ${config.token}`
+  const response = await fetch(joinUrl(config.baseUrl, '/api/catalog/apps/upload'), { method: 'POST', headers, body: form, credentials: 'same-origin' })
+  if (!response.ok) throw new Error(await responseError(response))
+  return await response.json() as CatalogAppDto
+}
+
 export async function refreshSideportApp(deviceUdid: string, bundleId: string, config = getSideportApiConfig()) {
-  return mutateJson<RefreshResultDto>(config, `/api/apps/${encodeURIComponent(deviceUdid)}/${encodeURIComponent(bundleId)}/refresh`, {
+  return mutateJson<RefreshOperationDto>(config, '/api/operations/refresh', {
     method: 'POST',
+    body: JSON.stringify({
+      deviceUdid,
+      bundleId,
+      idempotencyKey: `ui-${deviceUdid}-${bundleId}-${Date.now()}`,
+    }),
+  })
+}
+
+export async function cancelOperation(operationId: string, config = getSideportApiConfig()) {
+  return mutateJson<RefreshOperationDto>(config, `/api/operations/${encodeURIComponent(operationId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'Canceled from Sideport admin.' }),
+  })
+}
+
+export async function retryOperation(operationId: string, config = getSideportApiConfig()) {
+  return mutateJson<RefreshOperationDto>(config, `/api/operations/${encodeURIComponent(operationId)}/retry`, {
+    method: 'POST',
+    body: JSON.stringify({ idempotencyKey: `ui-retry-${operationId}-${Date.now()}` }),
+  })
+}
+
+export async function rerunOperation(operationId: string, config = getSideportApiConfig()) {
+  return mutateJson<RefreshOperationDto>(config, `/api/operations/${encodeURIComponent(operationId)}/rerun`, {
+    method: 'POST',
+    body: JSON.stringify({ idempotencyKey: `ui-rerun-${operationId}-${Date.now()}` }),
+  })
+}
+
+export async function preflightSideportRefresh(deviceUdid: string, bundleId: string, config = getSideportApiConfig()) {
+  return mutateJson<OperationPreflightDto>(config, '/api/operations/preflight', {
+    method: 'POST',
+    body: JSON.stringify({
+      type: 'refresh',
+      deviceUdid,
+      bundleId,
+    }),
   })
 }
 
@@ -492,15 +678,22 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
   const personalApple = snapshot.personalApple.ok && snapshot.personalApple.data ? toPersonalApple(snapshot.personalApple.data) : unavailablePersonalApple(snapshot.personalApple.error)
   const apps = snapshot.apps.ok && snapshot.apps.data ? snapshot.apps.data.map((app) => toRegisteredApp(app, catalogApps)).filter(isPresent) : runtimeEmptyData.apps
   const installedApps = snapshot.installedApps.data ? snapshot.installedApps.data.map((app) => toInstalledApp(app, apps)).filter(isPresent) : runtimeEmptyData.installedApps
-  const devices = snapshot.devices.ok && snapshot.devices.data
-    ? snapshot.devices.data.map((device) => toDeviceSummary(device, apps, installedApps)).filter(isPresent)
+  const devices = snapshot.knownDevices.ok && snapshot.knownDevices.data
+    ? snapshot.knownDevices.data.map((device) => toKnownDeviceSummary(device, apps, installedApps)).filter(isPresent)
+    : snapshot.devices.ok && snapshot.devices.data
+      ? snapshot.devices.data.map((device) => toDeviceSummary(device, apps, installedApps)).filter(isPresent)
     : runtimeEmptyData.devices
-  const renewals = apps.length ? apps.map(toRenewalItem) : runtimeEmptyData.renewals
+  const operations = snapshot.operations.ok && snapshot.operations.data ? snapshot.operations.data.map(toOperationSummary).filter(isPresent) : runtimeEmptyData.operations
+  const renewals = snapshot.renewals.ok && snapshot.renewals.data
+    ? snapshot.renewals.data.map(toRenewalItemFromDto).filter(isPresent)
+    : apps.length ? apps.map(toRenewalItem) : runtimeEmptyData.renewals
   const logs = snapshot.logs.ok && snapshot.logs.data ? snapshot.logs.data.map((entry) => toOperationLog(entry, snapshot.fetchedAt)).filter(isPresent) : runtimeEmptyData.logs
-  const issues = buildIssues(snapshot, apps)
+  const issues = snapshot.diagnosticIssues.ok && snapshot.diagnosticIssues.data
+    ? snapshot.diagnosticIssues.data.map(toDiagnosticIssue).filter(isPresent)
+    : buildIssues(snapshot, apps, operations)
   const system = buildSystemStatus(snapshot)
 
-  const partial = [snapshot.health, snapshot.ready, snapshot.devices, snapshot.catalog, snapshot.appleAccess, snapshot.personalApple, snapshot.installedApps, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.logs].some((result) => !result.ok)
+  const partial = [snapshot.health, snapshot.ready, snapshot.devices, snapshot.knownDevices, snapshot.catalog, snapshot.appleAccess, snapshot.personalApple, snapshot.installedApps, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.logs, snapshot.operations, snapshot.renewals, snapshot.diagnosticIssues].some((result) => !result.ok)
   const status: AdminDataStatus = {
     mode: partial ? 'partial' : 'live',
     baseUrl: snapshot.config.baseUrl,
@@ -520,10 +713,11 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
       installedApps,
       apps,
       renewals,
+      operations,
       issues,
       activity: buildActivity(snapshot, partial, logs),
       logs,
-      workspace: snapshot.workspace.ok && snapshot.workspace.data ? toWorkspace(snapshot.workspace.data) : runtimeEmptyData.workspace,
+      workspace: snapshot.workspace.ok && snapshot.workspace.data ? toWorkspace(snapshot.workspace.data) : plannedWorkspace(snapshot.workspace.error),
     },
     status,
   }
@@ -602,7 +796,7 @@ function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[], instal
     productType: device.productType || 'Unknown model',
     osVersion: device.osVersion || 'Unknown',
     connection: normalizeConnection(device.connection),
-    lastSeenAt: { value: new Date().toISOString(), source: 'live' as const },
+    lastSeenAt: { value: new Date().toISOString(), source: 'derived' as const },
     health: healthFromExpiry(nearestExpiry, hasLastError),
     teamId: deviceApps[0]?.teamId || 'Unknown',
     appSlotsUsed: deviceApps.length,
@@ -610,6 +804,33 @@ function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[], instal
     unmanagedAppCount: deviceInstalledApps.filter((app) => !app.managedBySideport).length,
     nearestExpiryAt: nearestExpiry ? { value: nearestExpiry, source: 'live' as const } : undefined,
     blocker: hasLastError ? 'One app has a failed refresh/install state.' : undefined,
+  }
+}
+
+function toKnownDeviceSummary(device: KnownDeviceDto, apps: RegisteredAppSummary[], installedApps: InstalledAppSummary[]) {
+  if (!device.udid) return null
+  const deviceApps = apps.filter((app) => app.deviceUdid === device.udid)
+  const deviceInstalledApps = installedApps.filter((app) => app.deviceUdid === device.udid)
+  const nearestExpiry = earliestDate(deviceApps.map((app) => app.expiresAt?.value))
+  const hasLastError = deviceApps.some((app) => app.lastError)
+  const seenAt = device.lastSeenAt ?? device.currentPollAt
+  return {
+    udid: device.udid,
+    name: device.displayName || 'Known iPhone',
+    productType: device.productType ?? 'Unknown model',
+    osVersion: device.osVersion ?? 'Unknown',
+    connection: normalizeConnection(device.connection),
+    lastSeenAt: { value: seenAt ?? '', source: device.lastSeenAt ? 'live' as const : 'planned' as const },
+    hasDurableLastSeen: Boolean(device.lastSeenAt),
+    currentPollAt: device.currentPollAt ? { value: device.currentPollAt, source: 'live' as const } : undefined,
+    lastSeenSource: device.lastSeenSource,
+    health: normalizeHealthState(device.health?.state) ?? healthFromExpiry(nearestExpiry, hasLastError),
+    teamId: deviceApps[0]?.teamId || 'Unknown',
+    appSlotsUsed: device.appSlots?.used ?? deviceApps.length,
+    installedAppCount: deviceInstalledApps.length,
+    unmanagedAppCount: deviceInstalledApps.filter((app) => !app.managedBySideport).length,
+    nearestExpiryAt: nearestExpiry ? { value: nearestExpiry, source: 'live' as const } : undefined,
+    blocker: device.health?.nextAction ?? (hasLastError ? 'One app has a failed refresh/install state.' : undefined),
   }
 }
 
@@ -655,7 +876,7 @@ function toCatalogApp(app: CatalogAppDto): CatalogAppSummary | null {
     versionLabel: versionLabel(app.shortVersion, app.version),
     status,
     statusLabel: catalogStatusLabel(status),
-    source: status === 'missing' ? 'planned' : 'live',
+    source: 'live',
     iconTone: toneFromBundleId(app.bundleId),
     notes: app.notes?.length ? app.notes : [catalogStatusLabel(status)],
     sizeBytes: app.sizeBytes ?? undefined,
@@ -766,7 +987,58 @@ function toRenewalItem(app: RegisteredAppSummary): RenewalItem {
   }
 }
 
-function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[]): DiagnosticIssue[] {
+function toRenewalItemFromDto(item: RenewalItemDto): RenewalItem | null {
+  if (!item.id || !item.deviceUdid || !item.bundleId || !item.teamId) return null
+  return {
+    id: item.id,
+    deviceUdid: item.deviceUdid,
+    bundleId: item.bundleId,
+    teamId: item.teamId,
+    risk: normalizeRenewalRisk(item.risk),
+    status: normalizeRenewalStatus(item.status),
+    expiresAt: item.expiresAt ?? undefined,
+    blocker: item.blocker ?? undefined,
+    operationId: item.operationId ?? undefined,
+    source: normalizeSource(item.source),
+  }
+}
+
+function toOperationSummary(operation: OperationRecordDto): OperationSummary | null {
+  if (!operation.operationId || !operation.target?.deviceUdid || !operation.target.bundleId) return null
+  return {
+    operationId: operation.operationId,
+    type: operation.type || 'refresh',
+    status: operation.status || 'failed',
+    createdAt: operation.createdAt || new Date().toISOString(),
+    updatedAt: operation.updatedAt || operation.createdAt || new Date().toISOString(),
+    completedAt: operation.completedAt ?? undefined,
+    deviceUdid: operation.target.deviceUdid,
+    bundleId: operation.target.bundleId,
+    actor: operation.actor?.displayName || operation.actor?.kind || 'api-token-client',
+    stages: operation.stages?.map(toOperationStage).filter(isPresent) ?? [],
+    error: operation.error?.message ?? null,
+    cancelable: Boolean(operation.cancelable),
+    retryable: Boolean(operation.retryable),
+    rerunnable: Boolean(operation.rerunnable),
+    parentOperationId: operation.parentOperationId ?? null,
+    source: 'live',
+  }
+}
+
+function toOperationStage(stage: OperationStageDto): OperationStageSummary | null {
+  if (!stage.id) return null
+  return {
+    id: stage.id,
+    label: stage.label || stage.id,
+    status: normalizeOperationStageStatus(stage.status),
+    startedAt: stage.startedAt ?? undefined,
+    completedAt: stage.completedAt ?? undefined,
+    message: stage.message || '',
+    error: stage.error?.message ?? null,
+  }
+}
+
+function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[], operations: OperationSummary[]): DiagnosticIssue[] {
   const now = snapshot.fetchedAt
   const issues: DiagnosticIssue[] = []
 
@@ -781,6 +1053,8 @@ function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[]): Diagn
     ['App registry API unavailable', snapshot.apps],
     ['Anisette API unavailable', snapshot.anisette],
     ['Onboarding API unavailable', snapshot.onboarding],
+    ['Operation history API unavailable', snapshot.operations],
+    ['Renewals API unavailable', snapshot.renewals],
   ] as const) {
     if (!result.ok) issues.push(apiIssue(category, result.error ?? 'Unknown API error', now, result.status))
   }
@@ -796,15 +1070,39 @@ function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[]): Diagn
       bundleId: app.bundleId,
       firstSeenAt: now,
       lastSeenAt: now,
-      operationId: `refresh:${app.deviceUdid}:${app.bundleId}`,
-      traceId: 'trace-pending-otel',
+      operationId: latestOperationFor(app, operations)?.operationId ?? 'operation-not-recorded',
+      traceId: 'trace-not-reported',
       spanSummary: [{ name: 'sideport.refresh', durationMs: 0, state: 'failed' }],
-      logSnippet: app.lastError,
-      source: 'live',
+      logSnippet: `Derived from app registry lastError: ${app.lastError}`,
+      source: 'derived',
     })
   }
 
   return issues
+}
+
+function toDiagnosticIssue(issue: DiagnosticIssueDto): DiagnosticIssue | null {
+  if (!issue.issueId || !issue.category) return null
+  const evidence = issue.evidence?.[0]
+  return {
+    id: issue.issueId,
+    category: issue.category,
+    severity: normalizeSeverity(issue.severity),
+    status: normalizeIssueStatus(issue.status),
+    deviceUdid: issue.affected?.deviceUdid ?? undefined,
+    bundleId: issue.affected?.bundleId ?? undefined,
+    firstSeenAt: issue.firstSeenAt ?? new Date().toISOString(),
+    lastSeenAt: issue.lastSeenAt ?? issue.firstSeenAt ?? new Date().toISOString(),
+    operationId: issue.lastOperationId ?? evidence?.operationId ?? 'operation-not-linked',
+    traceId: 'trace-not-reported',
+    spanSummary: [{ name: evidence?.stageId ?? evidence?.type ?? 'diagnostic.issue', durationMs: 0, state: issue.severity === 'warning' ? 'warning' : 'failed' }],
+    logSnippet: evidence?.message ?? issue.remediation ?? 'Durable diagnostic issue from operation evidence.',
+    source: normalizeSource(issue.source),
+  }
+}
+
+function latestOperationFor(app: RegisteredAppSummary, operations: OperationSummary[]): OperationSummary | undefined {
+  return operations.find((operation) => operation.bundleId === app.bundleId && operation.deviceUdid === app.deviceUdid)
 }
 
 function toOnboardingStatus(dto: OnboardingStatusDto): OnboardingStatus {
@@ -950,6 +1248,36 @@ function normalizeSurface(surface: string | undefined): OnboardingStep['surface'
   return surface === 'iphone' ? 'iphone' : 'portal'
 }
 
+function normalizeSource(source: string | undefined): SourceKind {
+  if (source === 'live' || source === 'derived' || source === 'demo' || source === 'planned') return source
+  return 'live'
+}
+
+function normalizeRenewalRisk(risk: string | undefined): RenewalRisk {
+  if (risk === 'blocked' || risk === 'due-now' || risk === 'upcoming' || risk === 'healthy') return risk
+  return 'unknown'
+}
+
+function normalizeRenewalStatus(status: string | undefined): RenewalStatus {
+  if (status === 'running' || status === 'queued' || status === 'failed' || status === 'blocked') return status
+  return 'idle'
+}
+
+function normalizeOperationStageStatus(status: string | undefined): OperationStageSummary['status'] {
+  if (status === 'running' || status === 'succeeded' || status === 'failed' || status === 'blocked') return status
+  return 'pending'
+}
+
+function normalizeSeverity(severity: string | undefined): DiagnosticIssue['severity'] {
+  if (severity === 'info' || severity === 'warning' || severity === 'error' || severity === 'fatal') return severity
+  return 'error'
+}
+
+function normalizeIssueStatus(status: string | undefined): DiagnosticIssue['status'] {
+  if (status === 'unresolved' || status === 'investigating' || status === 'resolved' || status === 'ignored') return status
+  return 'unresolved'
+}
+
 function buildActivity(snapshot: ApiSnapshot, partial: boolean, logs: OperationLogEntry[]): ActivityEvent[] {
   const state = partial ? 'warning' : 'ok'
   const snapshotEvent: ActivityEvent = {
@@ -1002,10 +1330,10 @@ function apiIssue(category: string, detail: string, at: string, status?: number)
     firstSeenAt: at,
     lastSeenAt: at,
     operationId: 'api.snapshot',
-    traceId: 'trace-pending-otel',
+    traceId: 'trace-not-reported',
     spanSummary: [{ name: 'sideport.admin.fetch', durationMs: 0, state: 'failed' }],
-    logSnippet: detail,
-    source: 'live',
+    logSnippet: `Derived from admin API fetch result: ${detail}`,
+    source: 'derived',
   }
 }
 
@@ -1022,6 +1350,8 @@ function degradedStatusMessage(snapshot: ApiSnapshot): string {
     ['anisette', snapshot.anisette],
     ['onboarding', snapshot.onboarding],
     ['logs', snapshot.logs],
+    ['operations', snapshot.operations],
+    ['renewals', snapshot.renewals],
   ].filter(([, result]) => !(result as ApiResult<unknown>).ok).map(([label]) => label)
 
   if (!failed.length) return 'Live Sideport API connected.'
@@ -1070,6 +1400,7 @@ function normalizeConnection(value: DeviceDto['connection']): ConnectionState {
   if (value === 0) return 'usb'
   if (value === 1) return 'wifi'
   if (typeof value === 'string' && value.toLowerCase() === 'wifi') return 'wifi'
+  if (typeof value === 'string' && (value.toLowerCase() === 'offline' || value.toLowerCase() === 'unknown')) return 'offline'
   return 'usb'
 }
 
@@ -1081,6 +1412,11 @@ function healthFromExpiry(expiresAt: string | undefined, hasLastError: boolean):
   if (ms < 0) return 'blocked'
   if (ms <= 3 * 24 * 60 * 60 * 1000) return 'warning'
   return 'healthy'
+}
+
+function normalizeHealthState(state: string | undefined): HealthState | undefined {
+  if (state === 'healthy' || state === 'warning' || state === 'blocked' || state === 'failed' || state === 'offline') return state
+  return undefined
 }
 
 function riskForApp(app: RegisteredAppSummary): RenewalRisk {

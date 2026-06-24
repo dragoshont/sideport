@@ -46,7 +46,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import './App.css'
-import { completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, refreshSideportApp, registerSideportApp, runDeviceDiagnostics, saveSideportApiToken, signInPersonalApple, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload, type DeviceDiagnosticsDto } from './api/sideportApi'
+import { cancelOperation, completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, preflightSideportRefresh, refreshSideportApp, registerSideportApp, rerunOperation, retryOperation, runDeviceDiagnostics, saveSideportApiToken, signInPersonalApple, uploadCatalogIpa, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload, type DeviceDiagnosticsDto, type OperationPreflightDto } from './api/sideportApi'
 import type { OnboardingStep, OnboardingStepState } from './api/sideportApi'
 import {
   runtimeEmptyData,
@@ -59,6 +59,7 @@ import {
   type IssueStatus,
   type MemberStatus,
   type OperationLogEntry,
+  type OperationStageSummary,
   type PersonalAppleSummary,
   type RegisteredAppSummary,
   type RenewalItem,
@@ -75,7 +76,7 @@ import {
 } from './data/sideportTypes'
 import { compactUdid, relativeTime, shortDateTime, sourceLabel, timeUntil } from './lib/format'
 
-export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'apple-access' | 'diagnostics' | 'teams' | 'users' | 'settings'
+export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'operations' | 'apple-access' | 'diagnostics' | 'teams' | 'users' | 'settings'
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
   { id: 'onboarding', label: 'Onboarding', icon: ListChecks },
@@ -83,6 +84,7 @@ const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
   { id: 'devices', label: 'Devices', icon: Smartphone },
   { id: 'catalog', label: 'App Catalog', icon: Package },
   { id: 'renewals', label: 'Renewals', icon: TimerReset },
+  { id: 'operations', label: 'Operations', icon: Activity },
   { id: 'apple-access', label: 'Apple Access', icon: KeyRound },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
   { id: 'teams', label: 'Teams', icon: Building2 },
@@ -203,6 +205,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
           {route === 'catalog' && <AppCatalogPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} onInstallApp={openInstallWizard} />}
           {route === 'install-app' && <InstallWizardPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} initialCatalogAppId={selectedCatalogAppId} onOpenCatalog={() => setRoute('catalog')} />}
           {route === 'renewals' && <RenewalsPage data={viewData} apiStatus={viewStatus} />}
+          {route === 'operations' && <OperationsPage data={viewData} apiStatus={viewStatus} />}
           {route === 'apple-access' && <AppleAccessPage appleAccess={viewData.appleAccess} personalApple={viewData.personalApple} apiStatus={viewStatus} />}
           {route === 'diagnostics' && <DiagnosticsPage data={viewData} />}
           {route === 'teams' && <TeamsPage data={viewData} onNavigate={setRoute} />}
@@ -486,8 +489,8 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
   if (data.devices.length === 0) {
     return (
       <div className="page-stack">
-        <PageHeader eyebrow="Devices" title="No devices known yet" description="Connect a trusted iPhone over USB or Wi-Fi. The current API only reports devices it can reach right now." />
-        <EmptyState icon={Cable} title="No devices returned by /api/devices" detail="The current API reports devices it can reach right now. Connect a trusted iPhone over USB or Wi-Fi to populate this view." />
+        <PageHeader eyebrow="Devices" title="No devices known yet" description="Known devices come from /api/devices/known. Connect a trusted iPhone over USB or Wi-Fi, or add a known-device record, to populate this view." />
+        <EmptyState icon={Cable} title="No known devices returned" detail="Sideport has no durable device inventory yet, and the current reachability poll did not add a device to this snapshot." />
       </div>
     )
   }
@@ -503,7 +506,7 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Devices" title="Device inventory" description="Reachability comes from /api/devices. App counts and expiry dates come from apps registered in Sideport, not from every app already installed on the phone." />
+      <PageHeader eyebrow="Devices" title="Device inventory" description="Known devices come from /api/devices/known. Current reachability is overlaid from the live device poll without pretending every known device is reachable now." />
 
       <div className="devices-toolbar">
         <div className="devices-search">
@@ -513,13 +516,13 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
         <div className="facet-group" role="group" aria-label="Filter by connection">
           <span className="facet-label"><Filter size={13} /> Connection</span>
           {(['all', 'usb', 'wifi', 'offline'] as const).map((value) => (
-            <button aria-pressed={connectionFacet === value} className="facet-chip" key={value} onClick={() => setConnectionFacet(value)} type="button">{value === 'all' ? 'All' : connectionLabel(value)}</button>
+            <FacetToggleButton key={value} onClick={() => setConnectionFacet(value)} pressed={connectionFacet === value}>{value === 'all' ? 'All' : connectionLabel(value)}</FacetToggleButton>
           ))}
         </div>
         <div className="facet-group" role="group" aria-label="Filter by health">
           <span className="facet-label">Health</span>
           {(['all', 'healthy', 'warning', 'blocked', 'offline'] as const).map((value) => (
-            <button aria-pressed={healthFacet === value} className="facet-chip" key={value} onClick={() => setHealthFacet(value)} type="button">{value === 'all' ? 'All' : healthCopy[value]}</button>
+            <FacetToggleButton key={value} onClick={() => setHealthFacet(value)} pressed={healthFacet === value}>{value === 'all' ? 'All' : healthCopy[value]}</FacetToggleButton>
           ))}
         </div>
         <span className="devices-count">{filtered.length} of {data.devices.length} {data.devices.length === 1 ? 'device' : 'devices'}</span>
@@ -540,7 +543,6 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
 }
 
 export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { data: SideportReadModel; device?: DeviceSummary; apiStatus: AdminDataStatus; onInstallApp?: () => void }) {
-  const queryClient = useQueryClient()
   const tabs: Array<{ id: 'apps' | 'signing' | 'network' | 'diagnostics' | 'activity'; label: string; count?: number }> = [
     { id: 'apps', label: 'Apps', count: device ? appsForDevice(data.apps, device.udid).length : undefined },
     { id: 'signing', label: 'Signing' },
@@ -552,17 +554,12 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
   const [activeTab, setActiveTab] = useState<DeviceTab>('apps')
   const apps = device ? appsForDevice(data.apps, device.udid) : []
   const refreshTarget = [...apps].sort((a, b) => (a.expiresAt?.value ?? '').localeCompare(b.expiresAt?.value ?? ''))[0]
-  const refreshMutation = useMutation({
-    mutationFn: () => refreshSideportApp(device!.udid, refreshTarget!.bundleId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
-  })
 
   if (!device) {
     return <EmptyState icon={Smartphone} title="No selected device" detail="Device detail needs a reachable or known device read model." />
   }
   const installedApps = data.installedApps.filter((app) => app.deviceUdid === device.udid)
   const issues = data.issues.filter((issue) => issue.deviceUdid === device.udid)
-  const canRefresh = apiStatus.canMutate && Boolean(refreshTarget) && !refreshMutation.isPending
   const refreshHelp = !apiStatus.canMutate
     ? 'Refresh runs from a live, mutations-enabled backend. It is disabled in this read-only build.'
     : !refreshTarget
@@ -579,40 +576,30 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
         </div>
         <div className="hero-actions">
           <StatusPill state={device.health} label={healthCopy[device.health]} />
-          <button className="primary-action" disabled={!canRefresh} onClick={() => refreshMutation.mutate()} type="button">
-            <RefreshCw size={16} /> {refreshMutation.isPending ? 'Refreshing…' : 'Refresh due apps'}
-          </button>
+          {refreshTarget && <RefreshOperationButton apiStatus={apiStatus} bundleId={refreshTarget.bundleId} className="primary-action" deviceUdid={device.udid} />}
         </div>
       </div>
 
       <section className="section-grid three">
         <FactTile label="Connection" value={connectionLabel(device.connection)} source="live" />
-        <FactTile label="Last seen" value={relativeTime(device.lastSeenAt.value)} source={device.lastSeenAt.source} />
+        <FactTile label={device.currentPollAt ? 'Current poll' : 'Last seen'} value={device.currentPollAt ? relativeTime(device.currentPollAt.value) : device.hasDurableLastSeen ? relativeTime(device.lastSeenAt.value) : 'Not yet recorded'} source={(device.currentPollAt ?? device.lastSeenAt).source} />
+        {device.currentPollAt && <FactTile label="Durable last seen" value={device.hasDurableLastSeen ? relativeTime(device.lastSeenAt.value) : 'Not yet recorded'} source={device.lastSeenAt.source} />}
         <FactTile label="Nearest registered expiry" value={expiryCopy(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
-        <FactTile label="Installed user apps" value={String(device.installedAppCount)} source={installedApps.length ? 'live' : 'planned'} />
+        <FactTile label="Installed user apps" value={String(device.installedAppCount)} source="live" />
         <FactTile label="Unmanaged installed" value={String(device.unmanagedAppCount)} source={installedApps.length ? 'derived' : 'planned'} />
       </section>
 
       {refreshHelp && <p className="muted">{refreshHelp}</p>}
-      {refreshMutation.isSuccess && <p className="mutation-message success">Refresh request finished. The device snapshot will reload from the API.</p>}
-      {refreshMutation.error && <p className="mutation-message error">{refreshMutation.error.message}</p>}
 
       <div className="device-tablist" role="tablist" aria-label="Device sections">
-        {tabs.map((tab) => (
-          <button
-            aria-controls={`devpanel-${tab.id}`}
-            aria-selected={activeTab === tab.id}
-            className="device-tab"
-            id={`devtab-${tab.id}`}
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            role="tab"
-            type="button"
-          >
-            {tab.label}
-            {tab.count ? <span className="tab-count">{tab.count}</span> : null}
-          </button>
-        ))}
+        {tabs.map((tab) => {
+          const content = <>{tab.label}{tab.count ? <span className="tab-count">{tab.count}</span> : null}</>
+          return activeTab === tab.id ? (
+            <button aria-controls={`devpanel-${tab.id}`} aria-selected="true" className="device-tab" id={`devtab-${tab.id}`} key={tab.id} onClick={() => setActiveTab(tab.id)} role="tab" type="button">{content}</button>
+          ) : (
+            <button aria-controls={`devpanel-${tab.id}`} aria-selected="false" className="device-tab" id={`devtab-${tab.id}`} key={tab.id} onClick={() => setActiveTab(tab.id)} role="tab" type="button">{content}</button>
+          )
+        })}
       </div>
 
       <div aria-labelledby={`devtab-${activeTab}`} className="device-tabpanel" id={`devpanel-${activeTab}`} role="tabpanel">
@@ -656,7 +643,8 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
           <Panel title="Network & trust">
             <dl className="detail-list">
               <div><dt>Current connection</dt><dd>{connectionLabel(device.connection)}</dd></div>
-              <div><dt>Last seen</dt><dd>{relativeTime(device.lastSeenAt.value)}</dd></div>
+              <div><dt>Current poll</dt><dd>{device.currentPollAt ? relativeTime(device.currentPollAt.value) : 'Not reachable in this poll'}</dd></div>
+              <div><dt>Durable last seen</dt><dd>{device.hasDurableLastSeen ? relativeTime(device.lastSeenAt.value) : 'Not yet recorded'}</dd></div>
               <div><dt>Wi-Fi pairing</dt><dd>{device.connection === 'wifi' ? 'Reachable through host netmuxd/usbmuxd over the network.' : device.connection === 'usb' ? 'Connected over USB. Wi-Fi pairing not reported in this snapshot.' : 'Offline. Showing the last known reachable state only.'}</dd></div>
               <div><dt>Trust state</dt><dd>{device.connection === 'offline' ? 'Unknown while the device is offline.' : 'Paired and trusted — the lockdown handshake succeeded.'}</dd></div>
             </dl>
@@ -666,7 +654,7 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
 
         {activeTab === 'diagnostics' && (
           <Panel title="Diagnostics for this device">
-            {issues.length ? <DiagnosticIssueList issues={issues} /> : <EmptyState icon={CheckCircle2} title="No open device issues" detail="Trace-linked issue grouping will appear when OpenTelemetry-backed diagnostics are wired." />}
+            {issues.length ? <DiagnosticIssueList issues={issues} /> : <EmptyState icon={CheckCircle2} title="No open device issues" detail="Durable issue grouping appears when operation evidence exists for this device." />}
           </Panel>
         )}
 
@@ -707,6 +695,10 @@ export function AppCatalogPage({ data, apiStatus, catalogApps, onInstallApp }: {
 
       <Panel title="Add a server IPA">
         <CatalogInspectPanel apiStatus={apiStatus} />
+      </Panel>
+
+      <Panel title="Import IPA from this browser">
+        <CatalogUploadPanel apiStatus={apiStatus} />
       </Panel>
 
       <Panel title="Registered installations">
@@ -750,6 +742,44 @@ function CatalogInspectPanel({ apiStatus }: { apiStatus: AdminDataStatus }) {
       {!apiStatus.canMutate && <p className="mutation-message">Catalog changes are disabled for this build.</p>}
       {inspectMutation.isSuccess && <p className="mutation-message success">Catalog app inspected and saved.</p>}
       {inspectMutation.error && <p className="mutation-message error">{inspectMutation.error.message}</p>}
+    </div>
+  )
+}
+
+function CatalogUploadPanel({ apiStatus }: { apiStatus: AdminDataStatus }) {
+  const queryClient = useQueryClient()
+  const [file, setFile] = useState<File | null>(null)
+  const [id, setId] = useState('')
+  const [name, setName] = useState('')
+  const [replace, setReplace] = useState(false)
+  const uploadMutation = useMutation({
+    mutationFn: () => {
+      if (!file) throw new Error('Choose an .ipa file first.')
+      return uploadCatalogIpa(file, { id, name, replace })
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+  return (
+    <div className="catalog-inspect">
+      <label className="form-field">
+        <span>IPA file</span>
+        <input accept=".ipa" disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)} type="file" />
+      </label>
+      <div className="form-grid">
+        <label className="form-field">
+          <span>Catalog ID (optional)</span>
+          <input disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setId(event.currentTarget.value)} placeholder="cert-clock" value={id} />
+        </label>
+        <label className="form-field">
+          <span>Name (optional)</span>
+          <input disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setName(event.currentTarget.value)} placeholder="Cert Clock" value={name} />
+        </label>
+      </div>
+      <label className="checkbox-row"><input checked={replace} disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setReplace(event.currentTarget.checked)} type="checkbox" /> Replace existing catalog ID after inspection succeeds</label>
+      <button className="primary-action" disabled={!apiStatus.canMutate || !file || uploadMutation.isPending} onClick={() => uploadMutation.mutate()} type="button"><Plus size={16} /> {uploadMutation.isPending ? 'Importing...' : 'Import IPA'}</button>
+      {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. IPA import is unavailable in read-only mode.</p>}
+      {uploadMutation.isSuccess && <p className="mutation-message success">Imported {uploadMutation.data.name}. This saved and inspected the IPA; it did not register, sign, or install it.</p>}
+      {uploadMutation.error && <p className="mutation-message error">{uploadMutation.error.message}</p>}
     </div>
   )
 }
@@ -946,7 +976,7 @@ function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) 
         <div className="facet-group" role="group" aria-label="Filter installations">
           <span className="facet-label"><Filter size={13} /> View</span>
           {([['all', 'All'], ['healthy', 'Healthy'], ['failed', 'Failed refresh']] as const).map(([value, label]) => (
-            <button aria-pressed={view === value} className="facet-chip" key={value} onClick={() => setView(value)} type="button">{label}</button>
+            <FacetToggleButton key={value} onClick={() => setView(value)} pressed={view === value}>{label}</FacetToggleButton>
           ))}
         </div>
         <span className="devices-count">{filtered.length} of {apps.length} installations</span>
@@ -1019,40 +1049,47 @@ function InfoStep({ title, detail, index }: { title: string; detail: string; ind
 }
 
 function SingleFlightStrip({ data }: { data: SideportReadModel }) {
-  const running = data.renewals.find((item) => item.status === 'running')
+  const runningOperation = data.operations.find((operation) => operation.status === 'running')
+  const running = runningOperation
+    ? data.renewals.find((item) => item.operationId === runningOperation.operationId || (item.deviceUdid === runningOperation.deviceUdid && item.bundleId === runningOperation.bundleId))
+    : data.renewals.find((item) => item.status === 'running')
   const queued = data.renewals.filter((item) => item.status === 'queued')
+  const latestOperation = data.operations[0]
   const appName = (item: RenewalItem) => data.apps.find((app) => app.bundleId === item.bundleId && app.deviceUdid === item.deviceUdid)?.displayName.value ?? item.bundleId
+  const runningName = running
+    ? appName(running)
+    : runningOperation
+      ? data.apps.find((app) => app.bundleId === runningOperation.bundleId && app.deviceUdid === runningOperation.deviceUdid)?.displayName.value ?? runningOperation.bundleId
+      : null
+  const runningBundleId = running?.bundleId ?? runningOperation?.bundleId
+  const runningDeviceUdid = running?.deviceUdid ?? runningOperation?.deviceUdid
+  const isRunning = Boolean(running || runningOperation)
 
   return (
     <section className="singleflight" aria-label="Signing queue">
       <div className="singleflight-head">
         <RefreshCw size={17} />
         <h2>Single-flight signer</h2>
-        <StatusPill state={running ? 'warning' : 'healthy'} label={running ? 'Signing now' : 'Idle'} />
+        <StatusPill state={isRunning ? 'warning' : 'healthy'} label={isRunning ? 'Operation running' : 'Idle'} />
       </div>
 
-      {running ? (
+      {isRunning ? (
         <div className="singleflight-now">
           <div className="singleflight-row">
             <div>
-              <strong>{appName(running)}</strong>
-              <div className="muted">{running.bundleId} · {compactUdid(running.deviceUdid)}</div>
+              <strong>{runningName}</strong>
+              <div className="muted">{runningBundleId} · {runningDeviceUdid ? compactUdid(runningDeviceUdid) : 'device unknown'}</div>
             </div>
-            <span className="status-pill warning"><Loader2 className="stage-spin" size={14} /> Signing</span>
+            <span className="status-pill warning"><Loader2 className="stage-spin" size={14} /> Running</span>
           </div>
           <SigningPipeline
             title="Current operation"
-            stages={[
-              { id: 'authorize', label: 'Authorize', detail: 'GrandSlam', state: 'done' },
-              { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'done' },
-              { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'active' },
-              { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
-              { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
-            ]}
+            stages={operationPipelineStages(runningOperation?.stages)}
+            note={runningOperation ? 'Stages are rendered from /api/operations for this running record.' : 'The renewal row is running, but this snapshot did not include operation stage details.'}
           />
         </div>
       ) : (
-        <p className="singleflight-note"><CheckCircle2 size={14} /> No signing operation is running. The next due app starts automatically.</p>
+        <p className="singleflight-note"><CheckCircle2 size={14} /> No operation is running in the current API snapshot. Scheduled refreshes remain outside operation history in this slice.</p>
       )}
 
       <div>
@@ -1070,23 +1107,93 @@ function SingleFlightStrip({ data }: { data: SideportReadModel }) {
               </div>
             ))}
           </div>
-        ) : <p className="singleflight-note"><CheckCircle2 size={14} /> Nothing queued behind the current operation.</p>}
+        ) : <p className="singleflight-note"><CheckCircle2 size={14} /> No backend queue is exposed yet. Refresh operations are recorded after the synchronous run completes.</p>}
       </div>
 
-      <p className="singleflight-note"><AlertTriangle size={14} /> Refresh is serialized: Sideport signs one app at a time to protect the single free-tier certificate. A queued item can be canceled only before its signing starts.</p>
+      {latestOperation && <p className="singleflight-note"><Activity size={14} /> Latest operation {latestOperation.operationId}: {latestOperation.status} · {latestOperation.actor}</p>}
+      <p className="singleflight-note"><AlertTriangle size={14} /> Refresh is serialized: Sideport signs one app at a time to protect the single free-tier certificate. Cancel and rerun are not exposed until the backend owns a safe background operation boundary.</p>
     </section>
   )
+}
+
+function operationPipelineStages(stages?: OperationStageSummary[]): PipelineStage[] {
+  if (!stages?.length) {
+    return [{ id: 'operation-record', label: 'Operation record', detail: 'No stage details returned in this snapshot.', state: 'active' }]
+  }
+  return stages.map((stage) => ({
+    id: stage.id,
+    label: stage.label,
+    detail: stage.error ?? stage.message,
+    state: operationPipelineState(stage.status),
+  }))
+}
+
+function operationPipelineState(status: OperationStageSummary['status']): PipelineStageState {
+  if (status === 'succeeded') return 'done'
+  if (status === 'running') return 'active'
+  if (status === 'failed' || status === 'blocked') return 'failed'
+  return 'pending'
 }
 
 export function RenewalsPage({ data, apiStatus }: { data: SideportReadModel; apiStatus: AdminDataStatus }) {
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Renewals" title="Renewal risk" description="Current backend data comes from registered apps, expiry fields, refresh status, and last error details." />
+      <PageHeader eyebrow="Renewals" title="Renewal risk" description="Current backend data comes from registered apps, expiry fields, operation history, refresh status, and last error details." />
       <SingleFlightStrip data={data} />
       <RenewalLane title="Blocked" items={data.renewals.filter((item) => item.risk === 'blocked')} apps={data.apps} apiStatus={apiStatus} />
       <RenewalLane title="Due now" items={data.renewals.filter((item) => item.risk === 'due-now')} apps={data.apps} apiStatus={apiStatus} />
       <RenewalLane title="Upcoming" items={data.renewals.filter((item) => item.risk === 'upcoming')} apps={data.apps} apiStatus={apiStatus} />
       <RenewalLane title="Healthy" items={data.renewals.filter((item) => item.risk === 'healthy')} apps={data.apps} apiStatus={apiStatus} />
+    </div>
+  )
+}
+
+export function OperationsPage({ data, apiStatus }: { data: SideportReadModel; apiStatus: AdminDataStatus }) {
+  return (
+    <div className="page-stack">
+      <PageHeader eyebrow="Operations" title="Operation history" description="Durable refresh operations, worker stages, and safe follow-up actions from /api/operations." />
+      <Panel title={`Recent operations (${data.operations.length})`}>
+        {data.operations.length ? <OperationHistoryList operations={data.operations} apps={data.apps} apiStatus={apiStatus} /> : <EmptyState icon={Activity} title="No operations recorded" detail="Refresh, scheduler, retry, and rerun operations will appear here once the backend accepts them." />}
+      </Panel>
+    </div>
+  )
+}
+
+function OperationHistoryList({ operations, apps, apiStatus }: { operations: SideportReadModel['operations']; apps: RegisteredAppSummary[]; apiStatus: AdminDataStatus }) {
+  const queryClient = useQueryClient()
+  const actionMutation = useMutation({
+    mutationFn: async ({ action, operationId }: { action: 'cancel' | 'retry' | 'rerun'; operationId: string }) => {
+      if (action === 'cancel') return await cancelOperation(operationId)
+      if (action === 'retry') return await retryOperation(operationId)
+      return await rerunOperation(operationId)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+  const appName = (operation: SideportReadModel['operations'][number]) => apps.find((app) => app.bundleId === operation.bundleId && app.deviceUdid === operation.deviceUdid)?.displayName.value ?? operation.bundleId
+  return (
+    <div className="renewal-list">
+      {operations.map((operation) => (
+        <article className="renewal-item" key={operation.operationId}>
+          <div>
+            <strong>{appName(operation)}</strong>
+            <span>{operation.type} · {operation.operationId}</span>
+          </div>
+          <div className="renewal-meta">
+            <StatusDot state={operation.status === 'succeeded' ? 'ok' : operation.status === 'failed' || operation.status === 'blocked' ? 'failed' : 'warning'} />
+            <span>{operation.status} · {operation.actor}</span>
+          </div>
+          <span className="muted">{shortDateTime(operation.updatedAt)}</span>
+          {operation.parentOperationId && <span className="muted">Parent {operation.parentOperationId}</span>}
+          {operation.error && <p>{operation.error}</p>}
+          <div className="row-actions">
+            <button className="row-action" disabled={!apiStatus.canMutate || !operation.cancelable || actionMutation.isPending} onClick={() => actionMutation.mutate({ action: 'cancel', operationId: operation.operationId })} type="button"><X size={13} /> Cancel</button>
+            <button className="row-action" disabled={!apiStatus.canMutate || !operation.retryable || actionMutation.isPending} onClick={() => actionMutation.mutate({ action: 'retry', operationId: operation.operationId })} type="button"><RefreshCw size={13} /> Retry</button>
+            <button className="row-action" disabled={!apiStatus.canMutate || !operation.rerunnable || actionMutation.isPending} onClick={() => actionMutation.mutate({ action: 'rerun', operationId: operation.operationId })} type="button"><Play size={13} /> Rerun</button>
+          </div>
+          {operation.stages.length ? <SigningPipeline title="Stages" stages={operationPipelineStages(operation.stages)} /> : null}
+        </article>
+      ))}
+      {actionMutation.error && <p className="mutation-message error">{actionMutation.error.message}</p>}
     </div>
   )
 }
@@ -1313,7 +1420,7 @@ export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Diagnostics" title="Runtime failure evidence" description="Live evidence comes from readiness checks, API fetch failures, app lastError fields, and the protected API log stream." />
+      <PageHeader eyebrow="Diagnostics" title="Runtime failure evidence" description="Durable issues come from operation evidence. Derived API fetch failures still appear only when the issue endpoint is unavailable." />
       <DeviceConnectivitySelfTest />
 
       <Panel title={`Issues (${filteredIssues.length})`}>
@@ -1323,20 +1430,20 @@ export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
               <div className="facet-group" role="group" aria-label="Filter by severity">
                 <span className="facet-label"><Filter size={13} /> Severity</span>
                 {(['all', 'info', 'warning', 'error', 'fatal'] as const).map((value) => (
-                  <button aria-pressed={severityFacet === value} className="facet-chip" key={value} onClick={() => setSeverityFacet(value)} type="button">{value === 'all' ? 'All' : severityLabel(value)}</button>
+                  <FacetToggleButton key={value} onClick={() => setSeverityFacet(value)} pressed={severityFacet === value}>{value === 'all' ? 'All' : severityLabel(value)}</FacetToggleButton>
                 ))}
               </div>
               <div className="facet-group" role="group" aria-label="Filter by status">
                 <span className="facet-label">Status</span>
                 {(['all', 'unresolved', 'investigating', 'resolved', 'ignored'] as const).map((value) => (
-                  <button aria-pressed={statusFacet === value} className="facet-chip" key={value} onClick={() => setStatusFacet(value)} type="button">{value === 'all' ? 'All' : issueStatusLabel(value)}</button>
+                  <FacetToggleButton key={value} onClick={() => setStatusFacet(value)} pressed={statusFacet === value}>{value === 'all' ? 'All' : issueStatusLabel(value)}</FacetToggleButton>
                 ))}
               </div>
               <span className="devices-count">{filteredIssues.length} of {data.issues.length} issues</span>
             </div>
             {filteredIssues.length ? <DiagnosticIssueList issues={filteredIssues} /> : <EmptyState icon={Filter} title="No issues match this filter" detail="Reset the severity and status filters to see all diagnostic issues." />}
           </>
-        ) : <EmptyState icon={Stethoscope} title="No diagnostic issues" detail="When OpenTelemetry is wired, this page will group refresh/sign/install failures by operation and trace ID." />}
+        ) : <EmptyState icon={Stethoscope} title="No durable diagnostic issues" detail="No grouped operation failures were returned by /api/diagnostics/issues for this snapshot." />}
       </Panel>
 
       <Panel title="Log highlights">
@@ -1403,7 +1510,7 @@ export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: S
       <Panel title="Data retention">
         <dl className="detail-list">
           <div><dt>Operation logs</dt><dd>Held in the API log store; the retention window is not yet configurable from the UI.</dd></div>
-          <div><dt>Traces</dt><dd>Exported to the OpenTelemetry collector; retention is owned by the collector.</dd></div>
+          <div><dt>Trace links</dt><dd>Not reported yet. Durable issues currently link operation and stage evidence only.</dd></div>
         </dl>
         <SourcePill source="planned" label={sourceLabel('planned')} />
       </Panel>
@@ -1590,6 +1697,13 @@ function StatusLabel({ state }: { state: OnboardingStepState }) {
   return <span className={`status-label ${state}`}>{label}</span>
 }
 
+function FacetToggleButton({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
+  if (pressed) {
+    return <button aria-pressed="true" className="facet-chip" onClick={onClick} type="button">{children}</button>
+  }
+  return <button aria-pressed="false" className="facet-chip" onClick={onClick} type="button">{children}</button>
+}
+
 function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: DeviceSummary[]; apps: RegisteredAppSummary[]; onOpenDevice?: (device: DeviceSummary) => void }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'health', desc: false }])
   const columns = useMemo<Array<ColumnDef<DeviceSummary>>>(() => [
@@ -1605,8 +1719,8 @@ function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: Device
     },
     {
       accessorKey: 'lastSeenAt.value',
-      header: 'Last seen',
-      cell: ({ row }) => <span>{relativeTime(row.original.lastSeenAt.value)}</span>,
+      header: 'Last seen / current poll',
+      cell: ({ row }) => <span>{row.original.currentPollAt ? `Now · ${relativeTime(row.original.currentPollAt.value)}` : row.original.hasDurableLastSeen ? relativeTime(row.original.lastSeenAt.value) : 'Not yet recorded'}</span>,
     },
     {
       id: 'apps',
@@ -1665,7 +1779,7 @@ export function DeviceCard({ device, apps, onOpen }: { device: DeviceSummary; ap
       <div className="device-card-grid">
         <FactTile label="Connection" value={connectionLabel(device.connection)} source="live" />
         <FactTile label="Registered apps" value={`${apps.length}/3`} source="derived" />
-        <FactTile label="Installed apps" value={`${device.installedAppCount} total`} source={device.installedAppCount ? 'live' : 'planned'} />
+        <FactTile label="Installed apps" value={`${device.installedAppCount} total`} source="live" />
         <FactTile label="Registered expiry" value={expiryCopy(device.nearestExpiryAt?.value)} source={device.nearestExpiryAt?.source ?? 'planned'} />
       </div>
       <button className="row-action" onClick={onOpen} type="button">Open device</button>
@@ -1712,16 +1826,10 @@ function RenewalLane({ title, items, apps, apiStatus }: { title: string; items: 
 }
 
 export function RenewalQueueList({ items, apps, compact = false, apiStatus }: { items: RenewalItem[]; apps: RegisteredAppSummary[]; compact?: boolean; apiStatus?: AdminDataStatus }) {
-  const queryClient = useQueryClient()
-  const refreshMutation = useMutation({
-    mutationFn: (item: RenewalItem) => refreshSideportApp(item.deviceUdid, item.bundleId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
-  })
   return (
     <div className={compact ? 'renewal-list compact' : 'renewal-list'}>
       {items.map((item) => {
         const app = apps.find((candidate) => candidate.bundleId === item.bundleId && candidate.deviceUdid === item.deviceUdid)
-        const isRefreshing = refreshMutation.isPending && refreshMutation.variables?.id === item.id
         return (
           <article className="renewal-item" key={item.id}>
             <div>
@@ -1733,14 +1841,80 @@ export function RenewalQueueList({ items, apps, compact = false, apiStatus }: { 
               <span>{riskCopy[item.risk]} · {statusCopy[item.status]}</span>
             </div>
             {item.expiresAt && <span className="muted">{timeUntil(item.expiresAt)}</span>}
+            {item.operationId && <span className="muted">Operation {item.operationId}</span>}
             {item.blocker && <p>{item.blocker}</p>}
             <SourcePill source={item.source} label={sourceLabel(item.source)} />
-            {!compact && <button className="row-action inline-action" disabled={!apiStatus?.canMutate || isRefreshing} onClick={() => refreshMutation.mutate(item)} type="button"><RefreshCw size={14} /> {isRefreshing ? 'Refreshing' : 'Refresh'}</button>}
+            {!compact && apiStatus && <RefreshOperationButton apiStatus={apiStatus} bundleId={item.bundleId} className="row-action inline-action" deviceUdid={item.deviceUdid} small />}
           </article>
         )
       })}
-      {refreshMutation.isSuccess && <p className="mutation-message success">Refresh request finished. Results will reload from the API.</p>}
+    </div>
+  )
+}
+
+function RefreshOperationButton({ apiStatus, deviceUdid, bundleId, className, small = false }: { apiStatus: AdminDataStatus; deviceUdid: string; bundleId: string; className: string; small?: boolean }) {
+  const queryClient = useQueryClient()
+  const [preflight, setPreflight] = useState<OperationPreflightDto | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const preflightMutation = useMutation({
+    mutationFn: () => preflightSideportRefresh(deviceUdid, bundleId),
+    onSuccess: (result) => {
+      setPreflight(result)
+      setDialogOpen(true)
+    },
+  })
+  const refreshMutation = useMutation({
+    mutationFn: () => refreshSideportApp(deviceUdid, bundleId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+  const disabled = !apiStatus.canMutate || preflightMutation.isPending || refreshMutation.isPending
+  const label = preflightMutation.isPending
+    ? 'Checking'
+    : refreshMutation.isPending
+      ? 'Starting'
+      : small ? 'Start operation' : 'Start refresh operation'
+
+  return (
+    <>
+      <button className={className} disabled={disabled} onClick={() => preflightMutation.mutate()} type="button"><RefreshCw size={small ? 14 : 16} /> {label}</button>
+      {preflightMutation.error && <p className="mutation-message error">{preflightMutation.error.message}</p>}
+      {refreshMutation.isSuccess && <p className="mutation-message success">Operation {refreshMutation.data.operationId} finished with status {refreshMutation.data.status}. Results will reload from the API.</p>}
       {refreshMutation.error && <p className="mutation-message error">{refreshMutation.error.message}</p>}
+      <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content refresh-dialog">
+            <Dialog.Title>Confirm refresh operation</Dialog.Title>
+            <Dialog.Description>Sideport re-runs preflight on the server before signing. Review the current blockers, warnings, limits, and planned mutations before starting.</Dialog.Description>
+            {preflight && <OperationPreflightSummary preflight={preflight} />}
+            <div className="dialog-actions">
+              <Dialog.Close asChild><button className="ghost-action" type="button">Close</button></Dialog.Close>
+              <button className="primary-action" disabled={!preflight?.ready || refreshMutation.isPending} onClick={() => refreshMutation.mutate()} type="button"><RefreshCw size={16} /> {refreshMutation.isPending ? 'Starting operation' : 'Confirm and start'}</button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
+  )
+}
+
+function OperationPreflightSummary({ preflight }: { preflight: OperationPreflightDto }) {
+  return (
+    <div className="preflight-summary">
+      <StatusPill state={preflight.ready ? 'healthy' : 'blocked'} label={preflight.ready ? 'Ready' : 'Blocked'} />
+      {preflight.blockers.length > 0 && <OperationPreflightList title="Blockers" items={preflight.blockers.map((item) => item.message)} tone="error" />}
+      {preflight.warnings.length > 0 && <OperationPreflightList title="Warnings" items={preflight.warnings.map((item) => item.message)} tone="warning" />}
+      {preflight.scarceLimits.length > 0 && <OperationPreflightList title="Limits" items={preflight.scarceLimits.map((limit) => `${limit.label}: ${limit.used}/${limit.limit}`)} tone="neutral" />}
+      {preflight.plannedMutations.length > 0 && <OperationPreflightList title="Planned mutations" items={preflight.plannedMutations} tone="neutral" />}
+    </div>
+  )
+}
+
+function OperationPreflightList({ title, items, tone }: { title: string; items: string[]; tone: 'error' | 'warning' | 'neutral' }) {
+  return (
+    <div className={`preflight-list ${tone}`}>
+      <strong>{title}</strong>
+      <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
     </div>
   )
 }
@@ -1748,20 +1922,25 @@ export function RenewalQueueList({ items, apps, compact = false, apiStatus }: { 
 export function DiagnosticIssueList({ issues, compact = false }: { issues: DiagnosticIssue[]; compact?: boolean }) {
   return (
     <div className={compact ? 'issue-list compact' : 'issue-list'}>
-      {issues.map((issue) => (
-        <article className={`issue-card severity-${issue.severity}`} key={issue.id}>
-          <div className="issue-head">
-            <div>
-              <strong>{issue.category}</strong>
-              <span>{issue.status} · last seen {relativeTime(issue.lastSeenAt)}</span>
+      {issues.map((issue) => {
+        const recency = issue.source === 'derived'
+          ? `derived from snapshot ${relativeTime(issue.lastSeenAt)}`
+          : `last seen ${relativeTime(issue.lastSeenAt)}`
+        return (
+          <article className={`issue-card severity-${issue.severity}`} key={issue.id}>
+            <div className="issue-head">
+              <div>
+                <strong>{issue.category}</strong>
+                <span>{issue.status} · {recency}</span>
+              </div>
+              <SourcePill source={issue.source} label={sourceLabel(issue.source)} />
             </div>
-            <SourcePill source={issue.source} label={sourceLabel(issue.source)} />
-          </div>
-          {!compact && <p>{issue.logSnippet}</p>}
-          <div className="trace-row"><Activity size={15} /><span>{issue.operationId}</span><span>{issue.traceId}</span></div>
-          {!compact && <div className="span-strip">{issue.spanSummary.map((span) => <span className={`span-chip ${span.state}`} key={span.name}>{span.name} · {span.durationMs}ms</span>)}</div>}
-        </article>
-      ))}
+            {!compact && <p>{issue.logSnippet}</p>}
+            <div className="trace-row"><Activity size={15} /><span>{issue.operationId}</span><span>{issue.traceId === 'trace-not-reported' ? 'No trace reported' : issue.traceId}</span></div>
+            {!compact && <div className="span-strip">{issue.spanSummary.map((span) => <span className={`span-chip ${span.state}`} key={span.name}>{span.name} · {span.durationMs}ms</span>)}</div>}
+          </article>
+        )
+      })}
     </div>
   )
 }
@@ -2091,8 +2270,10 @@ export function TeamsPage({ data, onNavigate }: { data: SideportReadModel; onNav
           <div className="team-mark workspace-mark"><Building2 size={18} /></div>
           <dl className="detail-list workspace-detail">
             <div><dt>Workspace</dt><dd>{workspace.name}</dd></div>
-            <div><dt>Members</dt><dd>{workspace.members.length} {workspace.members.length === 1 ? 'person' : 'people'}</dd></div>
+            <div><dt>Current member</dt><dd>{workspace.currentMember?.name ?? 'API token client'}</dd></div>
+            <div><dt>Members</dt><dd>{workspace.members.length} reported · user admin {workspace.supportsUserAdministration ? 'available' : 'not available'}</dd></div>
             <div><dt>Authentication</dt><dd>{workspace.authMode}</dd></div>
+            <div><dt>Role enforcement</dt><dd>{workspace.roleEnforcement ?? 'not reported'}</dd></div>
           </dl>
           <SourcePill source={workspace.source} label={sourceLabel(workspace.source)} />
         </div>
@@ -2122,7 +2303,7 @@ export function RoleBadge({ role }: { role: WorkspaceRole }) {
 export function UsersPage({ workspace, activity, apiStatus }: { workspace: WorkspaceSummary; activity: ActivityEvent[]; apiStatus: AdminDataStatus }) {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>('viewer')
-  const canInvite = apiStatus.canMutate && inviteEmail.trim().length > 3 && !workspace.authDelegated
+  const canInvite = apiStatus.canMutate && inviteEmail.trim().length > 3 && !workspace.authDelegated && Boolean(workspace.capabilities?.['users.invite'])
 
   return (
     <div className="page-stack">
@@ -2133,17 +2314,23 @@ export function UsersPage({ workspace, activity, apiStatus }: { workspace: Works
       />
 
       {workspace.authDelegated && (
-        <p className="pipeline-note"><AlertTriangle size={14} /> Authentication is delegated to {workspace.authMode}. Sideport models roles here so it can own identity later; invites and role changes apply once Sideport manages its own users.</p>
+        <p className="pipeline-note"><AlertTriangle size={14} /> Authentication is delegated to {workspace.authMode}. Role enforcement is {workspace.roleEnforcement ?? 'advisory'} and user administration is {workspace.supportsUserAdministration ? 'available' : 'not live yet'}.</p>
       )}
 
       <Panel title="Roles">
         <div className="role-legend">
-          {(Object.keys(roleCopy) as WorkspaceRole[]).map((role) => (
-            <div className="role-legend-row" key={role}>
-              <RoleBadge role={role} />
-              <span>{roleCopy[role].permissions}</span>
+          {(workspace.roles?.length ? workspace.roles : (Object.keys(roleCopy) as WorkspaceRole[]).map((role) => ({ id: role, label: roleCopy[role].label, capabilities: [roleCopy[role].permissions] }))).map((role) => (
+            <div className="role-legend-row" key={role.id}>
+              <span className={`role-badge role-${role.id}`}>{role.label}</span>
+              <span>{role.capabilities.join(', ')}</span>
             </div>
           ))}
+        </div>
+      </Panel>
+
+      <Panel title="Current capabilities">
+        <div className="registration-meta">
+          {Object.entries(workspace.capabilities ?? {}).map(([capability, enabled]) => <span key={capability}>{enabled ? 'yes' : 'no'} {capability}</span>)}
         </div>
       </Panel>
 

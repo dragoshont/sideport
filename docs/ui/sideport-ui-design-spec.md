@@ -218,9 +218,11 @@ Queue item fields:
 
 Single-flight behavior:
 
-- If a refresh is running, show current item and queued items.
+- If a refresh is running, show the current operation from the backend operation
+   record.
 - Do not allow parallel manual refresh without explaining serialization.
-- A queued item may be canceled only before signing starts.
+- Do not invent queued items. Show cancel/rerun only after the backend exposes a
+   safe background operation boundary and capability flags.
 
 ## Teams
 

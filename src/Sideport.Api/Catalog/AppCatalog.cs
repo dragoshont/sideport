@@ -7,6 +7,8 @@ namespace Sideport.Api.Catalog;
 
 public sealed record AppCatalogOptions(
     string CatalogPath,
+    string ImportDirectory,
+    long MaxUploadBytes,
     IReadOnlyList<AppCatalogSeed> Seeds);
 
 public sealed record AppCatalogSeed(
@@ -21,6 +23,13 @@ public sealed record CatalogInspectRequest(
     string? Id = null,
     string? Name = null,
     string? Purpose = null);
+
+public sealed record CatalogUploadRequest(
+    string TemporaryIpaPath,
+    string? Id = null,
+    string? Name = null,
+    string? Purpose = null,
+    bool Replace = false);
 
 public sealed record CatalogAppDto(
     string Id,
@@ -44,6 +53,8 @@ public interface IAppCatalog
     Task<IReadOnlyList<CatalogAppDto>> ListAsync(CancellationToken ct = default);
 
     Task<CatalogAppDto> InspectAndStoreAsync(CatalogInspectRequest request, CancellationToken ct = default);
+
+    Task<(CatalogAppDto Entry, bool Created)> ImportUploadedIpaAsync(CatalogUploadRequest request, CancellationToken ct = default);
 }
 
 public sealed class FileAppCatalog : IAppCatalog
@@ -113,6 +124,68 @@ public sealed class FileAppCatalog : IAppCatalog
         return entry;
     }
 
+    public async Task<(CatalogAppDto Entry, bool Created)> ImportUploadedIpaAsync(CatalogUploadRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        string path = NormalizeIpaPath(request.TemporaryIpaPath);
+        if (!File.Exists(path))
+            throw new FileNotFoundException("Uploaded IPA temporary file does not exist.", path);
+
+        CatalogAppDto inspected = Inspect(path, request.Id, request.Name, request.Purpose, source: "upload");
+        string durablePath = UploadPathFor(inspected.Id);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            bool exists = _entries.TryGetValue(inspected.Id, out CatalogAppDto? previous);
+            if (exists && !request.Replace)
+                throw new CatalogConflictException(inspected.Id);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(durablePath)!);
+            string tempPath = $"{durablePath}.{Guid.NewGuid():N}.tmp";
+            string? backupPath = null;
+            await using (FileStream source = File.OpenRead(path))
+            await using (FileStream sink = File.Create(tempPath))
+            {
+                await source.CopyToAsync(sink, ct).ConfigureAwait(false);
+            }
+
+            CatalogAppDto entry = inspected with { IpaPath = durablePath };
+            _entries[entry.Id] = entry;
+            try
+            {
+                if (File.Exists(durablePath))
+                {
+                    backupPath = $"{durablePath}.{Guid.NewGuid():N}.bak";
+                    File.Move(durablePath, backupPath);
+                }
+                File.Move(tempPath, durablePath);
+                await SaveAsync(ct).ConfigureAwait(false);
+                if (backupPath is not null)
+                    TryDelete(backupPath);
+            }
+            catch
+            {
+                if (exists)
+                    _entries[inspected.Id] = previous!;
+                else
+                    _entries.Remove(inspected.Id);
+                TryDelete(durablePath);
+                if (backupPath is not null && File.Exists(backupPath))
+                    File.Move(backupPath, durablePath, overwrite: true);
+                else
+                    TryDelete(tempPath);
+                throw;
+            }
+
+            return (entry, !exists);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private CatalogAppDto BuildSeedEntry(AppCatalogSeed seed)
     {
         string path = NormalizeIpaPath(seed.IpaPath);
@@ -174,7 +247,7 @@ public sealed class FileAppCatalog : IAppCatalog
         IpaInfo info = IpaInspector.Inspect(path);
         FileInfo file = new(path);
         string displayName = FirstNonBlank(name, info.DisplayName, TrimAppExtension(info.AppBundleName), info.BundleIdentifier);
-        string entryId = FirstNonBlank(id, Slug(displayName), Slug(info.BundleIdentifier));
+        string entryId = CatalogId(FirstNonBlank(id, displayName, info.BundleIdentifier));
         string version = FirstNonBlank(info.ShortVersion, info.Version, "Unknown");
         string? build = string.IsNullOrWhiteSpace(info.Version) ? null : info.Version;
 
@@ -232,7 +305,24 @@ public sealed class FileAppCatalog : IAppCatalog
             await JsonSerializer.SerializeAsync(stream, _entries.Values.OrderBy(app => app.Name).ToArray(), JsonOptions, ct).ConfigureAwait(false);
         }
 
-        File.Move(tempPath, _options.CatalogPath, overwrite: true);
+        try
+        {
+            File.Move(tempPath, _options.CatalogPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            TryDelete(tempPath);
+            throw new CatalogStoreException("Catalog could not be saved.", ex);
+        }
+    }
+
+    private string UploadPathFor(string id)
+    {
+        string path = Path.GetFullPath(Path.Combine(_options.ImportDirectory, $"{CatalogId(id)}.ipa"));
+        string root = Path.GetFullPath(_options.ImportDirectory);
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new ArgumentException("Catalog upload ID resolves outside the import directory.");
+        return path;
     }
 
     private static string NormalizeIpaPath(string ipaPath)
@@ -259,6 +349,23 @@ public sealed class FileAppCatalog : IAppCatalog
     private static string FirstNonBlank(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? "Unknown";
 
+    private static string CatalogId(string value)
+    {
+        string slug = Slug(value);
+        return string.IsNullOrWhiteSpace(slug) ? "uploaded-app" : slug;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private static string Slug(string value)
     {
         var builder = new StringBuilder(value.Length);
@@ -280,3 +387,10 @@ public sealed class FileAppCatalog : IAppCatalog
         return builder.ToString().Trim('-');
     }
 }
+
+public sealed class CatalogConflictException(string id) : Exception($"Catalog app '{id}' already exists.")
+{
+    public string Id { get; } = id;
+}
+
+public sealed class CatalogStoreException(string message, Exception innerException) : Exception(message, innerException);

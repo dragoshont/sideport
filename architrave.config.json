@@ -18,6 +18,9 @@
     "architectureDocs": [
       "docs"
     ],
+    "contracts": [
+      "docs/sideport-backend-contract.md"
+    ],
     "applyTo": [
       "src/**",
       "tests/**"

@@ -1,0 +1,28 @@
+{
+  "schema": "architrave.run.v1",
+  "runId": "sideport-status-20260623",
+  "status": "completed",
+  "startedAt": "2026-06-23T20:16:33Z",
+  "artifacts": {
+    "intake": ".architrave/runs/sideport-status-20260623/intake.md",
+    "tournament": ".architrave/runs/sideport-status-20260623/tournament.md",
+    "recommendedPlan": ".architrave/runs/sideport-status-20260623/recommended-plan.md",
+    "deterministicGates": ".architrave/runs/sideport-status-20260623/deterministic-gates.md",
+    "judgePre": ".architrave/runs/sideport-status-20260623/judge-pre.md",
+    "judgePost": ".architrave/runs/sideport-status-20260623/judge-post.md",
+    "runtimeObserver": ".architrave/runs/sideport-status-20260623/runtime-observer.md"
+  },
+  "learning": {
+    "repoProfile": ".architrave/learning/repo-profile.md",
+    "repoLessons": ".architrave/learning/repo-lessons.md",
+    "candidateLessons": 0,
+    "promotionsProposed": 0
+  },
+  "completedAt": "2026-06-23T00:00:00Z",
+  "outcome": "analysis-complete",
+  "gates": {
+    "checks": "pass",
+    "backendChecks": "pass",
+    "reconcile": "not-run"
+  }
+}

@@ -36,14 +36,18 @@ curl -fsS localhost:8080/readyz      # anisette reachable + signer present
   until you've confirmed no other signer (AltStore/AltServer or a second
   Sideport) is active for the same Apple ID — two active signers revoke each
   other's certificate. Flip it to `"true"` to let Sideport keep apps signed.
-- **anisette identity.** The example mounts an `emptyDir`, so the first login
-  provisions a fresh Apple machine identity and prompts for **2FA once**. To
-  inherit existing trust (no 2FA) and survive restarts, back the `anisette-data`
-  volume with a PVC and seed it from an already-trusted ADI (see the commented
-  block in `deployment.yaml`).
+- **Persistent state.** The example now declares PVCs for Sideport state
+  (`sideport-state`) and anisette identity (`sideport-anisette`). Seed
+  `sideport-anisette` from an already-trusted ADI when you want to inherit
+  existing trust and avoid reprovisioning/2FA after restarts.
 - **Device reachability.** The pod reaches the iPhone through the node's
   `usbmuxd` socket (USB, or netmuxd for Wi-Fi). On a multi-node cluster, pin the
   pod to the node where the phone is paired.
+- **Pairing records.** `/var/lib/lockdown` is host trust material, not ordinary
+  app data. For USB-only installs, the `usbmuxd` socket is enough. If you need
+  Wi-Fi pairing records inside the container, uncomment the manifest's optional
+  `/var/lib/lockdown` hostPath and mount it **read-only** only on the node that
+  owns the pairing.
 - **Rename the password env var** in `deployment.yaml` to match your Apple ID:
   `SIDEPORT_APPLE_PW_<APPLE_ID>`, uppercased, every non-alphanumeric char → `_`
   (e.g. `you@example.com` → `SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM`).

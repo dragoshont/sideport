@@ -36,6 +36,9 @@ export interface DeviceSummary {
   osVersion: string
   connection: ConnectionState
   lastSeenAt: SourceTagged<string>
+  hasDurableLastSeen?: boolean
+  currentPollAt?: SourceTagged<string>
+  lastSeenSource?: string
   health: HealthState
   teamId: string
   appSlotsUsed: number
@@ -88,6 +91,12 @@ export interface CatalogAppSummary {
   lastInspectedAt?: string
 }
 
+export interface WorkspaceRoleSummary {
+  id: WorkspaceRole | string
+  label: string
+  capabilities: string[]
+}
+
 export interface RenewalItem {
   id: string
   deviceUdid: string
@@ -136,6 +145,35 @@ export interface OperationLogEntry {
   message: string
   exceptionType?: string | null
   exceptionMessage?: string | null
+  source: SourceKind
+}
+
+export interface OperationStageSummary {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'blocked'
+  startedAt?: string
+  completedAt?: string
+  message: string
+  error?: string | null
+}
+
+export interface OperationSummary {
+  operationId: string
+  type: 'refresh' | string
+  status: 'running' | 'blocked' | 'succeeded' | 'failed' | string
+  createdAt: string
+  updatedAt: string
+  completedAt?: string | null
+  deviceUdid: string
+  bundleId: string
+  actor: string
+  stages: OperationStageSummary[]
+  error?: string | null
+  cancelable: boolean
+  retryable: boolean
+  rerunnable: boolean
+  parentOperationId?: string | null
   source: SourceKind
 }
 
@@ -197,7 +235,12 @@ export interface WorkspaceSummary {
   name: string
   authMode: string
   authDelegated: boolean
+  roleEnforcement?: string
+  supportsUserAdministration?: boolean
+  currentMember?: WorkspaceMember
   members: WorkspaceMember[]
+  roles?: WorkspaceRoleSummary[]
+  capabilities?: Record<string, boolean>
   source: SourceKind
 }
 
@@ -210,6 +253,7 @@ export interface SideportReadModel {
   installedApps: InstalledAppSummary[]
   apps: RegisteredAppSummary[]
   renewals: RenewalItem[]
+  operations: OperationSummary[]
   issues: DiagnosticIssue[]
   activity: ActivityEvent[]
   logs: OperationLogEntry[]
@@ -252,6 +296,7 @@ export const runtimeEmptyData: SideportReadModel = {
   installedApps: [],
   apps: [],
   renewals: [],
+  operations: [],
   issues: [],
   activity: [],
   logs: [],
@@ -259,7 +304,11 @@ export const runtimeEmptyData: SideportReadModel = {
     name: 'Sideport workspace',
     authMode: 'Reverse proxy (not yet reported)',
     authDelegated: true,
+    roleEnforcement: 'planned',
+    supportsUserAdministration: false,
     members: [],
+    roles: [],
+    capabilities: {},
     source: 'planned',
   },
 }

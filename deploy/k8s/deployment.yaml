@@ -30,6 +30,11 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       volumes:
+        # Durable Sideport state: app registrations, stored IPAs, identities, and
+        # operation history. Production cutover requires this to be persistent.
+        - name: sideport-state
+          persistentVolumeClaim:
+            claimName: sideport-state
         # Host usbmuxd socket — the device-install path. usbmuxd (and netmuxd
         # for Wi-Fi) run on the NODE, not in the pod, so the pod stays
         # non-privileged and only gets this one socket. Drop this volume + its
@@ -38,15 +43,16 @@ spec:
           hostPath:
             path: /var/run/usbmuxd
             type: Socket
-        # anisette ADI (Apple machine identity). An emptyDir provisions a FRESH
-        # identity whenever the pod (re)starts, which triggers a one-time 2FA on
-        # the next login. To inherit existing trust (no 2FA) and survive
-        # restarts, back this with a PersistentVolumeClaim seeded from an
-        # already-trusted ADI:
-        #   - name: anisette-data
-        #     persistentVolumeClaim: { claimName: sideport-anisette }
+        # Optional read-only pairing records for hosts that own Wi-Fi pairing
+        # material. Leave commented unless this node's /var/lib/lockdown is the
+        # trust source for the iPhone; never mount it read-write.
+        # - name: lockdown
+        #   hostPath:
+        #     path: /var/lib/lockdown
+        #     type: Directory
         - name: anisette-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: sideport-anisette
         - name: tmp
           emptyDir: {}
       containers:
@@ -127,8 +133,15 @@ spec:
               cpu: "1"
               memory: 512Mi
           volumeMounts:
+            - name: sideport-state
+              mountPath: /var/lib/sideport
             - name: usbmuxd
               mountPath: /var/run/usbmuxd
+            # Optional Wi-Fi pairing trust material; uncomment with the matching
+            # hostPath volume only when the deployment host owns those records.
+            # - name: lockdown
+            #   mountPath: /var/lib/lockdown
+            #   readOnly: true
             - name: tmp
               mountPath: /tmp
           securityContext:
@@ -174,3 +187,29 @@ spec:
       port: 8080
       targetPort: http
       protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sideport-state
+  labels:
+    app: sideport
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sideport-anisette
+  labels:
+    app: sideport
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 512Mi
