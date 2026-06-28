@@ -14,7 +14,7 @@ public class NetimobiledeviceBackendTests
     [Fact]
     public void DecodeNetworkAddress_Ipv4_ReturnsDottedQuad() =>
         // Netimobiledevice already decodes the sockaddr to the 4 IPv4 octets.
-        Assert.Equal("192.168.1.153", NetimobiledeviceBackend.DecodeNetworkAddress([192, 168, 1, 153]));
+        Assert.Equal("10.0.0.42", NetimobiledeviceBackend.DecodeNetworkAddress([10, 0, 0, 42]));
 
     [Fact]
     public void DecodeNetworkAddress_Ipv6Global_ReturnsCompressedAddress() =>
