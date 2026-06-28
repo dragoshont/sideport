@@ -12,7 +12,7 @@ public class MobileProvisionTests
         byte[] profile = TestMobileProvisionBuilder.Build(
             name: "My Profile",
             expiration: expiry,
-            devices: ["00008140-001A41390242801C"],
+            devices: ["00008110-0011223344556677"],
             teamName: "Acme",
             teamId: "TEAM123456");
 
@@ -22,7 +22,7 @@ public class MobileProvisionTests
         Assert.Equal("Acme", info.TeamName);
         Assert.Equal(expiry, info.ExpirationDate);
         Assert.Equal(["TEAM123456"], info.TeamIdentifiers);
-        Assert.Equal(["00008140-001A41390242801C"], info.ProvisionedDeviceIds);
+        Assert.Equal(["00008110-0011223344556677"], info.ProvisionedDeviceIds);
     }
 
     [Fact]

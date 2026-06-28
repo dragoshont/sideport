@@ -45,7 +45,7 @@ export const fixtures: SideportFixtureSet = {
   },
   devices: [
     {
-      udid: '00008140-FAKE-A41390242801C',
+      udid: '00008110-0011223344556677',
       name: 'Dragos iPhone',
       productType: 'iPhone17,2',
       osVersion: '26.5',
@@ -74,7 +74,7 @@ export const fixtures: SideportFixtureSet = {
       nearestExpiryAt: { value: iso(addDays(now, 5)), source: 'live' },
     },
     {
-      udid: '00008120-FAKE-C3A013FDF8AA',
+      udid: '00008120-00AABBCCDDEEFF01',
       name: 'QA iPhone',
       productType: 'iPhone15,3',
       osVersion: '18.6',
@@ -175,7 +175,7 @@ export const fixtures: SideportFixtureSet = {
   installedApps: [
     {
       bundleId: 'com.example.certcountdown',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       name: 'Cert Countdown',
       version: '1.1.0',
       signatureExpiresAt: { value: iso(addDays(now, 2)), source: 'live' },
@@ -184,7 +184,7 @@ export const fixtures: SideportFixtureSet = {
     },
     {
       bundleId: 'com.example.diceroll',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       name: 'Dice Roll',
       version: '1.0.3',
       signatureExpiresAt: { value: iso(addDays(now, 6)), source: 'live' },
@@ -193,7 +193,7 @@ export const fixtures: SideportFixtureSet = {
     },
     {
       bundleId: 'com.example.altserverlegacy',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       name: 'AltServer Legacy App',
       version: '0.9.0',
       signatureExpiresAt: { value: iso(addDays(now, 4)), source: 'demo' },
@@ -213,7 +213,7 @@ export const fixtures: SideportFixtureSet = {
   apps: [
     {
       bundleId: 'com.example.certcountdown',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
       expiresAt: { value: iso(addDays(now, 2)), source: 'live' },
@@ -226,7 +226,7 @@ export const fixtures: SideportFixtureSet = {
     },
     {
       bundleId: 'com.example.diceroll',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
       expiresAt: { value: iso(addDays(now, 6)), source: 'live' },
@@ -252,7 +252,7 @@ export const fixtures: SideportFixtureSet = {
     },
     {
       bundleId: 'com.example.wristlab',
-      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      deviceUdid: '00008120-00AABBCCDDEEFF01',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
       expiresAt: { value: iso(addDays(now, -1)), source: 'demo' },
@@ -266,8 +266,8 @@ export const fixtures: SideportFixtureSet = {
   ],
   renewals: [
     {
-      id: '00008140-FAKE-A41390242801C:com.example.certcountdown',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      id: '00008110-0011223344556677:com.example.certcountdown',
+      deviceUdid: '00008110-0011223344556677',
       bundleId: 'com.example.certcountdown',
       teamId: 'M62Z4M5EUY',
       risk: 'due-now',
@@ -277,8 +277,8 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      id: '00008140-FAKE-A41390242801C:com.example.diceroll',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      id: '00008110-0011223344556677:com.example.diceroll',
+      deviceUdid: '00008110-0011223344556677',
       bundleId: 'com.example.diceroll',
       teamId: 'M62Z4M5EUY',
       risk: 'upcoming',
@@ -289,8 +289,8 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      id: '00008120-FAKE-C3A013FDF8AA:com.example.wristlab',
-      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      id: '00008120-00AABBCCDDEEFF01:com.example.wristlab',
+      deviceUdid: '00008120-00AABBCCDDEEFF01',
       bundleId: 'com.example.wristlab',
       teamId: 'M62Z4M5EUY',
       risk: 'blocked',
@@ -308,7 +308,7 @@ export const fixtures: SideportFixtureSet = {
       createdAt: iso(subHours(now, 2)),
       updatedAt: iso(subHours(now, 2)),
       completedAt: null,
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       bundleId: 'com.example.certcountdown',
       actor: 'operator',
       stages: [
@@ -328,7 +328,7 @@ export const fixtures: SideportFixtureSet = {
       createdAt: iso(subHours(now, 3)),
       updatedAt: iso(subHours(now, 3)),
       completedAt: iso(subHours(now, 3)),
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       bundleId: 'com.example.diceroll',
       actor: 'operator',
       stages: [
@@ -348,7 +348,7 @@ export const fixtures: SideportFixtureSet = {
       category: 'Install failed',
       severity: 'error',
       status: 'unresolved',
-      deviceUdid: '00008140-FAKE-A41390242801C',
+      deviceUdid: '00008110-0011223344556677',
       bundleId: 'com.example.diceroll',
       firstSeenAt: iso(subHours(now, 6)),
       lastSeenAt: iso(subHours(now, 2)),
@@ -382,7 +382,7 @@ export const fixtures: SideportFixtureSet = {
       category: 'Invalid signature / Code=85',
       severity: 'fatal',
       status: 'resolved',
-      deviceUdid: '00008120-FAKE-C3A013FDF8AA',
+      deviceUdid: '00008120-00AABBCCDDEEFF01',
       bundleId: 'com.example.wristlab',
       firstSeenAt: iso(addDays(now, -4)),
       lastSeenAt: iso(addDays(now, -3)),
@@ -451,7 +451,7 @@ export const fixtures: SideportFixtureSet = {
       level: 'Warning',
       category: 'Sideport.Orchestrator.RefreshOrchestrator',
       eventId: 0,
-      message: 'refresh of com.example.diceroll on 00008140-FAKE-A41390242801C failed: install failed: device became unreachable during installation.',
+      message: 'refresh of com.example.diceroll on 00008110-0011223344556677 failed: install failed: device became unreachable during installation.',
       exceptionType: null,
       exceptionMessage: null,
       source: 'demo',

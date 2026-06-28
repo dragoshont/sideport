@@ -17,7 +17,7 @@ public class PortalSigningIdentityProviderTests : IDisposable
 {
     private const string TeamId = "ABCDE12345";
     private const string BundleId = "com.example.diceroll";
-    private const string Udid = "00008140-001A41390242801C";
+    private const string Udid = "00008110-0011223344556677";
 
     private readonly string _workDir = Path.Combine(
         Path.GetTempPath(), "sideport-test-" + Guid.NewGuid().ToString("N"));

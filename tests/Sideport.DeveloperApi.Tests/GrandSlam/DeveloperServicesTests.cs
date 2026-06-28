@@ -18,7 +18,7 @@ public class DeveloperServicesTests
 {
     private const string TeamId = "ABCDE12345";
     private const string BundleId = "com.example.diceroll";
-    private const string Udid = "00008140-001A41390242801C";
+    private const string Udid = "00008110-0011223344556677";
 
     private static (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, StubAnisetteProvider anisette) Build()
     {
