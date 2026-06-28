@@ -87,7 +87,7 @@ Request:
 {
   "type": "refresh",
   "deviceUdid": "000081...",
-  "bundleId": "ro.hont.certcountdown"
+  "bundleId": "com.example.certcountdown"
 }
 ```
 
@@ -98,7 +98,7 @@ Response:
   "ready": true,
   "target": {
     "deviceUdid": "000081...",
-    "bundleId": "ro.hont.certcountdown",
+    "bundleId": "com.example.certcountdown",
     "appleId": "developer@example.com",
     "teamId": "TEAMID1234"
   },
@@ -150,7 +150,7 @@ Request:
 ```json
 {
   "deviceUdid": "000081...",
-  "bundleId": "ro.hont.certcountdown",
+  "bundleId": "com.example.certcountdown",
   "idempotencyKey": "optional-client-key"
 }
 ```
@@ -175,7 +175,7 @@ idempotency key returns an existing operation):
   "attempt": 1,
   "target": {
     "deviceUdid": "000081...",
-    "bundleId": "ro.hont.certcountdown"
+    "bundleId": "com.example.certcountdown"
   },
   "stages": [
     {
@@ -199,7 +199,7 @@ idempotency key returns an existing operation):
   ],
   "result": {
     "success": true,
-    "bundleId": "ro.hont.certcountdown",
+    "bundleId": "com.example.certcountdown",
     "expiresAt": "2026-06-30T12:00:05Z",
     "error": null
   },
@@ -334,7 +334,7 @@ DTO:
 {
   "udid": "000081...",
   "displayName": "Dragos iPhone",
-  "owner": "dragos",
+  "owner": "admin",
   "notes": "Daily driver"
 }
 ```
@@ -385,7 +385,7 @@ Response reuses `CatalogAppDto` plus upload provenance:
 {
   "id": "cert-clock",
   "name": "Cert Clock",
-  "bundleId": "ro.hont.certcountdown",
+  "bundleId": "com.example.certcountdown",
   "ipaPath": "/var/lib/sideport/imports/cert-clock.ipa",
   "source": "upload",
   "status": "ready",
@@ -559,11 +559,11 @@ DTO:
 
 ```json
 {
-  "issueId": "issue-refresh-failed-000081-ro.hont.certcountdown",
+  "issueId": "issue-refresh-failed-000081-com.example.certcountdown",
   "category": "refresh-failed",
   "severity": "error",
   "status": "unresolved",
-  "affected": { "deviceUdid": "000081...", "bundleId": "ro.hont.certcountdown" },
+  "affected": { "deviceUdid": "000081...", "bundleId": "com.example.certcountdown" },
   "firstSeenAt": "2026-06-24T10:00:00Z",
   "lastSeenAt": "2026-06-24T10:05:00Z",
   "occurrenceCount": 2,

@@ -14,7 +14,7 @@ public class RefreshStateTests
     private static readonly TimeSpan Daily = TimeSpan.FromDays(1);
 
     private static RefreshState State(DateTimeOffset? expiresAt, DateTimeOffset? lastSucceeded) =>
-        new("UDID", "ro.hont.app", expiresAt, lastSucceeded, lastSucceeded is not null, null, lastSucceeded);
+        new("UDID", "com.example.app", expiresAt, lastSucceeded, lastSucceeded is not null, null, lastSucceeded);
 
     [Fact]
     public void IsDue_NeverSigned_IsDue() =>

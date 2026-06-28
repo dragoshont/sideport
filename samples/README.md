@@ -6,8 +6,8 @@ source behind the prebuilt IPAs in the
 
 | App | Bundle ID | What it is |
 |---|---|---|
-| **CertCountdown** (shows as *CertClock*) | `ro.hont.certcountdown` | A live countdown to your signing certificate's expiry — the best one for *seeing* Sideport keep an app alive. |
-| **DiceRoll** | `ro.hont.diceroll` | A one-tap dice roller. |
+| **CertCountdown** (shows as *CertClock*) | `com.example.certcountdown` | A live countdown to your signing certificate's expiry — the best one for *seeing* Sideport keep an app alive. |
+| **DiceRoll** | `com.example.diceroll` | A one-tap dice roller. |
 
 A third sample, **Concentration** (a card-matching memory game), lives in its own
 repo: [dragoshont/concentration-ios](https://github.com/dragoshont/concentration-ios).

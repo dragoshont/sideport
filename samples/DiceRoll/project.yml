@@ -1,6 +1,6 @@
 name: DiceRoll
 options:
-  bundleIdPrefix: ro.hont.diceroll
+  bundleIdPrefix: com.example.diceroll
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
@@ -27,6 +27,6 @@ targets:
       - path: Sources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ro.hont.diceroll
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.diceroll
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"

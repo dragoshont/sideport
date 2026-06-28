@@ -26,7 +26,7 @@ public class IpaStoreTests
         string source = await WriteFileAsync([1, 2, 3, 4]);
 
         var store = new IpaStore(root);
-        string durable = await store.StoreAsync("UDID-1", "ro.hont.certcountdown", source);
+        string durable = await store.StoreAsync("UDID-1", "com.example.certcountdown", source);
 
         Assert.True(File.Exists(durable));
         Assert.StartsWith(Path.GetFullPath(root), durable);
@@ -43,9 +43,9 @@ public class IpaStoreTests
         var store = new IpaStore(TempRoot());
         string source = await WriteFileAsync([9]);
 
-        string durable = await store.StoreAsync("UDID-1", "ro.hont.app", source);
+        string durable = await store.StoreAsync("UDID-1", "com.example.app", source);
         // Re-register pointing at the durable copy itself: must not throw or truncate.
-        string again = await store.StoreAsync("UDID-1", "ro.hont.app", durable);
+        string again = await store.StoreAsync("UDID-1", "com.example.app", durable);
 
         Assert.Equal(durable, again);
         Assert.True(File.Exists(durable));
@@ -57,8 +57,8 @@ public class IpaStoreTests
     {
         var store = new IpaStore(TempRoot());
 
-        string v1 = await store.StoreAsync("UDID-1", "ro.hont.app", await WriteFileAsync([1]));
-        string v2 = await store.StoreAsync("UDID-1", "ro.hont.app", await WriteFileAsync([2, 2]));
+        string v1 = await store.StoreAsync("UDID-1", "com.example.app", await WriteFileAsync([1]));
+        string v2 = await store.StoreAsync("UDID-1", "com.example.app", await WriteFileAsync([2, 2]));
 
         Assert.Equal(v1, v2);
         Assert.Equal(new byte[] { 2, 2 }, await File.ReadAllBytesAsync(v2));
@@ -68,9 +68,9 @@ public class IpaStoreTests
     public async Task Remove_DeletesStoredIpa()
     {
         var store = new IpaStore(TempRoot());
-        string durable = await store.StoreAsync("UDID-1", "ro.hont.app", await WriteFileAsync([7]));
+        string durable = await store.StoreAsync("UDID-1", "com.example.app", await WriteFileAsync([7]));
 
-        store.Remove("UDID-1", "ro.hont.app");
+        store.Remove("UDID-1", "com.example.app");
 
         Assert.False(File.Exists(durable));
     }

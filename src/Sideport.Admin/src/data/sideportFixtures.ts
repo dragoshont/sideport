@@ -94,7 +94,7 @@ export const fixtures: SideportFixtureSet = {
       id: 'cert-clock',
       name: 'Cert Clock',
       purpose: 'First signing and expiry-countdown test app.',
-      expectedBundleId: 'ro.hont.certcountdown',
+      expectedBundleId: 'com.example.certcountdown',
       suggestedIpaPath: '/var/lib/altserver/ipa/CertCountdown.ipa',
       versionLabel: '0.1.0 (build 1)',
       status: 'ready',
@@ -174,7 +174,7 @@ export const fixtures: SideportFixtureSet = {
   },
   installedApps: [
     {
-      bundleId: 'ro.hont.certcountdown',
+      bundleId: 'com.example.certcountdown',
       deviceUdid: '00008140-FAKE-A41390242801C',
       name: 'Cert Countdown',
       version: '1.1.0',
@@ -183,7 +183,7 @@ export const fixtures: SideportFixtureSet = {
       source: 'live',
     },
     {
-      bundleId: 'ro.hont.diceroll',
+      bundleId: 'com.example.diceroll',
       deviceUdid: '00008140-FAKE-A41390242801C',
       name: 'Dice Roll',
       version: '1.0.3',
@@ -192,7 +192,7 @@ export const fixtures: SideportFixtureSet = {
       source: 'live',
     },
     {
-      bundleId: 'ro.hont.altserverlegacy',
+      bundleId: 'com.example.altserverlegacy',
       deviceUdid: '00008140-FAKE-A41390242801C',
       name: 'AltServer Legacy App',
       version: '0.9.0',
@@ -201,7 +201,7 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      bundleId: 'ro.hont.sigprobe',
+      bundleId: 'com.example.sigprobe',
       deviceUdid: '00008030-FAKE-BB8F23A0C02E',
       name: 'Signature Probe',
       version: '0.4.0',
@@ -212,7 +212,7 @@ export const fixtures: SideportFixtureSet = {
   ],
   apps: [
     {
-      bundleId: 'ro.hont.certcountdown',
+      bundleId: 'com.example.certcountdown',
       deviceUdid: '00008140-FAKE-A41390242801C',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
@@ -225,7 +225,7 @@ export const fixtures: SideportFixtureSet = {
       iconTone: 'blue',
     },
     {
-      bundleId: 'ro.hont.diceroll',
+      bundleId: 'com.example.diceroll',
       deviceUdid: '00008140-FAKE-A41390242801C',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
@@ -238,7 +238,7 @@ export const fixtures: SideportFixtureSet = {
       iconTone: 'amber',
     },
     {
-      bundleId: 'ro.hont.sigprobe',
+      bundleId: 'com.example.sigprobe',
       deviceUdid: '00008030-FAKE-BB8F23A0C02E',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
@@ -251,7 +251,7 @@ export const fixtures: SideportFixtureSet = {
       iconTone: 'green',
     },
     {
-      bundleId: 'ro.hont.wristlab',
+      bundleId: 'com.example.wristlab',
       deviceUdid: '00008120-FAKE-C3A013FDF8AA',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
@@ -266,9 +266,9 @@ export const fixtures: SideportFixtureSet = {
   ],
   renewals: [
     {
-      id: '00008140-FAKE-A41390242801C:ro.hont.certcountdown',
+      id: '00008140-FAKE-A41390242801C:com.example.certcountdown',
       deviceUdid: '00008140-FAKE-A41390242801C',
-      bundleId: 'ro.hont.certcountdown',
+      bundleId: 'com.example.certcountdown',
       teamId: 'M62Z4M5EUY',
       risk: 'due-now',
       status: 'running',
@@ -277,9 +277,9 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      id: '00008140-FAKE-A41390242801C:ro.hont.diceroll',
+      id: '00008140-FAKE-A41390242801C:com.example.diceroll',
       deviceUdid: '00008140-FAKE-A41390242801C',
-      bundleId: 'ro.hont.diceroll',
+      bundleId: 'com.example.diceroll',
       teamId: 'M62Z4M5EUY',
       risk: 'upcoming',
       status: 'failed',
@@ -289,9 +289,9 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      id: '00008120-FAKE-C3A013FDF8AA:ro.hont.wristlab',
+      id: '00008120-FAKE-C3A013FDF8AA:com.example.wristlab',
       deviceUdid: '00008120-FAKE-C3A013FDF8AA',
-      bundleId: 'ro.hont.wristlab',
+      bundleId: 'com.example.wristlab',
       teamId: 'M62Z4M5EUY',
       risk: 'blocked',
       status: 'blocked',
@@ -309,7 +309,7 @@ export const fixtures: SideportFixtureSet = {
       updatedAt: iso(subHours(now, 2)),
       completedAt: null,
       deviceUdid: '00008140-FAKE-A41390242801C',
-      bundleId: 'ro.hont.certcountdown',
+      bundleId: 'com.example.certcountdown',
       actor: 'operator',
       stages: [
         { id: 'preflight', label: 'Preflight', status: 'succeeded', startedAt: iso(subHours(now, 2)), completedAt: iso(subHours(now, 2)), message: 'Ready to refresh.' },
@@ -329,7 +329,7 @@ export const fixtures: SideportFixtureSet = {
       updatedAt: iso(subHours(now, 3)),
       completedAt: iso(subHours(now, 3)),
       deviceUdid: '00008140-FAKE-A41390242801C',
-      bundleId: 'ro.hont.diceroll',
+      bundleId: 'com.example.diceroll',
       actor: 'operator',
       stages: [
         { id: 'preflight', label: 'Preflight', status: 'succeeded', startedAt: iso(subHours(now, 3)), completedAt: iso(subHours(now, 3)), message: 'Ready to refresh.' },
@@ -349,7 +349,7 @@ export const fixtures: SideportFixtureSet = {
       severity: 'error',
       status: 'unresolved',
       deviceUdid: '00008140-FAKE-A41390242801C',
-      bundleId: 'ro.hont.diceroll',
+      bundleId: 'com.example.diceroll',
       firstSeenAt: iso(subHours(now, 6)),
       lastSeenAt: iso(subHours(now, 2)),
       operationId: 'op_refresh_01JZ6Z_FAKE',
@@ -383,7 +383,7 @@ export const fixtures: SideportFixtureSet = {
       severity: 'fatal',
       status: 'resolved',
       deviceUdid: '00008120-FAKE-C3A013FDF8AA',
-      bundleId: 'ro.hont.wristlab',
+      bundleId: 'com.example.wristlab',
       firstSeenAt: iso(addDays(now, -4)),
       lastSeenAt: iso(addDays(now, -3)),
       operationId: 'op_launch_01JZ22_FAKE',
@@ -451,7 +451,7 @@ export const fixtures: SideportFixtureSet = {
       level: 'Warning',
       category: 'Sideport.Orchestrator.RefreshOrchestrator',
       eventId: 0,
-      message: 'refresh of ro.hont.diceroll on 00008140-FAKE-A41390242801C failed: install failed: device became unreachable during installation.',
+      message: 'refresh of com.example.diceroll on 00008140-FAKE-A41390242801C failed: install failed: device became unreachable during installation.',
       exceptionType: null,
       exceptionMessage: null,
       source: 'demo',
@@ -462,7 +462,7 @@ export const fixtures: SideportFixtureSet = {
       level: 'Information',
       category: 'Sideport.DeveloperApi.ProcessSigner',
       eventId: 0,
-      message: 'signed ro.hont.certcountdown -> /var/lib/sideport/work/00008140/ro.hont.certcountdown.ipa',
+      message: 'signed com.example.certcountdown -> /var/lib/sideport/work/00008140/com.example.certcountdown.ipa',
       exceptionType: null,
       exceptionMessage: null,
       source: 'demo',

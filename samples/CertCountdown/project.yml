@@ -1,6 +1,6 @@
 name: CertCountdown
 options:
-  bundleIdPrefix: ro.hont.certcountdown
+  bundleIdPrefix: com.example.certcountdown
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
@@ -26,6 +26,6 @@ targets:
       - path: Sources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ro.hont.certcountdown
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.certcountdown
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
