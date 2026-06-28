@@ -147,7 +147,7 @@ builder.Services.AddSingleton(new AppCatalogOptions(
         "cert-clock",
         "Cert Clock",
         certClockSeedPath,
-        "ro.hont.certcountdown",
+        "com.example.certcountdown",
         "First signing and expiry-countdown test app.")]));
 builder.Services.AddSingleton<IAppCatalog, FileAppCatalog>();
 builder.Services.AddSingleton(appStoreConnectOptions);
@@ -346,7 +346,7 @@ object ServiceInfo() => new
     service = "sideport",
     status = "ok",
     admin = hasAdminBundle ? "served" : "not-built",
-    docs = "https://github.com/dragoshont/sideport/blob/main/docs/sideport-implementation-plan.md",
+    docs = "https://github.com/dragoshont/sideport#readme",
 };
 
 if (!hasAdminBundle)
