@@ -1,0 +1,20 @@
+# gitleaks configuration — https://github.com/gitleaks/gitleaks
+# Uses the upstream default ruleset and only allowlists known-safe noise so the
+# CI gate stays high-signal (no false positives to train people to ignore).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored deps and generated/minified bundles produce false positives"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)storybook-static/''',
+  '''(^|/)dist/''',
+  '''(^|/)assets/.*\.(js|css|map)$''',   # Vite-hashed Storybook bundles (gh-pages deploy)
+]
+# Redaction-test fixtures: ApiSmokeTests asserts these fake secrets get scrubbed
+# from API error output. They are deliberately fake and must stay in the test.
+regexes = [
+  '''token=abc123 password=hunter2''',
+]
