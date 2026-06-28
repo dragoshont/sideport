@@ -7,8 +7,8 @@
 # for signing. anisette stays a separate sidecar behind the IAnisetteProvider
 # seam (it's closed-source ADI code — a license + process boundary).
 #
-# zsign is a static amd64 ELF, so this image is linux/amd64 (the homelab node's
-# arch). Building arm64 additionally would require an arm64 zsign build.
+# zsign is a static amd64 ELF, so this image is linux/amd64. Building arm64
+# additionally would require an arm64 zsign build.
 
 ARG DOTNET_VERSION=10.0
 ARG NODE_VERSION=24-alpine

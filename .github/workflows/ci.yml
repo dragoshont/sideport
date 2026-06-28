@@ -82,7 +82,7 @@ jobs:
           context: .
           file: deploy/Dockerfile
           # zsign is a static amd64 ELF (baked from altserver-linux), so the
-          # image is amd64 — the homelab node's arch.
+          # image is amd64 (a native arm64 build would need an arm64 zsign).
           platforms: linux/amd64
           # Single-platform image: skip the provenance/SBOM attestation
           # manifests so the GHCR package lists just `linux/amd64` instead of an

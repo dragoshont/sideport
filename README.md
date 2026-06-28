@@ -279,7 +279,7 @@ units (Synology/QNAP), and typical home servers.
 | Your host | Works? | How |
 |---|---|---|
 | **Intel / AMD (x86-64)** Linux + Docker | ✅ Directly | This is the native target. Just run it. |
-| **Kubernetes** on an x86-64 node | ✅ Directly | See the homelab how-to. |
+| **Kubernetes** on an x86-64 node | ✅ Directly | See [`deploy/k8s/`](deploy/k8s/). |
 | **ARM** (Raspberry Pi, ARM NAS, Ampere, Apple-Silicon Linux VM) | ⚠️ With emulation | The image is **amd64 only** today (the bundled `zsign` is a static amd64 binary). Run it under amd64 emulation (QEMU/binfmt — one command, in the how-to). It works, just slower. A native arm64 image is a known gap (below). |
 | **Windows / macOS desktop** | ↪️ Use a Linux VM / Docker | Sideport ships as a **Linux** container; run it in Docker Desktop or a Linux VM. (anisette can't run natively on macOS/Windows either — it needs Linux.) |
 
