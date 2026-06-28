@@ -19,6 +19,7 @@ publish/
 .DS_Store
 *.swp
 .idea/
+.playwright-mcp/
 
 # Local secrets / runtime
 *.env

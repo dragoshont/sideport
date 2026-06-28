@@ -4,7 +4,7 @@
 > No Mac left switched on. No helper app on your laptop. No re-installing every 7 days.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/dragoshont/sideport/pkgs/container/sideport)
+[![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)](https://github.com/dragoshont/sideport/pkgs/container/sideport)
 [![Image](https://img.shields.io/badge/image-ghcr.io%2Fdragoshont%2Fsideport-2496ED.svg)](https://github.com/dragoshont/sideport/pkgs/container/sideport)
 [![Arch](https://img.shields.io/badge/arch-linux%2Famd64-555.svg)](#will-it-run-on-my-hardware-intel-vs-arm)
 [![Backend: .NET 10](https://img.shields.io/badge/backend-.NET%2010-512BD4.svg)](https://dotnet.microsoft.com/)
@@ -270,14 +270,14 @@ units (Synology/QNAP), and typical home servers.
 
 | Image | Tag | Architecture | Use it for |
 |---|---|---|---|
-| `ghcr.io/dragoshont/sideport` | `0.1.0` | linux/amd64 | An exact release — **the recommended pin.** |
+| `ghcr.io/dragoshont/sideport` | `0.1.9` | linux/amd64 | An exact release — **the recommended pin.** |
 | `ghcr.io/dragoshont/sideport` | `0.1` | linux/amd64 | The 0.1 line; picks up patch fixes (`0.1.1`, …). |
 | `ghcr.io/dragoshont/sideport` | `latest` | linux/amd64 | Newest stable release. Fine to start with. |
 | `ghcr.io/dragoshont/sideport` | `edge` / `sha-<short>` | linux/amd64 | Newest `main` build / one exact commit (debugging). |
 | `dadoum/anisette-v3-server` | `latest` | multi-arch | The required helper. **Pin a digest in production.** |
 
 > **Versioning.** Sideport uses semantic-version tags, starting at **`0.1.0`**.
-> Pin `0.1.0` for a build that never changes, or `0.1` to receive patch fixes.
+> Pin `0.1.9` for a build that never changes, or `0.1` to receive patch fixes.
 > `latest` follows the newest stable release; `edge` follows `main`. It is
 > **pre-1.0**, so a minor bump (`0.1` → `0.2`) can carry small breaking changes —
 > pin an exact version and skim the notes before upgrading.
@@ -578,7 +578,7 @@ yet, or needs care:
   the [how-to](#run-it-on-an-arm-host-raspberry-pi-arm-nas)). Multi-arch is the
   top future improvement.
 - **Pre-1.0.** The HTTP API and config keys may change between minor versions
-  until 1.0. Pin an exact version (`0.1.0`) and check the notes before bumping.
+  until 1.0. Pin an exact version (`0.1.9`) and check the notes before bumping.
 - **The app list is kept in memory.** If the Sideport container restarts, you
   must **register your apps again** (`POST /api/apps`). A persistent registry is
   planned. (Your Apple identity survives in the anisette volume; only the *list
@@ -604,9 +604,9 @@ yet, or needs care:
 
 Sideport is **feature-complete and validated against Apple's live services**:
 login, certificate and profile management, signing, device install, and the
-scheduled refresh loop are all implemented and covered by **~180 automated
-tests**. The first tagged image is published at
-`ghcr.io/dragoshont/sideport:0.1.0` (and `:latest`). Turning the automatic
+scheduled refresh loop are all implemented and covered by **260+ automated
+tests**. The current tagged image is
+`ghcr.io/dragoshont/sideport:0.1.9` (and `:latest`). Turning the automatic
 scheduler on for a given Apple ID is a deliberate,
 reversible step (see
 *[Don't run two signers](#dont-run-two-signers-on-one-apple-id)*).
