@@ -28,3 +28,17 @@ appsettings.*.Local.json
 *.mobileprovision
 ipa/
 *.ipa
+
+# Architrave AI-dev harness — kept local, intentionally not in the public product repo.
+# These drive local agent-assisted development; the public repo ships the product only.
+/.architrave/
+/gates/
+/harness/
+/knowledge/
+/.claude/
+/architrave.config.json
+/AGENTS.md
+/.github/hooks/
+/.github/instructions/
+/.github/prompts/
+/.github/workflows/copilot-setup-steps.yml
