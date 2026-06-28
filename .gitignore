@@ -42,3 +42,14 @@ ipa/
 /.github/instructions/
 /.github/prompts/
 /.github/workflows/copilot-setup-steps.yml
+
+# Internal planning / design-process docs — kept local, not in the public repo.
+/docs/sideport-implementation-plan.md
+/docs/sideport-dotnet-consolidation.md
+/docs/sideport-sdd-implementation-plan.md
+/docs/ui/agent-and-mcp-setup.md
+/docs/ui/sideport-auth-custody-consolidated-plan.md
+/docs/ui/sideport-secret-custody-tasks.md
+/docs/ui/sideport-end-to-end-install-refresh-plan.md
+/docs/ui/sideport-ui-experience-plan.md
+/docs/ui/sideport-onboarding-workflow-storyboard.md
