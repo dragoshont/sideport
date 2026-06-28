@@ -7,5 +7,5 @@ Key observed facts:
 - one `.NET TP Worker` thread near 99% CPU.
 - installed-apps endpoint called 30 times in 30m.
 - 1110 provisioning-profile shape warnings in 30m.
-- live device connection to `192.168.1.153:62078`.
+- live device connection to `<device-ip>:62078`.
 - scaled deployment to 0; no pods; temp fell to ~65C.

@@ -8,7 +8,7 @@ sideloaded iOS apps, exposing a stable API a UI can be built on.**
 This document is deliberately adversarial. It takes the prior "single .NET
 container" research and tries to break it, then states the calls that survive
 the challenge. Every load-bearing claim was validated against the live forks,
-the running `home.hont.ro` host, and the upstream projects — not from training
+the running homelab host, and the upstream projects — not from training
 priors.
 
 ---

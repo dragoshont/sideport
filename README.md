@@ -11,6 +11,30 @@
 
 ---
 
+## What Sideport does
+
+Sideport keeps **sideloaded iOS apps from expiring** — with **no Mac** and **no
+desktop app** left running. You point it at an `.ipa` and an iPhone you own, and
+it runs the whole Apple free-signing loop for you, on a schedule:
+
+- **Beats the 7-day expiry automatically.** It re-signs and re-installs your app
+  *before* a free Apple ID's 7-day signing window runs out — on a timer, so apps
+  never silently die on you.
+- **Runs on a box you already own.** A homelab, a NAS, any always-on Docker or
+  Kubernetes host. Nothing has to stay plugged into a laptop.
+- **Does the full Apple flow end-to-end.** Trusted-device login (anisette),
+  certificate + provisioning profile, `zsign` re-signing, then install over USB
+  or paired Wi-Fi — all by itself.
+- **Self-hosted and yours.** Your Apple ID, your device, your `.ipa` files. It
+  ships no apps and cracks nothing; the signer is built into the image.
+- **Driven by a small web API.** `POST /api/apps` to start tracking an app,
+  `GET /api/apps` for live expiry countdowns, `POST …/refresh` to re-sign now.
+  (A web portal is in progress.)
+
+In one line: **AltStore / AltServer, without the always-on desktop.**
+
+---
+
 ## Demo Portal
 
 Want to see the admin console without running Sideport? Open the Storybook demo:
@@ -149,13 +173,6 @@ For **local macOS development**, store the password in the login keychain and se
 Sideport:Apple:CredentialSource=keychain
 # security add-generic-password -s sideport-apple-pw -a you@example.com -w
 ```
-
-Open tasks for README/wiki:
-
-- Add a concrete `secret.sops.yaml` fallback example for `SIDEPORT_PERSONAL_APPLE_ID` and `SIDEPORT_APPLE_PW_*`.
-- Add the `ExternalSecret` (Azure Key Vault) example and Flux/Kustomize wiring for both the KV and SOPS paths.
-- Add a runbook for rotating the Apple password/app-specific credential (in Key Vault or SOPS) and verifying Sideport.
-- Add a safety note that Sideport must show planned Apple mutations before cert/profile/device changes.
 
 > **Apple's free-account limits** (Apple's rules, not Sideport's): up to **3
 > apps** signed at once, **10 app IDs per 7 days**, and the 7-day re-sign.
