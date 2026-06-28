@@ -46,7 +46,7 @@ export const fixtures: SideportFixtureSet = {
   devices: [
     {
       udid: '00008110-0011223344556677',
-      name: 'Dragos iPhone',
+      name: 'Owner iPhone',
       productType: 'iPhone17,2',
       osVersion: '26.5',
       connection: 'wifi',
@@ -251,7 +251,7 @@ export const fixtures: SideportFixtureSet = {
       iconTone: 'green',
     },
     {
-      bundleId: 'com.example.wristlab',
+      bundleId: 'com.example.watchapp',
       deviceUdid: '00008120-00AABBCCDDEEFF01',
       appleId: 'd***@example.test',
       teamId: 'M62Z4M5EUY',
@@ -289,9 +289,9 @@ export const fixtures: SideportFixtureSet = {
       source: 'demo',
     },
     {
-      id: '00008120-00AABBCCDDEEFF01:com.example.wristlab',
+      id: '00008120-00AABBCCDDEEFF01:com.example.watchapp',
       deviceUdid: '00008120-00AABBCCDDEEFF01',
-      bundleId: 'com.example.wristlab',
+      bundleId: 'com.example.watchapp',
       teamId: 'M62Z4M5EUY',
       risk: 'blocked',
       status: 'blocked',
@@ -383,7 +383,7 @@ export const fixtures: SideportFixtureSet = {
       severity: 'fatal',
       status: 'resolved',
       deviceUdid: '00008120-00AABBCCDDEEFF01',
-      bundleId: 'com.example.wristlab',
+      bundleId: 'com.example.watchapp',
       firstSeenAt: iso(addDays(now, -4)),
       lastSeenAt: iso(addDays(now, -3)),
       operationId: 'op_launch_01JZ22_FAKE',
@@ -469,12 +469,12 @@ export const fixtures: SideportFixtureSet = {
     },
   ],
   workspace: {
-    name: 'Hont Sideport',
+    name: 'Demo Homelab',
     authMode: 'Reverse proxy (Authentik OIDC)',
     authDelegated: true,
     source: 'demo',
     members: [
-      { id: 'u-owner', name: 'Dragoș Hont', email: 'd***@example.test', role: 'owner', status: 'active', lastActiveAt: iso(subHours(now, 1)), source: 'demo' },
+      { id: 'u-owner', name: 'Alex Doe', email: 'd***@example.test', role: 'owner', status: 'active', lastActiveAt: iso(subHours(now, 1)), source: 'demo' },
       { id: 'u-admin', name: 'Lab Admin', email: 'admin@example.test', role: 'admin', status: 'active', lastActiveAt: iso(subHours(now, 26)), source: 'demo' },
       { id: 'u-operator', name: 'On-call Operator', email: 'oncall@example.test', role: 'operator', status: 'active', lastActiveAt: iso(subHours(now, 5)), source: 'demo' },
       { id: 'u-viewer', name: 'Auditor', email: 'audit@example.test', role: 'viewer', status: 'invited', invitedAt: iso(subHours(now, 48)), source: 'demo' },
