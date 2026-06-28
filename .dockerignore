@@ -14,3 +14,16 @@ tests/
 *.user
 .DS_Store
 signer/
+
+# Internal dev harness, docs, and samples — never copied into the runtime image
+.architrave/
+gates/
+harness/
+knowledge/
+.claude/
+.playwright-mcp/
+AGENTS.md
+architrave.config.json
+.gitleaks.toml
+docs/
+samples/
