@@ -38,6 +38,10 @@ public sealed class OrchestratorOptions
     /// <summary>How often the scheduler evaluates the catalog for due refreshes.</summary>
     public TimeSpan ScheduleInterval { get; set; } = TimeSpan.FromHours(1);
 
+    /// <summary>Minimum wait before retrying an app whose last refresh failed,
+    /// so an unreachable device cannot hot-loop the signer.</summary>
+    public TimeSpan RetryBackoff { get; set; } = TimeSpan.FromMinutes(15);
+
     /// <summary>
     /// Optional fixed re-sign cadence. When set, an app is re-signed once its
     /// last SUCCESSFUL sign is older than this — even if the signature isn't near

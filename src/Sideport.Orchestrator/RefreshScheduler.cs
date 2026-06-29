@@ -63,7 +63,7 @@ public sealed class RefreshScheduler : BackgroundService
 
         var due = apps
             .Select(app => (app, state: _orchestrator.GetState(app.DeviceUdid, app.BundleId)))
-            .Where(x => x.state is null || x.state.IsDue(now, _options.RefreshLeadTime, _options.ResignInterval))
+            .Where(x => x.state is null || x.state.IsDue(now, _options.RefreshLeadTime, _options.ResignInterval, _options.RetryBackoff))
             .OrderBy(x => x.state?.ExpiresAt ?? DateTimeOffset.MinValue)
             .ToList();
 

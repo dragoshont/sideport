@@ -23,8 +23,13 @@ public sealed record RefreshState(
     /// <paramref name="resignInterval"/> is set — its last successful sign is
     /// older than that cadence (keeps a fresh margin, e.g. daily re-signing).
     /// </summary>
-    public bool IsDue(DateTimeOffset now, TimeSpan leadTime, TimeSpan? resignInterval = null)
+    public bool IsDue(DateTimeOffset now, TimeSpan leadTime, TimeSpan? resignInterval = null, TimeSpan? retryBackoff = null)
     {
+        // After a failed attempt, hold off until the backoff elapses — otherwise an
+        // unreachable device leaves ExpiresAt null and is "due" every tick, hot-looping
+        // the signer. Backoff caps the retry rate; it still retries once the window passes.
+        if (!LastSucceeded && LastAttemptUtc is { } last && retryBackoff is { } b && now - last < b)
+            return false;
         if (ExpiresAt is not { } e || e - now <= leadTime)
             return true;
         if (resignInterval is { } interval && (LastSucceededUtc is not { } signed || now - signed >= interval))

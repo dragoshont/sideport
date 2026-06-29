@@ -42,4 +42,14 @@ public class RefreshStateTests
     public void IsDue_CadenceSet_NoRecordedSuccess_IsDue() =>
         Assert.True(new RefreshState("U", "b", Now.AddDays(6), Now.AddHours(-1), true, null, null)
             .IsDue(Now, Lead, Daily));
+
+    [Fact]
+    public void IsDue_FailedRecently_BackoffSuppresses() =>
+        Assert.False(new RefreshState("U", "b", null, Now.AddMinutes(-5), false, "unreachable", null)
+            .IsDue(Now, Lead, null, TimeSpan.FromMinutes(15)));
+
+    [Fact]
+    public void IsDue_FailedPastBackoff_RetriesAgain() =>
+        Assert.True(new RefreshState("U", "b", null, Now.AddMinutes(-20), false, "unreachable", null)
+            .IsDue(Now, Lead, null, TimeSpan.FromMinutes(15)));
 }
