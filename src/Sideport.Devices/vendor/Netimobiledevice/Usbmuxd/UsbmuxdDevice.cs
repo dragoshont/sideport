@@ -58,7 +58,13 @@ namespace Netimobiledevice.Usbmuxd
                         netAddressNode.Value[7]
                     ];
                 }
-                else if (addressValue == 0x1e || addressValue == (int) AddressFamily.InterNetworkV6) { // IPV6
+                else if (addressValue == 0x1e || addressValue == 0x0a || addressValue == (int) AddressFamily.InterNetworkV6) {
+                    // IPV6. Sideport patch (see vendor/Netimobiledevice/VENDOR.md): also
+                    // accept Linux AF_INET6 = 10 (0x0a). BSD/macOS AF_INET6 = 30 (0x1e),
+                    // Windows/.NET InterNetworkV6 = 23; the 16 address bytes sit at [8..23]
+                    // on all three, only the family value differs. Without 0x0a a Wi-Fi
+                    // device advertised with an IPv6 (e.g. link-local fe80::) address would
+                    // throw on Linux — the same OS family-value mismatch as the IPv4 fix.
                     IPAddress ipAddress = new IPAddress(netAddressNode.Value.AsSpan(8, 16));
                     NetworkAddress = ipAddress.GetAddressBytes();
                 }

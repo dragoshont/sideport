@@ -167,7 +167,16 @@ namespace Netimobiledevice.Usbmuxd
                 DictionaryNode dict = entry.AsDictionaryNode();
                 string messageType = dict["MessageType"].AsStringNode().Value;
                 if (messageType == "Attached") {
-                    AddDevice(new UsbmuxdDevice(dict["DeviceID"].AsIntegerNode(), dict["Properties"].AsDictionaryNode()));
+                    // Sideport patch (see vendor/Netimobiledevice/VENDOR.md): guard the
+                    // per-device parse so one unparseable record (an unexpected sockaddr
+                    // family or a short NetworkAddress) is skipped, not fatal to the WHOLE
+                    // device list — otherwise a single bad entry aborts every device op.
+                    try {
+                        AddDevice(new UsbmuxdDevice(dict["DeviceID"].AsIntegerNode(), dict["Properties"].AsDictionaryNode()));
+                    }
+                    catch (Exception ex) {
+                        Logger.LogWarning(ex, "Skipping unparseable device entry in ListDevices response");
+                    }
                 }
                 else if (messageType == "Detached") {
                     RemoveDevice(dict["DeviceID"].AsIntegerNode().Value);

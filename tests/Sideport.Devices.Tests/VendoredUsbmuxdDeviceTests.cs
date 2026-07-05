@@ -34,6 +34,28 @@ public class VendoredUsbmuxdDeviceTests
         return sa;
     }
 
+    private static byte[] Ipv6Sockaddr(byte[] addr16)
+    {
+        byte[] sa = new byte[128]; // sockaddr_storage
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            sa[0] = 0x1c; // sin6_len (BSD)
+            sa[1] = 0x1e; // sin6_family = AF_INET6 (30 on macOS/BSD), read at [1]
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            sa[0] = 23;   // AF_INET6 (Windows), low byte of the 16-bit family at [0]
+            sa[1] = 0x00;
+        }
+        else
+        {
+            sa[0] = 0x0a; // AF_INET6 = 10 (Linux), low byte of the 16-bit family at [0]
+            sa[1] = 0x00;
+        }
+        addr16.CopyTo(sa, 8); // sin6_addr (offset 8 on all three)
+        return sa;
+    }
+
     private static UsbmuxdDevice NetworkDevice(byte[] sockaddr) =>
         new(new IntegerNode(1), new DictionaryNode
         {
@@ -53,6 +75,19 @@ public class VendoredUsbmuxdDeviceTests
         // On Linux this is the patched byte-[0] path; pre-fix it threw
         // NotImplementedException("Network address is not supported").
         Assert.Equal(new byte[] { 10, 0, 0, 42 }, device.NetworkAddress);
+    }
+
+    [Fact]
+    public void Ipv6NetworkDevice_ParsesToTheAddress()
+    {
+        // 2001:db8::1 (RFC 3849 documentation prefix) as an IPv6 Network device.
+        // Pre-fix, Linux AF_INET6 (=10) was unmatched and this threw; the vendored
+        // patch adds 0x0a so a Wi-Fi device advertised over IPv6 parses on Linux.
+        byte[] addr = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01 };
+        UsbmuxdDevice device = NetworkDevice(Ipv6Sockaddr(addr));
+
+        Assert.Equal(UsbmuxdConnectionType.Network, device.ConnectionType);
+        Assert.Equal(addr, device.NetworkAddress);
     }
 
     [Fact]
