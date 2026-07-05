@@ -6,11 +6,23 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Pinned exact (not floated): artehe/Netimobiledevice (MIT). The NuGet
-         listing tops out at 2.5.2; newer (v2.6.0) is GitHub-only. Exact-pin is
-         reproducible; bump deliberately, not automatically. -->
-    <PackageReference Include="Netimobiledevice" Version="[2.5.2]" />
+    <!-- Vendored at pinned SHA c442a418 (v2.5.2) under vendor/Netimobiledevice/
+         (see vendor/Netimobiledevice/VENDOR.md), patched for the Linux usbmux
+         sockaddr family-byte offset (issue #4). The design (sideport-implementation-
+         plan.md) calls for a vendored pin, not the floating NuGet feed (flagged
+         unmaintained; NuGet tops out at 2.5.2). Bump deliberately, not automatically. -->
+    <ProjectReference Include="vendor\Netimobiledevice\Netimobiledevice.csproj" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <!-- vendor/ holds the vendored Netimobiledevice library, built as its OWN project
+       (the ProjectReference above). Exclude it from THIS project's default source
+       glob so its sources aren't compiled twice (CS0579/CS0436). -->
+  <ItemGroup>
+    <Compile Remove="vendor\**\*.cs" />
+    <None Remove="vendor\**\*" />
+    <EmbeddedResource Remove="vendor\**\*" />
+    <Content Remove="vendor\**\*" />
   </ItemGroup>
 
   <PropertyGroup>

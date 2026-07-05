@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+		<GeneratePackageOnBuild>False</GeneratePackageOnBuild>
+		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+		<EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<IsTrimmable>true</IsTrimmable>
+		<Nullable>enable</Nullable>
+		<TargetFrameworks>net8.0</TargetFrameworks>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<AssemblyVersion>$(Version)</AssemblyVersion>
+		<Description>Netimobiledevice is a pure C# implementation for working with iOS devices (iPhone, iPad, iPod).</Description>
+		<FileVersion>$(Version)</FileVersion>
+		<PackageLicenseFile>LICENSE</PackageLicenseFile>
+		<PackageProjectUrl>https://github.com/artehe/Netimobiledevice</PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageTags>imobiledevice;ios;ipad;iphone;libimobiledevice;netcore;usbmuxd</PackageTags>
+		<RepositoryUrl>https://github.com/artehe/Netimobiledevice</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<Title>$(AssemblyName)</Title>
+		<Version>2.5.2</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="..\LICENSE" Pack="true" PackagePath="" />
+		<None Include="..\README.md" Pack="true" PackagePath="" />
+	</ItemGroup>
+	
+	<ItemGroup>
+		<InternalsVisibleTo Include="NetimobiledeviceTest" />
+	</ItemGroup>
+	
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.4" />
+		<PackageReference Include="Unofficial.WinTun" Version="0.14.1.3" />
+		<PackageReference Include="Zeroconf" Version="3.7.16" />
+	</ItemGroup>
+</Project>
