@@ -37,6 +37,10 @@ is consumed as a `ProjectReference` from `Sideport.Devices`.
    unparseable record (unexpected sockaddr family, short `NetworkAddress`) aborted the
    **entire** `ListDevices` response — taking down every device operation, not just the
    offending device. Wrapped the per-device construct in try/catch (log + skip).
+   The parallel `UsbmuxdConnectionMonitor.Subscribe` path parses a sockaddr the same
+   way and is **left unpatched on purpose**: Sideport enumerates only via
+   `Usbmux.GetDeviceList` → `UpdateDeviceList` and never subscribes, so that path is
+   unreachable here.
 
 4. **`Netimobiledevice.csproj`** — `GeneratePackageOnBuild` and
    `EnforceCodeStyleInBuild` set to `false` (we consume it as a `ProjectReference`,
