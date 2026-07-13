@@ -1,11 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
-import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type HealthState, type InstalledAppSummary, type OperationLogEntry, type OperationStageSummary, type OperationSummary, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemStatus, type MemberStatus, type WorkspaceRole, type WorkspaceSummary } from '../data/sideportTypes'
+import { runtimeEmptyData, type ActivityEvent, type AppleAccessCapabilitySummary, type AppleAccessState, type AppleAccessSummary, type CatalogAppStatus, type CatalogAppSummary, type ConnectionState, type DiagnosticIssue, type EvidenceOrigin, type HealthState, type InstalledAppSummary, type MemberStatus, type OnboardingCompletionReceipt as WorkflowCompletionReceipt, type OnboardingWorkflowAction, type OnboardingWorkflowEvidence, type OnboardingWorkflowStep, type OnboardingWorkflowStepId, type OnboardingWorkflowStepState, type OnboardingWorkflowV2, type OperationLogEntry, type OperationStageSummary, type OperationSummary, type PersonalAppleState, type PersonalAppleSummary, type PersonalAppleTeamSummary, type RegisteredAppSummary, type RenewalItem, type RenewalRisk, type RenewalStatus, type SideportReadModel, type SourceKind, type SystemOperationalCheck, type SystemStatus, type WorkspaceRole, type WorkspaceSummary } from '../data/sideportTypes'
 import { compactUdid } from '../lib/format'
 
 const DEFAULT_API_BASE_URL = '/sideport-api'
 const DEFAULT_REFRESH_INTERVAL_MS = 15_000
 const REQUEST_TIMEOUT_MS = 4_500
 const SESSION_TOKEN_KEY = 'sideport.apiToken'
+const CSRF_HEADER = 'X-Sideport-CSRF'
+const CSRF_ISSUER_ROUTES = new Set([
+  '/api/me',
+  '/api/apple-access/personal/status',
+])
+const csrfByApiBase = new Map<string, string>()
 
 export interface AdminDataStatus {
   mode: 'live' | 'partial' | 'unavailable' | 'demo'
@@ -34,6 +40,11 @@ export interface OnboardingStatus {
   firstRunComplete: boolean
   schedulerEnabled: boolean
   steps: OnboardingStep[]
+  setupState?: 'in-progress' | 'complete'
+  selectedCatalogAppId?: string | null
+  activeInstallOperationId?: string | null
+  completionReceipt?: WorkflowCompletionReceipt | null
+  workflow?: OnboardingWorkflowV2 | null
 }
 
 export interface ApiConfig {
@@ -50,6 +61,25 @@ export interface AppRegistrationPayload {
   inputIpaPath: string
 }
 
+export interface PendingAppRegistrationPayload {
+  catalogAppId: string
+  deviceUdid: string
+  accountProfileId: string
+  lifecycle: 'pending-install'
+}
+
+export interface AppRegistrationDto {
+  bundleId?: string
+  appleIdHint?: string | null
+  teamId?: string
+  deviceUdid?: string
+  lifecycle?: string
+  catalogAppId?: string | null
+  createdAt?: string | null
+  activatedAt?: string | null
+  lastVerifiedOperationId?: string | null
+}
+
 export interface CatalogInspectPayload {
   ipaPath: string
   id?: string
@@ -57,13 +87,221 @@ export interface CatalogInspectPayload {
   purpose?: string
 }
 
+export interface DeviceEnrollmentPayload {
+  idempotencyKey: string
+  deviceUdid?: string
+}
+
+export interface InstallOperationPayload {
+  deviceUdid: string
+  bundleId: string
+  catalogAppId: string
+  accountProfileId: string
+  preflightId: string
+  planVersion: string
+  finishOnboarding: boolean
+  confirmedPlannedMutations: boolean
+  idempotencyKey: string
+}
+
+export interface InstallPreflightPayload {
+  deviceUdid: string
+  bundleId: string
+  catalogAppId: string
+  accountProfileId: string
+  finishOnboarding: boolean
+}
+
+export interface OnboardingCompletionPayload {
+  verifiedOperationId: string
+  idempotencyKey: string
+}
+
+export interface CatalogArtifactSourceDto {
+  kind: string
+  label: string
+  repository?: string | null
+  releaseTag?: string | null
+  assetName?: string | null
+}
+
+export interface CatalogAppV2Dto {
+  id: string
+  catalogVersion: number
+  name: string
+  purpose: string
+  bundleId: string
+  version: string | null
+  shortVersion: string | null
+  source: string
+  status: string
+  sizeBytes: number | null
+  sha256: string | null
+  hasEmbeddedProfile: boolean
+  signatureExpiresAt: string | null
+  artifactSources: CatalogArtifactSourceDto[]
+  lastInspectedAt: string | null
+  notes: string[]
+  icon?: string | null
+}
+
+export interface CatalogImportRootDto {
+  id: string
+  label: string
+  available: boolean
+  source: string
+}
+
+export interface CatalogRootImportPayload {
+  rootId: string
+  relativePath: string
+  id?: string
+  name?: string
+  purpose?: string
+  expectedCatalogVersion?: number
+  idempotencyKey?: string
+}
+
+export interface CatalogUploadV2Payload {
+  id?: string
+  name?: string
+  purpose?: string
+  idempotencyKey?: string
+  expectedCatalogVersion?: number
+}
+
+export interface GitHubPermissionSummaryDto {
+  metadata: string
+  contents: string
+}
+
+export interface GitHubProviderCapabilityDto {
+  kind: string
+  supported: boolean
+  allowedNow: boolean
+  blockedReason: string | null
+  permissions: GitHubPermissionSummaryDto
+}
+
+export interface GitHubSourceDto {
+  id: string
+  repository: string
+  visibility: string
+  provider: string
+  allowPrereleases: boolean
+  permissions: GitHubPermissionSummaryDto
+  status: string
+}
+
+export interface GitHubSourcesDto {
+  capability: GitHubProviderCapabilityDto
+  sources: GitHubSourceDto[]
+}
+
+export interface GitHubConnectionPayload {
+  repository: string
+  visibility: string
+  idempotencyKey: string
+}
+
+export interface GitHubConnectionDto {
+  id: string
+  repository: string
+  visibility: string
+  status: string
+  permissions: GitHubPermissionSummaryDto
+  expiresAt: string | null
+  sourceId: string | null
+  authorizationUrl: string | null
+  error: string | null
+}
+
+export interface GitHubReleaseAssetDto {
+  assetId: number
+  name: string
+  sizeBytes: number
+  updatedAt: string | null
+  digest: string | null
+  importable: boolean
+}
+
+export interface GitHubReleaseDto {
+  releaseId: number
+  tag: string
+  name: string
+  publishedAt: string | null
+  updatedAt: string | null
+  prerelease: boolean
+  assets: GitHubReleaseAssetDto[]
+}
+
+export interface GitHubReleasePageDto {
+  sourceId: string
+  repository: string
+  page: number
+  releases: GitHubReleaseDto[]
+}
+
+export interface GitHubCatalogImportPayload {
+  sourceId: string
+  releaseId: number
+  assetId: number
+  idempotencyKey: string
+  expectedDigest?: string
+  catalogId?: string
+  expectedCatalogVersion?: number
+}
+
 export interface PersonalAppleSignInPayload {
   appleId: string
+}
+
+export interface PersonalAppleConnectPayload {
+  appleId: string
+  password: string
 }
 
 export interface PersonalAppleTwoFactorPayload {
   challengeId: string
   code: string
+}
+
+export interface PersonalAppleTeamSelectionPayload {
+  accountProfileId: string
+  teamId: string
+}
+
+export interface PersonalAppleSigningPreflightDto {
+  preflightId: string
+  expiresAt: string
+  accountProfileId: string
+  teamId: string
+  localIdentity: { state: string; expiresAt?: string | null; serialSuffix?: string | null }
+  appleCertificates: Array<{ id: string; serialSuffix?: string | null; expiresAt?: string | null }>
+  impact: 'reuse' | 'mint' | 'replace-existing' | 'unknown' | string
+  requiresAcknowledgement: boolean
+  inventoryVersion: string
+  registrationCount: number
+  deviceCount: number
+  profileCount: number
+}
+
+export interface PersonalAppleCutoverPayload {
+  preflightId: string
+  inventoryVersion: string
+  acknowledgedCertificateIds: string[]
+  acknowledgedImpactCodes: string[]
+  idempotencyKey: string
+}
+
+export interface AppleAccountReplacementCandidateDto {
+  candidateId: string
+  state: 'two-factor-required' | 'validated' | string
+  appleIdHint: string
+  accountProfileId: string
+  teams: Array<{ teamId: string; name: string; type: string }>
+  expiresAt: string
+  challengeKind?: string | null
 }
 
 export interface RefreshResultDto {
@@ -81,12 +319,46 @@ export interface RefreshOperationDto {
 }
 
 export interface OperationPreflightDto {
+  preflightId?: string
+  expiresAt?: string
+  planVersion?: string
   ready: boolean
+  target?: { deviceUdid?: string; bundleId?: string }
   blockers: Array<{ code: string; message: string; detail?: string | null }>
   warnings: Array<{ code: string; message: string; detail?: string | null }>
   plannedMutations: string[]
   scarceLimits: Array<{ code: string; label: string; used: number; limit: number }>
   requiresConfirmation: boolean
+  source?: SourceKind
+  checks?: Array<{
+    id?: string
+    group?: string
+    label?: string
+    status?: string
+    message?: string
+    detail?: string | null
+  }>
+  groupedChecks?: Record<string, Array<{
+    id?: string
+    label?: string
+    status?: string
+    message?: string
+    detail?: string | null
+  }>>
+}
+
+export class SideportApiError extends Error {
+  readonly status: number
+  readonly code?: string
+  readonly data?: unknown
+
+  constructor(message: string, status: number, code?: string, data?: unknown) {
+    super(message)
+    this.name = 'SideportApiError'
+    this.status = status
+    this.code = code
+    this.data = data
+  }
 }
 
 interface ApiResult<T> {
@@ -105,11 +377,28 @@ interface ReadyResponse {
   }
 }
 
+interface SystemStatusDto {
+  operational?: boolean
+  checkedAt?: string
+  checks?: SystemOperationalCheckDto[]
+}
+
+interface SystemOperationalCheckDto {
+  id?: string
+  status?: string
+  source?: string
+  checkedAt?: string
+  scope?: string
+  affectedResources?: string[]
+  reason?: string
+  nextAction?: string | null
+}
+
 interface HealthResponse {
   ok: boolean
 }
 
-interface DeviceDto {
+export interface ReachableDeviceDto {
   udid?: string
   name?: string
   productType?: string
@@ -127,7 +416,15 @@ interface KnownDeviceDto {
   lastSeenAt?: string | null
   lastSeenSource?: string
   currentPollAt?: string | null
+  inventoryState?: string
+  acceptedAt?: string | null
+  acceptedBy?: string | null
+  enrollmentOperationId?: string | null
   trustState?: string
+  trustReason?: string | null
+  lockdownCheckedAt?: string | null
+  usableForInstall?: boolean
+  supportedForFirstInstall?: boolean
   health?: { state?: string; reason?: string; source?: string; checkedAt?: string; nextAction?: string | null }
   appSlots?: { used?: number; limit?: number; source?: string }
   owner?: string | null
@@ -144,6 +441,8 @@ interface RegisteredAppDto {
   timeUntilExpiry?: string | null
   lastSucceeded?: boolean | null
   lastError?: string | null
+  lifecycle?: string | null
+  lastVerifiedOperationId?: string | null
 }
 
 interface CatalogAppDto {
@@ -196,10 +495,22 @@ interface PersonalAppleStatusDto {
   connector?: string
   state?: string
   secretCustody?: string
+  credentialSource?: string
+  accountProfileId?: string | null
+  credentialEntry?: {
+    supported?: boolean
+    allowedNow?: boolean
+    blockedReason?: { code?: string; message?: string } | null
+  } | null
   appleIdHint?: string | null
   message?: string
   pendingChallengeId?: string | null
   pendingChallengeKind?: string | null
+  pendingChallengeExpiresAt?: string | null
+  selectedTeamId?: string | null
+  teamValidatedAt?: string | null
+  lastAuthenticatedAt?: string | null
+  authValidatedAt?: string | null
   teams?: PersonalAppleTeamDto[]
 }
 
@@ -219,6 +530,62 @@ interface OnboardingStatusDto {
   firstRunComplete?: boolean
   schedulerEnabled?: boolean
   steps?: OnboardingStepDto[]
+  setupState?: string
+  selectedCatalogAppId?: string | null
+  activeInstallOperationId?: string | null
+  completionReceipt?: {
+    schemaVersion?: number
+    completedAt?: string
+    actor?: { kind?: string; displayName?: string }
+    accountProfileId?: string
+    teamId?: string
+    verifiedOperationId?: string
+    deviceUdid?: string
+    registrationKey?: {
+      deviceUdid?: string
+      bundleId?: string
+    } | null
+    schedulerSettingsVersion?: string
+    operationalCheckedAt?: string
+  } | null
+  workflow?: OnboardingWorkflowDto | null
+}
+
+interface OnboardingWorkflowDto {
+  schemaVersion?: number
+  setupState?: string
+  readyNow?: boolean
+  completedAt?: string | null
+  verifiedOperationId?: string | null
+  nextAction?: (OnboardingWorkflowActionDto & { stepId?: string }) | null
+  steps?: OnboardingWorkflowStepDto[]
+}
+
+interface OnboardingWorkflowActionDto {
+  action?: string
+  label?: string
+}
+
+interface OnboardingWorkflowEvidenceDto {
+  id?: string
+  label?: string
+  detail?: string
+  source?: string
+  evidenceOrigin?: string
+  checkedAt?: string
+}
+
+interface OnboardingWorkflowStepDto {
+  id?: string
+  state?: string
+  required?: boolean
+  source?: string
+  evidenceOrigin?: string
+  checkedAt?: string
+  activeOperationId?: string | null
+  reason?: string
+  nextAction?: OnboardingWorkflowActionDto | null
+  evidence?: OnboardingWorkflowEvidenceDto[]
 }
 
 interface OperationLogDto {
@@ -232,21 +599,99 @@ interface OperationLogDto {
   exceptionMessage?: string | null
 }
 
-interface OperationRecordDto {
+export interface OperationRecordDto {
   operationId?: string
   type?: string
   status?: string
   createdAt?: string
+  startedAt?: string | null
   updatedAt?: string
   completedAt?: string | null
   actor?: { kind?: string; displayName?: string }
-  target?: { deviceUdid?: string; bundleId?: string }
+  idempotencyKey?: string | null
+  attempt?: number
+  target?: {
+    deviceUdid?: string | null
+    bundleId?: string | null
+    appleId?: string | null
+    teamId?: string | null
+    kind?: string | null
+    catalogAppId?: string | null
+    accountProfileId?: string | null
+    catalogVersion?: number | null
+    version?: string | null
+    catalogSha256?: string | null
+  }
   stages?: OperationStageDto[]
+  result?: {
+    success?: boolean
+    bundleId?: string | null
+    expiresAt?: string | null
+    error?: string | null
+    nextEvaluationAt?: string | null
+    schedulerSettingsVersion?: string | null
+    version?: string | null
+    safeToRerun?: boolean | null
+    reconciledOperationId?: string | null
+    deviceEnrollment?: {
+      selectedDeviceUdid?: string | null
+      inventoryState?: string
+      acceptedAt?: string | null
+      reason?: string | null
+    } | null
+  } | null
   error?: { message?: string; code?: string; detail?: string | null } | null
   cancelable?: boolean
   retryable?: boolean
   rerunnable?: boolean
+  correlationId?: string
   parentOperationId?: string | null
+  source?: string
+  expiresAt?: string | null
+  candidateDevices?: Array<{
+    udidSuffix?: string
+    name?: string
+    productType?: string | null
+    osVersion?: string | null
+    connection?: string
+  }> | null
+  devicePairingRequestedAt?: string | null
+  installIntent?: {
+    finishOnboarding?: boolean
+  } | null
+}
+
+export interface SchedulerStatusDto {
+  enabled: boolean
+  checkedAt: string
+  policy: {
+    mode: string
+    evaluationInterval: string
+    refreshLeadTime: string
+    resignInterval?: string | null
+    catchUp: string
+    missedIntervals: string
+  }
+  nextEvaluationAt?: string | null
+  lastEvaluation?: {
+    evaluationId: string
+    startedAt: string
+    completedAt: string
+    outcome: string
+    dueCount: number
+    queuedCount: number
+    blockedCount: number
+    skippedCount: number
+  } | null
+  dueCount: number
+  queuedCount: number
+  concurrency: {
+    maxRunning: number
+    lockState: string
+    operationId?: string | null
+  }
+  historyRetention: { maxEvaluations: number }
+  source?: string
 }
 
 interface DiagnosticIssueDto {
@@ -265,7 +710,7 @@ interface DiagnosticIssueDto {
   source?: string
 }
 
-interface OperationStageDto {
+export interface OperationStageDto {
   id?: string
   label?: string
   status?: string
@@ -325,12 +770,12 @@ interface WorkspaceDto {
   currentMember?: WorkspaceMemberDto
   members?: WorkspaceMemberDto[]
   roles?: WorkspaceRoleDto[]
-  capabilities?: Record<string, boolean>
+  capabilities?: Record<string, boolean | { allowed?: boolean }>
 }
 
 function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
-  const validRoles: WorkspaceRole[] = ['owner', 'admin', 'operator', 'viewer']
-  const validStatuses: MemberStatus[] = ['active', 'invited', 'suspended']
+  const validRoles: WorkspaceRole[] = ['owner', 'family']
+  const validStatuses: MemberStatus[] = ['active', 'suspended', 'offboarded']
   return {
     name: dto.name?.trim() || 'Sideport workspace',
     authMode: dto.authMode?.trim() || 'Reverse proxy',
@@ -339,7 +784,7 @@ function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
     supportsUserAdministration: dto.supportsUserAdministration ?? false,
     currentMember: dto.currentMember ? toWorkspaceMember(dto.currentMember, 'current-member') : undefined,
     roles: (dto.roles ?? []).map((role) => ({ id: role.id ?? 'viewer', label: role.label ?? role.id ?? 'Viewer', capabilities: role.capabilities ?? [] })),
-    capabilities: dto.capabilities ?? {},
+    capabilities: Object.fromEntries(Object.entries(dto.capabilities ?? {}).map(([key, value]) => [key, typeof value === 'boolean' ? value : value.allowed === true])),
     source: 'live',
     members: (dto.members ?? []).map((member, index) => toWorkspaceMember(member, `member-${index}`)),
   }
@@ -349,7 +794,7 @@ function toWorkspace(dto: WorkspaceDto): WorkspaceSummary {
       id: member.id ?? fallbackId,
       name: member.name?.trim() || member.email?.trim() || 'Unknown member',
       email: member.email?.trim() || '',
-      role: validRoles.includes((member.role ?? '') as WorkspaceRole) ? (member.role as WorkspaceRole) : 'viewer',
+      role: validRoles.includes((member.role ?? '') as WorkspaceRole) ? (member.role as WorkspaceRole) : 'family',
       status: validStatuses.includes((member.status ?? '') as MemberStatus) ? (member.status as MemberStatus) : 'active',
       lastActiveAt: member.lastActiveAt ?? undefined,
       invitedAt: member.invitedAt ?? undefined,
@@ -378,15 +823,17 @@ interface ApiSnapshot {
   config: ApiConfig
   health: ApiResult<HealthResponse>
   ready: ApiResult<ReadyResponse>
-  devices: ApiResult<DeviceDto[]>
+  systemStatus: ApiResult<SystemStatusDto>
+  devices: ApiResult<ReachableDeviceDto[]>
   knownDevices: ApiResult<KnownDeviceDto[]>
-  catalog: ApiResult<CatalogAppDto[]>
+  catalog: ApiResult<CatalogAppV2Dto[]>
   appleAccess: ApiResult<AppleAccessStatusDto>
   personalApple: ApiResult<PersonalAppleStatusDto>
   installedApps: ApiResult<InstalledAppDto[]>
   apps: ApiResult<RegisteredAppDto[]>
   anisette: ApiResult<AnisetteInfoDto>
   onboarding: ApiResult<OnboardingStatusDto>
+  scheduler: ApiResult<SchedulerStatusDto>
   logs: ApiResult<OperationLogDto[]>
   operations: ApiResult<OperationRecordDto[]>
   renewals: ApiResult<RenewalItemDto[]>
@@ -399,7 +846,9 @@ export function getSideportApiConfig(): ApiConfig {
   return {
     baseUrl: env.VITE_SIDEPORT_API_URL?.trim() || DEFAULT_API_BASE_URL,
     token: readSessionApiToken() || env.VITE_SIDEPORT_API_TOKEN?.trim() || undefined,
-    canMutate: env.VITE_SIDEPORT_ENABLE_MUTATIONS === 'true',
+    // Authentication and authorization stay server-authoritative. This flag is
+    // an explicit emergency/build-time kill switch, not a second auth system.
+    canMutate: env.VITE_SIDEPORT_ENABLE_MUTATIONS?.trim().toLowerCase() !== 'false',
   }
 }
 
@@ -437,19 +886,28 @@ export function useSideportAdminData(apiTokenRevision = 0) {
   })
 }
 
+/** Refresh the OIDC-only request token without exposing it to React state or callers. */
+export async function refreshPersonalAppleRequestSecurity(config = getSideportApiConfig()): Promise<void> {
+  const result = await requestJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/status', true)
+  if (!result.ok) throw new Error(result.error ?? 'Sideport could not refresh Apple request security.')
+}
+
 async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
   const fetchedAt = new Date().toISOString()
-  const [health, ready, devices, knownDevices, catalog, appleAccess, personalApple, apps, anisette, onboarding, logs, operations, renewals, diagnosticIssues, workspace] = await Promise.all([
+  const [, health, ready, systemStatus, devices, knownDevices, catalog, appleAccess, personalApple, apps, anisette, onboarding, scheduler, logs, operations, renewals, diagnosticIssues, workspace] = await Promise.all([
+    requestJson<unknown>(config, '/api/me', true),
     requestJson<HealthResponse>(config, '/healthz', false),
     requestJson<ReadyResponse>(config, '/readyz', false),
-    requestJson<DeviceDto[]>(config, '/api/devices', true),
+    requestJson<SystemStatusDto>(config, '/api/system/status', true),
+    requestJson<ReachableDeviceDto[]>(config, '/api/devices', true),
     requestJson<KnownDeviceDto[]>(config, '/api/devices/known', true),
-    requestJson<CatalogAppDto[]>(config, '/api/catalog/apps', true),
+    requestJson<CatalogAppV2Dto[]>(config, '/api/v2/catalog/apps', true),
     requestJson<AppleAccessStatusDto>(config, '/api/apple-access/status', true),
     requestJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/status', true),
     requestJson<RegisteredAppDto[]>(config, '/api/apps', true),
     requestJson<AnisetteInfoDto>(config, '/api/anisette/info', true),
     requestJson<OnboardingStatusDto>(config, '/api/onboarding/status', true),
+    requestJson<SchedulerStatusDto>(config, '/api/scheduler/status', true),
     requestJson<OperationLogDto[]>(config, '/api/logs?limit=80', true),
     requestJson<OperationRecordDto[]>(config, '/api/operations?limit=25', true),
     requestJson<RenewalItemDto[]>(config, '/api/renewals', true),
@@ -458,10 +916,10 @@ async function fetchSnapshot(config: ApiConfig): Promise<ApiSnapshot> {
   ])
   const installedApps = await fetchInstalledApps(config, devices)
 
-  return { fetchedAt, config, health, ready, devices, knownDevices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, logs, operations, renewals, diagnosticIssues, workspace }
+  return { fetchedAt, config, health, ready, systemStatus, devices, knownDevices, catalog, appleAccess, personalApple, installedApps, apps, anisette, onboarding, scheduler, logs, operations, renewals, diagnosticIssues, workspace }
 }
 
-async function fetchInstalledApps(config: ApiConfig, devices: ApiResult<DeviceDto[]>): Promise<ApiResult<InstalledAppDto[]>> {
+async function fetchInstalledApps(config: ApiConfig, devices: ApiResult<ReachableDeviceDto[]>): Promise<ApiResult<InstalledAppDto[]>> {
   if (!devices.ok || !devices.data?.length) return { ok: true, source: 'live', data: [] }
   const reachableDevices = devices.data.filter((device) => device.udid)
   const results = await Promise.all(reachableDevices.map(async (device) => {
@@ -496,6 +954,7 @@ async function requestJson<T>(config: ApiConfig, path: string, protectedApi: boo
       credentials: 'same-origin',
       signal: controller.signal,
     })
+    captureCsrf(config, path, response)
     const data = await readJsonBody<T>(response)
 
     if (!response.ok) {
@@ -516,6 +975,19 @@ async function requestJson<T>(config: ApiConfig, path: string, protectedApi: boo
   }
 }
 
+function captureCsrf(config: ApiConfig, path: string, response: Response): void {
+  if (config.token || !CSRF_ISSUER_ROUTES.has(path) || !isSameOriginApiRequest(config, path)) return
+  const header = response.headers.get(CSRF_HEADER)
+  if (header === null) {
+    if (path === '/api/me') csrfByApiBase.delete(config.baseUrl)
+    return
+  }
+
+  const token = header.trim()
+  if (token && token.length <= 4_096) csrfByApiBase.set(config.baseUrl, token)
+  else csrfByApiBase.delete(config.baseUrl)
+}
+
 async function readJsonBody<T>(response: Response): Promise<T | undefined> {
   const contentType = response.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) return undefined
@@ -530,8 +1002,113 @@ function responseErrorSummary(response: Response, data: unknown): string {
   return `${response.status} ${response.statusText || 'HTTP error'}`
 }
 
+async function queryJson<T>(config: ApiConfig, path: string): Promise<T> {
+  const headers: HeadersInit = { Accept: 'application/json' }
+  if (config.token) headers.Authorization = `Bearer ${config.token}`
+  const response = await fetch(joinUrl(config.baseUrl, path), { headers, credentials: 'same-origin' })
+  if (!response.ok) throw new Error(await responseError(response))
+  const data = await readJsonBody<T>(response)
+  if (data === undefined) throw new Error('Sideport API returned an empty response.')
+  return data
+}
+
+export async function startDeviceEnrollment(payload: DeviceEnrollmentPayload, config = getSideportApiConfig()) {
+  return mutateJson<OperationRecordDto>(config, '/api/devices/enrollments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+/** Return the current authoritative transport snapshot, including full UDIDs for mutations. */
+export async function listReachableDevices(config = getSideportApiConfig()) {
+  return queryJson<ReachableDeviceDto[]>(config, '/api/devices')
+}
+
+/** Fetch one durable operation. Call repeatedly while its status is non-terminal. */
+export async function getSideportOperation(operationId: string, config = getSideportApiConfig()) {
+  return queryJson<OperationRecordDto>(config, `/api/operations/${encodeURIComponent(operationId)}`)
+}
+
+export async function listCatalogAppsV2(config = getSideportApiConfig()) {
+  return queryJson<CatalogAppV2Dto[]>(config, '/api/v2/catalog/apps')
+}
+
+export async function listCatalogImportRoots(config = getSideportApiConfig()) {
+  return queryJson<CatalogImportRootDto[]>(config, '/api/v2/catalog/import-roots')
+}
+
+export async function inspectCatalogAppV2(payload: CatalogRootImportPayload, config = getSideportApiConfig()) {
+  return mutateJson<CatalogAppV2Dto>(config, '/api/v2/catalog/apps/inspect', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function uploadCatalogIpaV2(
+  file: File,
+  payload: CatalogUploadV2Payload = {},
+  config = getSideportApiConfig(),
+) {
+  if (!config.canMutate) throw new Error('Mutations are disabled for this admin build.')
+  const form = new FormData()
+  form.set('ipa', file)
+  if (payload.id?.trim()) form.set('id', payload.id.trim())
+  if (payload.name?.trim()) form.set('name', payload.name.trim())
+  if (payload.purpose?.trim()) form.set('purpose', payload.purpose.trim())
+  if (payload.idempotencyKey?.trim()) form.set('idempotencyKey', payload.idempotencyKey.trim())
+  if (payload.expectedCatalogVersion !== undefined) form.set('expectedCatalogVersion', String(payload.expectedCatalogVersion))
+  const path = '/api/v2/catalog/apps/upload'
+  const headers = new Headers({ Accept: 'application/json' })
+  applyMutationAuthentication(config, path, 'POST', headers)
+  const response = await fetch(joinUrl(config.baseUrl, path), {
+    method: 'POST',
+    headers,
+    body: form,
+    credentials: 'same-origin',
+  })
+  clearRejectedCsrf(config, path, 'POST', response)
+  if (!response.ok) throw new Error(await responseError(response))
+  return await response.json() as CatalogAppV2Dto
+}
+
+export async function listGitHubCatalogSources(config = getSideportApiConfig()) {
+  return queryJson<GitHubSourcesDto>(config, '/api/v2/catalog/github/sources')
+}
+
+export async function createGitHubCatalogConnection(payload: GitHubConnectionPayload, config = getSideportApiConfig()) {
+  return mutateJson<GitHubConnectionDto>(config, '/api/v2/catalog/github/connections', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getGitHubCatalogConnection(connectionId: string, config = getSideportApiConfig()) {
+  return queryJson<GitHubConnectionDto>(config, `/api/v2/catalog/github/connections/${encodeURIComponent(connectionId)}`)
+}
+
+export async function listGitHubCatalogReleases(sourceId: string, page = 1, config = getSideportApiConfig()) {
+  return queryJson<GitHubReleasePageDto>(
+    config,
+    `/api/v2/catalog/github/sources/${encodeURIComponent(sourceId)}/releases?page=${encodeURIComponent(String(page))}`,
+  )
+}
+
+export async function importGitHubCatalogApp(payload: GitHubCatalogImportPayload, config = getSideportApiConfig()) {
+  return mutateJson<CatalogAppV2Dto>(config, '/api/v2/catalog/apps/import-github', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function registerSideportApp(payload: AppRegistrationPayload, config = getSideportApiConfig()) {
   return mutateJson<RegisteredAppDto>(config, '/api/apps', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function registerPendingSideportApp(payload: PendingAppRegistrationPayload, config = getSideportApiConfig()) {
+  return mutateJson<AppRegistrationDto>(config, '/api/apps', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -552,9 +1129,11 @@ export async function uploadCatalogIpa(file: File, payload: { id?: string; name?
   if (payload.name?.trim()) form.set('name', payload.name.trim())
   if (payload.purpose?.trim()) form.set('purpose', payload.purpose.trim())
   if (payload.replace) form.set('replace', 'true')
-  const headers: HeadersInit = { Accept: 'application/json' }
-  if (config.token) headers.Authorization = `Bearer ${config.token}`
-  const response = await fetch(joinUrl(config.baseUrl, '/api/catalog/apps/upload'), { method: 'POST', headers, body: form, credentials: 'same-origin' })
+  const path = '/api/catalog/apps/upload'
+  const headers = new Headers({ Accept: 'application/json' })
+  applyMutationAuthentication(config, path, 'POST', headers)
+  const response = await fetch(joinUrl(config.baseUrl, path), { method: 'POST', headers, body: form, credentials: 'same-origin' })
+  clearRejectedCsrf(config, path, 'POST', response)
   if (!response.ok) throw new Error(await responseError(response))
   return await response.json() as CatalogAppDto
 }
@@ -570,6 +1149,45 @@ export async function refreshSideportApp(deviceUdid: string, bundleId: string, c
   })
 }
 
+export function installSideportCatalogApp(payload: InstallOperationPayload, config = getSideportApiConfig()) {
+  return mutateJson<OperationRecordDto>(config, '/api/operations/install', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function preflightSideportInstall(payload: InstallPreflightPayload, config = getSideportApiConfig()) {
+  return mutateJson<OperationPreflightDto>(config, '/api/operations/preflight', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'install', ...payload }),
+  })
+}
+
+export function completeSideportOnboarding(payload: OnboardingCompletionPayload, config = getSideportApiConfig()) {
+  return mutateJson<WorkflowCompletionReceipt>(config, '/api/onboarding/complete', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function reconcileSideportOperation(
+  operationId: string,
+  payload: { idempotencyKey: string; note?: string },
+  config = getSideportApiConfig(),
+) {
+  return mutateJson<OperationRecordDto>(config, `/api/operations/${encodeURIComponent(operationId)}/reconcile`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateSideportSchedulerSettings(enabled: boolean, config = getSideportApiConfig()) {
+  return mutateJson<SchedulerStatusDto>(config, '/api/scheduler/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
 export async function cancelOperation(operationId: string, config = getSideportApiConfig()) {
   return mutateJson<RefreshOperationDto>(config, `/api/operations/${encodeURIComponent(operationId)}/cancel`, {
     method: 'POST',
@@ -578,7 +1196,7 @@ export async function cancelOperation(operationId: string, config = getSideportA
 }
 
 export async function retryOperation(operationId: string, config = getSideportApiConfig()) {
-  return mutateJson<RefreshOperationDto>(config, `/api/operations/${encodeURIComponent(operationId)}/retry`, {
+  return mutateJson<OperationRecordDto>(config, `/api/operations/${encodeURIComponent(operationId)}/retry`, {
     method: 'POST',
     body: JSON.stringify({ idempotencyKey: `ui-retry-${operationId}-${Date.now()}` }),
   })
@@ -609,10 +1227,50 @@ export async function signInPersonalApple(payload: PersonalAppleSignInPayload, c
   })
 }
 
+export function connectPersonalApple(payload: PersonalAppleConnectPayload, config = getSideportApiConfig()) {
+  return mutateJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/connect', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function completePersonalAppleTwoFactor(payload: PersonalAppleTwoFactorPayload, config = getSideportApiConfig()) {
   return mutateJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/2fa', {
     method: 'POST',
     body: JSON.stringify(payload),
+  })
+}
+
+export async function selectPersonalAppleTeam(payload: PersonalAppleTeamSelectionPayload, config = getSideportApiConfig()) {
+  return mutateJson<PersonalAppleStatusDto>(config, '/api/apple-access/personal/team', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function preflightPersonalAppleSigning(accountProfileId: string, teamId: string, config = getSideportApiConfig(), candidateId?: string, currentAccountProfileId?: string) {
+  return mutateJson<PersonalAppleSigningPreflightDto>(config, '/api/apple-access/personal/signing-preflight', {
+    method: 'POST',
+    body: JSON.stringify({ accountProfileId, teamId, candidateId, currentAccountProfileId }),
+  })
+}
+
+export async function cutoverPersonalAppleSigning(payload: PersonalAppleCutoverPayload, config = getSideportApiConfig()) {
+  return mutateJson<OperationRecordDto>(config, '/api/apple-access/personal/cutover', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function connectReplacementAppleAccount(appleId: string, password: string, config = getSideportApiConfig()) {
+  return mutateJson<AppleAccountReplacementCandidateDto>(config, '/api/apple-access/personal/replacement-candidates', {
+    method: 'POST', body: JSON.stringify({ appleId, password }),
+  })
+}
+
+export async function completeReplacementAppleTwoFactor(candidateId: string, code: string, config = getSideportApiConfig()) {
+  return mutateJson<AppleAccountReplacementCandidateDto>(config, '/api/apple-access/personal/replacement-candidates/2fa', {
+    method: 'POST', body: JSON.stringify({ candidateId, code }),
   })
 }
 
@@ -650,23 +1308,81 @@ async function mutateJson<T>(config: ApiConfig, path: string, init: RequestInit)
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   if (init.body) headers.set('Content-Type', 'application/json')
-  if (config.token) headers.set('Authorization', `Bearer ${config.token}`)
+  applyMutationAuthentication(config, path, init.method, headers)
 
   const response = await fetch(joinUrl(config.baseUrl, path), { ...init, headers, credentials: 'same-origin' })
-  if (!response.ok) throw new Error(await responseError(response))
+  clearRejectedCsrf(config, path, init.method, response)
+  if (!response.ok) {
+    const data = await readJsonBody<unknown>(response)
+    const error = apiErrorDetails(response, data)
+    throw new SideportApiError(error.message, response.status, error.code, data)
+  }
   if (response.status === 204) return undefined as T
   return await response.json() as T
+}
+
+function applyMutationAuthentication(config: ApiConfig, path: string, method: string | undefined, headers: Headers): void {
+  if (config.token) {
+    headers.set('Authorization', `Bearer ${config.token}`)
+    return
+  }
+
+  if (!isUnsafeSameOriginRequest(config, path, method)) return
+  const csrf = csrfByApiBase.get(config.baseUrl)
+  if (csrf) headers.set(CSRF_HEADER, csrf)
+}
+
+function clearRejectedCsrf(config: ApiConfig, path: string, method: string | undefined, response: Response): void {
+  if (response.status === 403 && !config.token && isUnsafeSameOriginRequest(config, path, method)) {
+    csrfByApiBase.delete(config.baseUrl)
+  }
+}
+
+function isUnsafeSameOriginRequest(config: ApiConfig, path: string, method: string | undefined): boolean {
+  const normalizedMethod = (method ?? 'GET').toUpperCase()
+  return normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD' && normalizedMethod !== 'OPTIONS' &&
+    isSameOriginApiRequest(config, path)
+}
+
+function isSameOriginApiRequest(config: ApiConfig, path: string): boolean {
+  try {
+    return new URL(joinUrl(config.baseUrl, path), window.location.href).origin === window.location.origin
+  } catch {
+    return false
+  }
 }
 
 async function responseError(response: Response): Promise<string> {
   const contentType = response.headers.get('content-type') ?? ''
   if (contentType.includes('application/json')) {
     const body = await response.json().catch(() => null) as { error?: string; message?: string } | null
-    if (body?.error) return body.error
     if (body?.message) return body.message
+    if (body?.error) return body.error
   }
   const text = await response.text().catch(() => '')
   return text || `${response.status} ${response.statusText || 'HTTP error'}`
+}
+
+function apiErrorDetails(response: Response, data: unknown): { message: string; code?: string } {
+  if (isRecord(data)) {
+    const nestedError = isRecord(data.error) ? data.error : undefined
+    const code = typeof data.code === 'string'
+      ? data.code
+      : typeof data.error === 'string'
+        ? data.error
+        : typeof nestedError?.code === 'string'
+          ? nestedError.code
+          : undefined
+    const message = typeof data.message === 'string'
+      ? data.message
+      : typeof nestedError?.message === 'string'
+        ? nestedError.message
+        : typeof data.error === 'string'
+          ? data.error
+          : undefined
+    if (message) return { message, code }
+  }
+  return { message: `${response.status} ${response.statusText || 'HTTP error'}` }
 }
 
 function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; status: AdminDataStatus } {
@@ -692,14 +1408,18 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
     ? snapshot.diagnosticIssues.data.map(toDiagnosticIssue).filter(isPresent)
     : buildIssues(snapshot, apps, operations)
   const system = buildSystemStatus(snapshot)
+  const workspace = snapshot.workspace.ok && snapshot.workspace.data ? toWorkspace(snapshot.workspace.data) : plannedWorkspace(snapshot.workspace.error)
+  const serverAllowsMutations = workspace.source === 'live'
+    && workspace.authMode !== 'open-behind-proxy'
+    && Object.values(workspace.capabilities ?? {}).some(Boolean)
 
-  const partial = [snapshot.health, snapshot.ready, snapshot.devices, snapshot.knownDevices, snapshot.catalog, snapshot.appleAccess, snapshot.personalApple, snapshot.installedApps, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.logs, snapshot.operations, snapshot.renewals, snapshot.diagnosticIssues].some((result) => !result.ok)
+  const partial = [snapshot.health, snapshot.ready, snapshot.systemStatus, snapshot.devices, snapshot.knownDevices, snapshot.catalog, snapshot.appleAccess, snapshot.personalApple, snapshot.installedApps, snapshot.apps, snapshot.anisette, snapshot.onboarding, snapshot.scheduler, snapshot.logs, snapshot.operations, snapshot.renewals, snapshot.diagnosticIssues, snapshot.workspace].some((result) => !result.ok)
   const status: AdminDataStatus = {
     mode: partial ? 'partial' : 'live',
     baseUrl: snapshot.config.baseUrl,
     lastUpdatedAt: snapshot.fetchedAt,
-    canMutate: snapshot.config.canMutate,
-    onboarding: snapshot.onboarding.data ? toOnboardingStatus(snapshot.onboarding.data) : buildFallbackOnboarding(system, devices, apps),
+    canMutate: snapshot.config.canMutate && serverAllowsMutations,
+    onboarding: snapshot.onboarding.ok && snapshot.onboarding.data ? toOnboardingStatus(snapshot.onboarding.data) : undefined,
     message: partial ? degradedStatusMessage(snapshot) : 'Live Sideport API connected.',
   }
 
@@ -717,7 +1437,7 @@ function buildAdminData(snapshot: ApiSnapshot): { data: SideportReadModel; statu
       issues,
       activity: buildActivity(snapshot, partial, logs),
       logs,
-      workspace: snapshot.workspace.ok && snapshot.workspace.data ? toWorkspace(snapshot.workspace.data) : plannedWorkspace(snapshot.workspace.error),
+      workspace,
     },
     status,
   }
@@ -747,43 +1467,91 @@ function buildUnavailableData(config: ApiConfig, message: string): { data: Sidep
       mode: 'unavailable',
       baseUrl: config.baseUrl,
       canMutate: config.canMutate,
-      onboarding: buildFallbackOnboarding(fallbackSystem, [], []),
       message,
     },
   }
 }
 
 function buildSystemStatus(snapshot: ApiSnapshot): SystemStatus {
-  const ready = snapshot.ready.data
-  const tokenMissing = [snapshot.devices, snapshot.catalog, snapshot.installedApps, snapshot.apps, snapshot.anisette].some((result) => result.status === 401)
+  const operational = snapshot.systemStatus.ok && snapshot.systemStatus.data?.operational === true
+  const checks = snapshot.systemStatus.ok
+    ? (snapshot.systemStatus.data?.checks ?? []).map(toSystemOperationalCheck).filter(isPresent)
+    : []
+  const anisetteCheck = checks.find((check) => check.id === 'anisette-headers')
+  const signerCheck = checks.find((check) => check.id === 'signer-executable')
+  const mutationCheck = checks.find((check) => check.id === 'mutation-protection')
 
   return {
+    operational,
+    checkedAt: snapshot.systemStatus.data?.checkedAt,
+    checks,
     api: { ok: snapshot.health.ok && snapshot.health.data?.ok !== false, source: 'live' },
     ready: {
-      ready: Boolean(ready?.ready),
+      ready: operational,
       source: 'live',
       checks: {
         anisette: {
-          ok: Boolean(ready?.checks.anisette.ok),
-          error: ready?.checks.anisette.error ?? snapshot.ready.error ?? null,
+          ok: anisetteCheck?.status === 'pass',
+          error: anisetteCheck?.status === 'fail' ? anisetteCheck.reason : snapshot.systemStatus.error ?? null,
           source: 'live',
         },
         signer: {
-          ok: Boolean(ready?.checks.signer.ok),
-          path: ready?.checks.signer.path ?? 'Unknown',
+          ok: signerCheck?.status === 'pass',
+          path: signerCheck?.reason ?? 'Signer check unavailable',
           source: 'live',
         },
       },
     },
-    apiAuth: { configured: Boolean(snapshot.config.token) || tokenMissing, source: 'derived' },
-    scheduler: { enabled: false, source: 'planned' },
+    apiAuth: { configured: mutationCheck?.status === 'pass', source: 'live' },
+    scheduler: snapshot.scheduler.ok && snapshot.scheduler.data
+      ? toSchedulerStatus(snapshot.scheduler.data)
+      : {
+          enabled: Boolean(snapshot.onboarding.data?.schedulerEnabled),
+          source: snapshot.onboarding.ok ? 'live' : 'planned',
+        },
     observability: snapshot.logs.ok
       ? { exporter: 'API log ring buffer', connected: true, source: 'live' }
       : { exporter: 'OTLP not connected', connected: false, source: 'planned' },
   }
 }
 
-function toDeviceSummary(device: DeviceDto, apps: RegisteredAppSummary[], installedApps: InstalledAppSummary[]) {
+function toSchedulerStatus(status: SchedulerStatusDto): SystemStatus['scheduler'] {
+  return {
+    enabled: status.enabled === true,
+    checkedAt: status.checkedAt,
+    policy: status.policy ? {
+      mode: status.policy.mode,
+      evaluationInterval: status.policy.evaluationInterval,
+      refreshLeadTime: status.policy.refreshLeadTime,
+      resignInterval: status.policy.resignInterval ?? null,
+      catchUp: status.policy.catchUp,
+      missedIntervals: status.policy.missedIntervals,
+    } : undefined,
+    nextEvaluationAt: status.nextEvaluationAt ?? null,
+    lastEvaluation: status.lastEvaluation ?? null,
+    dueCount: status.dueCount,
+    queuedCount: status.queuedCount,
+    concurrency: status.concurrency,
+    historyRetention: status.historyRetention,
+    source: normalizeSource(status.source),
+  }
+}
+
+function toSystemOperationalCheck(check: SystemOperationalCheckDto): SystemOperationalCheck | null {
+  if (!check.id || (check.status !== 'pass' && check.status !== 'fail')) return null
+  return {
+    id: check.id,
+    status: check.status,
+    source: normalizeSource(check.source),
+    checkedAt: check.checkedAt ?? '',
+    scope: check.scope ?? 'system',
+    affectedResources: check.affectedResources ?? [],
+    reason: check.reason ?? (check.status === 'pass' ? 'Check passed.' : 'Check failed.'),
+    nextAction: check.nextAction ?? null,
+  }
+}
+
+function toDeviceSummary(device: ReachableDeviceDto, apps: RegisteredAppSummary[], installedApps: InstalledAppSummary[]) {
   if (!device.udid) return null
   const deviceApps = apps.filter((app) => app.deviceUdid === device.udid)
   const deviceInstalledApps = installedApps.filter((app) => app.deviceUdid === device.udid)
@@ -824,6 +1592,15 @@ function toKnownDeviceSummary(device: KnownDeviceDto, apps: RegisteredAppSummary
     hasDurableLastSeen: Boolean(device.lastSeenAt),
     currentPollAt: device.currentPollAt ? { value: device.currentPollAt, source: 'live' as const } : undefined,
     lastSeenSource: device.lastSeenSource,
+    inventoryState: device.inventoryState,
+    acceptedAt: device.acceptedAt ? { value: device.acceptedAt, source: 'live' as const } : undefined,
+    acceptedBy: device.acceptedBy ?? undefined,
+    enrollmentOperationId: device.enrollmentOperationId ?? undefined,
+    trustState: device.trustState,
+    trustReason: device.trustReason ?? undefined,
+    lockdownCheckedAt: device.lockdownCheckedAt ? { value: device.lockdownCheckedAt, source: 'live' as const } : undefined,
+    usableForInstall: device.usableForInstall,
+    supportedForFirstInstall: device.supportedForFirstInstall,
     health: normalizeHealthState(device.health?.state) ?? healthFromExpiry(nearestExpiry, hasLastError),
     teamId: deviceApps[0]?.teamId || 'Unknown',
     appSlotsUsed: device.appSlots?.used ?? deviceApps.length,
@@ -864,19 +1641,26 @@ function toOperationLog(entry: OperationLogDto, fallbackAt: string): OperationLo
   }
 }
 
-function toCatalogApp(app: CatalogAppDto): CatalogAppSummary | null {
-  if (!app.id || !app.name || !app.bundleId || !app.ipaPath) return null
+function toCatalogApp(app: CatalogAppV2Dto): CatalogAppSummary | null {
+  if (!app.id || !app.name || !app.bundleId) return null
   const status = normalizeCatalogStatus(app.status)
   return {
     id: app.id,
     name: app.name,
     purpose: app.purpose || 'Server-side IPA catalog entry.',
     expectedBundleId: app.bundleId,
-    suggestedIpaPath: app.ipaPath,
+    catalogVersion: app.catalogVersion,
+    artifactSources: app.artifactSources.map((source) => ({
+      kind: source.kind,
+      label: source.label,
+      repository: source.repository ?? undefined,
+      releaseTag: source.releaseTag ?? undefined,
+      assetName: source.assetName ?? undefined,
+    })),
     versionLabel: versionLabel(app.shortVersion, app.version),
     status,
     statusLabel: catalogStatusLabel(status),
-    source: 'live',
+    source: normalizeSource(app.source),
     iconTone: toneFromBundleId(app.bundleId),
     notes: app.notes?.length ? app.notes : [catalogStatusLabel(status)],
     sizeBytes: app.sizeBytes ?? undefined,
@@ -884,6 +1668,7 @@ function toCatalogApp(app: CatalogAppDto): CatalogAppSummary | null {
     hasEmbeddedProfile: Boolean(app.hasEmbeddedProfile),
     signatureExpiresAt: app.signatureExpiresAt ?? undefined,
     lastInspectedAt: app.lastInspectedAt ?? undefined,
+    icon: app.icon ?? undefined,
   }
 }
 
@@ -905,10 +1690,24 @@ function toPersonalApple(dto: PersonalAppleStatusDto): PersonalAppleSummary {
     connector: dto.connector || 'personal-apple-id',
     state: normalizePersonalAppleState(dto.state),
     secretCustody: dto.secretCustody || 'host-environment-or-secret-store',
+    credentialSource: dto.credentialSource,
+    accountProfileId: dto.accountProfileId ?? null,
+    credentialEntry: dto.credentialEntry ? {
+      supported: Boolean(dto.credentialEntry.supported),
+      allowedNow: Boolean(dto.credentialEntry.allowedNow),
+      blockedReason: dto.credentialEntry.blockedReason?.code && dto.credentialEntry.blockedReason.message
+        ? { code: dto.credentialEntry.blockedReason.code, message: dto.credentialEntry.blockedReason.message }
+        : null,
+    } : null,
     appleIdHint: dto.appleIdHint ?? null,
     message: dto.message || 'Personal Apple ID connector returned without a message.',
     pendingChallengeId: dto.pendingChallengeId ?? null,
     pendingChallengeKind: dto.pendingChallengeKind ?? null,
+    pendingChallengeExpiresAt: dto.pendingChallengeExpiresAt ?? null,
+    selectedTeamId: dto.selectedTeamId ?? null,
+    teamValidatedAt: dto.teamValidatedAt ?? null,
+    lastAuthenticatedAt: dto.lastAuthenticatedAt ?? null,
+    authValidatedAt: dto.authValidatedAt ?? null,
     teams: dto.teams?.map(toPersonalAppleTeam).filter(isPresent) ?? [],
     source: 'live',
   }
@@ -965,6 +1764,8 @@ function toRegisteredApp(app: RegisteredAppDto, catalogApps: CatalogAppSummary[]
     timeUntilExpiry: app.timeUntilExpiry ? { value: app.timeUntilExpiry, source: 'live' as const } : undefined,
     lastSucceeded: app.lastSucceeded ?? null,
     lastError: app.lastError ?? null,
+    lifecycle: app.lifecycle === 'pending-install' ? 'pending-install' as const : 'active' as const,
+    lastVerifiedOperationId: app.lastVerifiedOperationId ?? null,
     displayName: catalogApp ? { value: catalogApp.name, source: catalogApp.source } : { value: displayNameFromBundleId(app.bundleId), source: 'derived' as const },
     version: catalogApp ? { value: catalogApp.versionLabel, source: catalogApp.source } : { value: 'Unknown', source: 'planned' as const },
     iconTone: toneFromBundleId(app.bundleId),
@@ -982,7 +1783,9 @@ function toRenewalItem(app: RegisteredAppSummary): RenewalItem {
     risk,
     status,
     expiresAt: app.expiresAt?.value,
-    blocker: app.lastError ?? undefined,
+    blocker: app.lifecycle === 'pending-install'
+      ? 'Install and verify this app before automatic refresh can use it.'
+      : app.lastError ?? undefined,
     source: 'live',
   }
 }
@@ -1021,6 +1824,7 @@ function toOperationSummary(operation: OperationRecordDto): OperationSummary | n
     retryable: Boolean(operation.retryable),
     rerunnable: Boolean(operation.rerunnable),
     parentOperationId: operation.parentOperationId ?? null,
+    finishOnboarding: operation.installIntent?.finishOnboarding,
     source: 'live',
   }
 }
@@ -1053,6 +1857,7 @@ function buildIssues(snapshot: ApiSnapshot, apps: RegisteredAppSummary[], operat
     ['App registry API unavailable', snapshot.apps],
     ['Anisette API unavailable', snapshot.anisette],
     ['Onboarding API unavailable', snapshot.onboarding],
+    ['Scheduler API unavailable', snapshot.scheduler],
     ['Operation history API unavailable', snapshot.operations],
     ['Renewals API unavailable', snapshot.renewals],
   ] as const) {
@@ -1107,11 +1912,111 @@ function latestOperationFor(app: RegisteredAppSummary, operations: OperationSumm
 
 function toOnboardingStatus(dto: OnboardingStatusDto): OnboardingStatus {
   const steps = dto.steps?.map(toOnboardingStep).filter(isPresent) ?? []
-  return {
+  const receipt = dto.completionReceipt
+  const completionReceipt = receipt?.schemaVersion === 2
+    && receipt.completedAt
+    && receipt.actor?.kind
+    && receipt.actor.displayName
+    && receipt.accountProfileId
+    && receipt.teamId
+    && receipt.verifiedOperationId
+    && receipt.deviceUdid
+    && receipt.registrationKey?.deviceUdid
+    && receipt.registrationKey.bundleId
+    && receipt.schedulerSettingsVersion
+    && receipt.operationalCheckedAt
+    ? {
+        schemaVersion: 2 as const,
+        completedAt: receipt.completedAt,
+        actor: { kind: receipt.actor.kind, displayName: receipt.actor.displayName },
+        accountProfileId: receipt.accountProfileId,
+        teamId: receipt.teamId,
+        verifiedOperationId: receipt.verifiedOperationId,
+        deviceUdid: receipt.deviceUdid,
+        registrationKey: {
+          deviceUdid: receipt.registrationKey.deviceUdid,
+          bundleId: receipt.registrationKey.bundleId,
+        },
+        schedulerSettingsVersion: receipt.schedulerSettingsVersion,
+        operationalCheckedAt: receipt.operationalCheckedAt,
+      }
+    : null
+  const status: OnboardingStatus = {
     firstRunComplete: Boolean(dto.firstRunComplete),
     schedulerEnabled: Boolean(dto.schedulerEnabled),
     steps,
   }
+  if (dto.setupState === 'complete' || dto.setupState === 'in-progress') status.setupState = dto.setupState
+  if ('selectedCatalogAppId' in dto) status.selectedCatalogAppId = dto.selectedCatalogAppId ?? null
+  if ('activeInstallOperationId' in dto) status.activeInstallOperationId = dto.activeInstallOperationId ?? null
+  if ('completionReceipt' in dto) status.completionReceipt = completionReceipt
+  if ('workflow' in dto) status.workflow = toOnboardingWorkflow(dto.workflow)
+  return status
+}
+
+function toOnboardingWorkflow(dto: OnboardingWorkflowDto | null | undefined): OnboardingWorkflowV2 | null {
+  if (!dto || dto.schemaVersion !== 2 || (dto.setupState !== 'in-progress' && dto.setupState !== 'complete')) return null
+  const steps = (dto.steps ?? []).map(toOnboardingWorkflowStep).filter(isPresent)
+  const nextAction = dto.nextAction && isWorkflowStepId(dto.nextAction.stepId)
+    ? toWorkflowAction(dto.nextAction)
+    : null
+  return {
+    schemaVersion: 2,
+    setupState: dto.setupState,
+    readyNow: dto.readyNow === true,
+    completedAt: dto.completedAt ?? null,
+    verifiedOperationId: dto.verifiedOperationId ?? null,
+    nextAction: nextAction ? { ...nextAction, stepId: dto.nextAction!.stepId as OnboardingWorkflowStepId } : null,
+    steps,
+  }
+}
+
+function toOnboardingWorkflowStep(step: OnboardingWorkflowStepDto): OnboardingWorkflowStep | null {
+  if (!isWorkflowStepId(step.id) || !isWorkflowStepState(step.state)) return null
+  const nextAction = toWorkflowAction(step.nextAction)
+  return {
+    id: step.id,
+    state: step.state,
+    required: step.required !== false,
+    source: normalizeSource(step.source),
+    evidenceOrigin: normalizeEvidenceOrigin(step.evidenceOrigin),
+    checkedAt: step.checkedAt,
+    activeOperationId: step.activeOperationId ?? null,
+    reason: step.reason,
+    nextAction: nextAction ?? undefined,
+    evidence: (step.evidence ?? []).map(toWorkflowEvidence).filter(isPresent),
+  }
+}
+
+function toWorkflowAction(action: OnboardingWorkflowActionDto | null | undefined): OnboardingWorkflowAction | null {
+  if (!action?.action || !action.label) return null
+  return { action: action.action, label: action.label }
+}
+
+function toWorkflowEvidence(evidence: OnboardingWorkflowEvidenceDto): OnboardingWorkflowEvidence | null {
+  const origin = normalizeEvidenceOrigin(evidence.evidenceOrigin)
+  if (!evidence.id || !evidence.label || !evidence.detail || !origin || !evidence.checkedAt) return null
+  return {
+    id: evidence.id,
+    label: evidence.label,
+    detail: evidence.detail,
+    source: normalizeSource(evidence.source),
+    evidenceOrigin: origin,
+    checkedAt: evidence.checkedAt,
+  }
+}
+
+function isWorkflowStepId(value: string | undefined): value is OnboardingWorkflowStepId {
+  return value === 'server' || value === 'apple-signer' || value === 'device' || value === 'app' || value === 'install' || value === 'ready'
+}
+
+function isWorkflowStepState(value: string | undefined): value is OnboardingWorkflowStepState {
+  return value === 'not-started' || value === 'action-required' || value === 'in-progress' || value === 'complete' || value === 'blocked'
+}
+
+function normalizeEvidenceOrigin(value: string | undefined): EvidenceOrigin | undefined {
+  if (value === 'operator' || value === 'device' || value === 'apple' || value === 'artifact' || value === 'system' || value === 'operation') return value
+  return undefined
 }
 
 function toOnboardingStep(step: OnboardingStepDto): OnboardingStep | null {
@@ -1126,116 +2031,6 @@ function toOnboardingStep(step: OnboardingStepDto): OnboardingStep | null {
     settingsPath: step.settingsPath ?? null,
     detail: step.detail ?? null,
     source: 'live',
-  }
-}
-
-function buildFallbackOnboarding(system: SystemStatus, devices: Array<{ appSlotsUsed?: number }>, apps: RegisteredAppSummary[]): OnboardingStatus {
-  const steps: OnboardingStep[] = [
-    {
-      id: 'api-auth',
-      label: 'Protect the API',
-      description: 'Set SIDEPORT_API_TOKEN or keep the portal behind trusted LAN/proxy auth.',
-      state: system.apiAuth.configured ? 'complete' : 'warning',
-      surface: 'portal',
-      required: true,
-      settingsPath: null,
-      detail: system.apiAuth.configured ? 'Bearer token configured.' : 'Token not detected in the current UI session.',
-      source: system.apiAuth.source,
-    },
-    {
-      id: 'anisette',
-      label: 'Trust anisette identity',
-      description: 'Use the provisioned host anisette identity so GrandSlam login does not trigger first-run 2FA repeatedly.',
-      state: system.ready.checks.anisette.ok ? 'complete' : 'blocked',
-      surface: 'portal',
-      required: true,
-      settingsPath: null,
-      detail: system.ready.checks.anisette.error ?? 'Anisette client info available.',
-      source: system.ready.checks.anisette.source,
-    },
-    {
-      id: 'signer',
-      label: 'Verify signer binary',
-      description: 'Sideport needs the patched zsign binary before any refresh can be run.',
-      state: system.ready.checks.signer.ok ? 'complete' : 'blocked',
-      surface: 'portal',
-      required: true,
-      settingsPath: null,
-      detail: system.ready.checks.signer.path,
-      source: system.ready.checks.signer.source,
-    },
-    {
-      id: 'device',
-      label: 'Connect a device',
-      description: 'A reachable USB or Wi-Fi device is required before registering apps.',
-      state: devices.length ? 'complete' : 'pending',
-      surface: 'portal',
-      required: true,
-      settingsPath: null,
-      detail: devices.length ? `${devices.length} reachable device(s).` : 'No reachable devices in the current read model.',
-      source: 'derived',
-    },
-    {
-      id: 'iphone-trust-computer',
-      label: 'Trust this computer',
-      description: 'On the iPhone, keep the screen awake, connect over USB, tap Trust, and enter the passcode if prompted.',
-      state: devices.length ? 'complete' : 'pending',
-      surface: 'iphone',
-      required: false,
-      settingsPath: null,
-      detail: devices.length ? 'Device discovery works from the host.' : 'Needed before Sideport can see a new iPhone.',
-      source: 'derived',
-    },
-    {
-      id: 'iphone-developer-mode',
-      label: 'Enable Developer Mode',
-      description: 'On iOS 16+, open Settings > Privacy & Security > Developer Mode, enable it, then restart when prompted.',
-      state: apps.length ? 'warning' : 'pending',
-      surface: 'iphone',
-      required: false,
-      settingsPath: 'Settings > Privacy & Security > Developer Mode',
-      detail: 'Required before development-signed apps can launch on newer iOS.',
-      source: 'planned',
-    },
-    {
-      id: 'iphone-profile-trust',
-      label: 'Trust the developer profile',
-      description: 'After the first install, open Settings > General > VPN & Device Management, choose the Apple Development profile, then tap Trust.',
-      state: apps.length ? 'warning' : 'pending',
-      surface: 'iphone',
-      required: false,
-      settingsPath: 'Settings > General > VPN & Device Management',
-      detail: 'Only appears on the iPhone after the first app is installed.',
-      source: 'planned',
-    },
-    {
-      id: 'iphone-keep-awake',
-      label: 'Keep the iPhone awake during install',
-      description: 'Leave the iPhone unlocked on the same network while Sideport signs and installs the app.',
-      state: 'pending',
-      surface: 'iphone',
-      required: false,
-      settingsPath: null,
-      detail: 'Prevents install failures caused by the device going unreachable.',
-      source: 'planned',
-    },
-    {
-      id: 'first-app',
-      label: 'Register first app',
-      description: 'Add an IPA path, Apple ID, team, device, and bundle ID before enabling manual refresh.',
-      state: apps.length ? 'complete' : 'pending',
-      surface: 'portal',
-      required: true,
-      settingsPath: null,
-      detail: apps.length ? `${apps.length} app registration(s).` : 'No registered apps yet.',
-      source: apps.length ? 'live' : 'planned',
-    },
-  ]
-
-  return {
-    firstRunComplete: steps.every((step) => !step.required || step.state === 'complete'),
-    schedulerEnabled: system.scheduler.enabled,
-    steps,
   }
 }
 
@@ -1370,6 +2165,8 @@ function normalizeAppleAccessState(state: string | undefined): AppleAccessState 
 }
 
 function normalizePersonalAppleState(state: string | undefined): PersonalAppleState {
+  if (state === 'validated-recently') return 'authenticated'
+  if (state === 'validation-stale') return 'credential-configured'
   if (state === 'not-configured' || state === 'credential-configured' || state === 'two-factor-required' || state === 'authenticated') return state
   return 'unavailable'
 }
@@ -1396,7 +2193,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function normalizeConnection(value: DeviceDto['connection']): ConnectionState {
+function normalizeConnection(value: ReachableDeviceDto['connection']): ConnectionState {
   if (value === 0) return 'usb'
   if (value === 1) return 'wifi'
   if (typeof value === 'string' && value.toLowerCase() === 'wifi') return 'wifi'
@@ -1420,6 +2217,7 @@ function normalizeHealthState(state: string | undefined): HealthState | undefine
 }
 
 function riskForApp(app: RegisteredAppSummary): RenewalRisk {
+  if (app.lifecycle === 'pending-install') return 'blocked'
   if (app.lastError) return 'blocked'
   const expiresAt = app.expiresAt?.value
   if (!expiresAt) return 'unknown'
@@ -1432,6 +2230,7 @@ function riskForApp(app: RegisteredAppSummary): RenewalRisk {
 }
 
 function statusForApp(app: RegisteredAppSummary): RenewalStatus {
+  if (app.lifecycle === 'pending-install') return 'blocked'
   if (app.lastError) return 'failed'
   if (app.lastSucceeded === false) return 'failed'
   return 'idle'

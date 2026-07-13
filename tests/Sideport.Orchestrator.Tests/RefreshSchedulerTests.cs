@@ -58,6 +58,27 @@ public class RefreshSchedulerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunOnce_PendingFirstInstall_IsNotRefreshedInBackground()
+    {
+        await _registry.UpsertAsync(new AppRegistration(
+            "com.example.pending",
+            "me@example.com",
+            "TEAM",
+            "UDID-1",
+            _inputIpa,
+            Lifecycle: "pending-install",
+            CatalogAppId: "pending-app"));
+        RefreshOrchestrator orchestrator = BuildOrchestrator();
+        var scheduler = new RefreshScheduler(_registry, orchestrator, _options, TimeProvider.System,
+            NullLogger<RefreshScheduler>.Instance);
+
+        await scheduler.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(0, _signer.SignCalls);
+        Assert.Empty(_devices.Installs);
+    }
+
+    [Fact]
     public async Task RunOnce_FreshlySignedApp_IsNotRefreshedAgain()
     {
         await RegisterAsync("com.example.app");

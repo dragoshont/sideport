@@ -23,6 +23,7 @@ publish/
 
 # Local secrets / runtime
 *.env
+deploy/sideport.env
 appsettings.*.Local.json
 *.p12
 *.mobileprovision

@@ -9,7 +9,10 @@ public sealed record AppCatalogOptions(
     string CatalogPath,
     string ImportDirectory,
     long MaxUploadBytes,
-    IReadOnlyList<AppCatalogSeed> Seeds);
+    IReadOnlyList<AppCatalogSeed> Seeds,
+    IReadOnlyList<AppCatalogImportRoot>? ImportRoots = null);
+
+public sealed record AppCatalogImportRoot(string Id, string Label, string Path);
 
 public sealed record AppCatalogSeed(
     string Id,
@@ -46,7 +49,9 @@ public sealed record CatalogAppDto(
     string Source,
     string Status,
     DateTimeOffset? LastInspectedAt,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    int CatalogVersion = 1,
+    IReadOnlyList<CatalogArtifactSourceDto>? ArtifactSources = null);
 
 public interface IAppCatalog
 {
@@ -55,9 +60,33 @@ public interface IAppCatalog
     Task<CatalogAppDto> InspectAndStoreAsync(CatalogInspectRequest request, CancellationToken ct = default);
 
     Task<(CatalogAppDto Entry, bool Created)> ImportUploadedIpaAsync(CatalogUploadRequest request, CancellationToken ct = default);
+
+    Task<IReadOnlyList<CatalogAppV2Dto>> ListV2Async(CancellationToken ct = default);
+
+    Task<IReadOnlyList<CatalogImportRootDto>> ListImportRootsAsync(CancellationToken ct = default);
+
+    Task<CatalogV2MutationResult> ImportFromRootV2Async(
+        CatalogRootImportRequest request,
+        string actor,
+        CancellationToken ct = default);
+
+    Task<CatalogV2MutationResult> ImportUploadedIpaV2Async(
+        CatalogUploadV2Request request,
+        string actor,
+        CancellationToken ct = default);
+
+    Task<CatalogV2MutationResult> ImportDownloadedGitHubIpaV2Async(
+        CatalogGitHubImportRequest request,
+        string actor,
+        CancellationToken ct = default);
+
+    Task<CatalogV2MutationResult?> TryReplayDownloadedGitHubIpaV2Async(
+        CatalogGitHubImportReplayRequest request,
+        string actor,
+        CancellationToken ct = default);
 }
 
-public sealed class FileAppCatalog : IAppCatalog
+public sealed partial class FileAppCatalog : IAppCatalog
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -71,6 +100,7 @@ public sealed class FileAppCatalog : IAppCatalog
     public FileAppCatalog(AppCatalogOptions options)
     {
         _options = options;
+        InitializeV2();
         LoadFromDisk();
     }
 
@@ -113,8 +143,26 @@ public sealed class FileAppCatalog : IAppCatalog
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            bool exists = _entries.TryGetValue(entry.Id, out CatalogAppDto? previous);
+            int nextVersion = exists ? EffectiveVersion(previous!) + 1 : 1;
+            entry = entry with
+            {
+                CatalogVersion = nextVersion,
+                ArtifactSources = [new CatalogArtifactSourceDto("server", "On this server")],
+            };
             _entries[entry.Id] = entry;
-            await SaveAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await SaveAsync(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (exists)
+                    _entries[entry.Id] = previous!;
+                else
+                    _entries.Remove(entry.Id);
+                throw;
+            }
         }
         finally
         {
@@ -132,7 +180,6 @@ public sealed class FileAppCatalog : IAppCatalog
             throw new FileNotFoundException("Uploaded IPA temporary file does not exist.", path);
 
         CatalogAppDto inspected = Inspect(path, request.Id, request.Name, request.Purpose, source: "upload");
-        string durablePath = UploadPathFor(inspected.Id);
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -141,28 +188,38 @@ public sealed class FileAppCatalog : IAppCatalog
             if (exists && !request.Replace)
                 throw new CatalogConflictException(inspected.Id);
 
+            int nextVersion = exists ? EffectiveVersion(previous!) + 1 : 1;
+            string durablePath = ManagedArtifactPathFor(inspected.Id, nextVersion);
             Directory.CreateDirectory(Path.GetDirectoryName(durablePath)!);
-            string tempPath = $"{durablePath}.{Guid.NewGuid():N}.tmp";
-            string? backupPath = null;
-            await using (FileStream source = File.OpenRead(path))
-            await using (FileStream sink = File.Create(tempPath))
+            string publishPath = $"{durablePath}.publishing";
+            bool published = false;
+            CatalogAppDto entry = inspected with
             {
-                await source.CopyToAsync(sink, ct).ConfigureAwait(false);
-            }
-
-            CatalogAppDto entry = inspected with { IpaPath = durablePath };
-            _entries[entry.Id] = entry;
+                IpaPath = durablePath,
+                CatalogVersion = nextVersion,
+                ArtifactSources = [new CatalogArtifactSourceDto("browser-upload", "This computer")],
+            };
             try
             {
-                if (File.Exists(durablePath))
+                await using (FileStream source = File.OpenRead(path))
+                await using (FileStream sink = new(
+                    publishPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    81_920,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
-                    backupPath = $"{durablePath}.{Guid.NewGuid():N}.bak";
-                    File.Move(durablePath, backupPath);
+                    await source.CopyToAsync(sink, ct).ConfigureAwait(false);
+                    await sink.FlushAsync(ct).ConfigureAwait(false);
                 }
-                File.Move(tempPath, durablePath);
+
+                File.Move(publishPath, durablePath);
+                published = true;
+                _entries[entry.Id] = entry;
                 await SaveAsync(ct).ConfigureAwait(false);
-                if (backupPath is not null)
-                    TryDelete(backupPath);
+                if (exists)
+                    TryDeleteSupersededManagedArtifact(previous!.IpaPath, durablePath);
             }
             catch
             {
@@ -170,11 +227,9 @@ public sealed class FileAppCatalog : IAppCatalog
                     _entries[inspected.Id] = previous!;
                 else
                     _entries.Remove(inspected.Id);
-                TryDelete(durablePath);
-                if (backupPath is not null && File.Exists(backupPath))
-                    File.Move(backupPath, durablePath, overwrite: true);
-                else
-                    TryDelete(tempPath);
+                TryDelete(publishPath);
+                if (published)
+                    TryDelete(durablePath);
                 throw;
             }
 
@@ -215,7 +270,10 @@ public sealed class FileAppCatalog : IAppCatalog
 
         try
         {
-            return Inspect(path, seed.Id, seed.Name, seed.Purpose, source: "seed");
+            return Inspect(path, seed.Id, seed.Name, seed.Purpose, source: "seed") with
+            {
+                ArtifactSources = [new CatalogArtifactSourceDto("server", "Configured seed")],
+            };
         }
         catch (Exception ex) when (ex is FormatException || ex is InvalidDataException)
         {
@@ -285,28 +343,50 @@ public sealed class FileAppCatalog : IAppCatalog
             return;
 
         using FileStream stream = File.OpenRead(_options.CatalogPath);
-        CatalogAppDto[]? entries = JsonSerializer.Deserialize<CatalogAppDto[]>(stream, JsonOptions);
-        if (entries is null)
-            return;
+        using JsonDocument document = JsonDocument.Parse(stream);
+        CatalogAppDto[] entries;
+        if (document.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            entries = document.RootElement.Deserialize<CatalogAppDto[]>(JsonOptions) ?? [];
+        }
+        else
+        {
+            CatalogStoreDocument? stored = document.RootElement.Deserialize<CatalogStoreDocument>(JsonOptions);
+            entries = stored?.Apps ?? [];
+            _idempotency.AddRange(stored?.Idempotency ?? []);
+        }
 
         foreach (CatalogAppDto entry in entries)
-            _entries[entry.Id] = entry;
+        {
+            _entries[entry.Id] = entry with
+            {
+                CatalogVersion = EffectiveVersion(entry),
+                ArtifactSources = EffectiveArtifactSources(entry),
+            };
+        }
     }
 
     private async Task SaveAsync(CancellationToken ct)
     {
-        string? directory = Path.GetDirectoryName(_options.CatalogPath);
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory);
-
         string tempPath = $"{_options.CatalogPath}.{Guid.NewGuid():N}.tmp";
-        await using (FileStream stream = File.Create(tempPath))
-        {
-            await JsonSerializer.SerializeAsync(stream, _entries.Values.OrderBy(app => app.Name).ToArray(), JsonOptions, ct).ConfigureAwait(false);
-        }
-
         try
         {
+            string? directory = Path.GetDirectoryName(_options.CatalogPath);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            await using (FileStream stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(
+                    stream,
+                    new CatalogStoreDocument(
+                        2,
+                        _entries.Values.OrderBy(app => app.Name).ToArray(),
+                        _idempotency.OrderBy(item => item.CreatedAt).ToArray()),
+                    JsonOptions,
+                    ct).ConfigureAwait(false);
+            }
+
             File.Move(tempPath, _options.CatalogPath, overwrite: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -314,16 +394,75 @@ public sealed class FileAppCatalog : IAppCatalog
             TryDelete(tempPath);
             throw new CatalogStoreException("Catalog could not be saved.", ex);
         }
+        catch
+        {
+            TryDelete(tempPath);
+            throw;
+        }
     }
 
-    private string UploadPathFor(string id)
+    private string ManagedArtifactPathFor(string id, int catalogVersion)
     {
-        string path = Path.GetFullPath(Path.Combine(_options.ImportDirectory, $"{CatalogId(id)}.ipa"));
-        string root = Path.GetFullPath(_options.ImportDirectory);
-        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new ArgumentException("Catalog upload ID resolves outside the import directory.");
+        if (catalogVersion < 1)
+            throw new ArgumentOutOfRangeException(nameof(catalogVersion));
+
+        string root = ManagedArtifactsRoot();
+        string path = Path.GetFullPath(Path.Combine(
+            root,
+            CatalogId(id),
+            $"v{catalogVersion}-{Guid.NewGuid():N}.ipa"));
+        if (!IsPathWithinRoot(root, path))
+            throw new ArgumentException("Catalog artifact ID resolves outside managed storage.");
         return path;
     }
+
+    private string ManagedArtifactsRoot() =>
+        Path.GetFullPath(Path.Combine(_options.ImportDirectory, ".managed"));
+
+    private void TryDeleteSupersededManagedArtifact(string previousPath, string currentPath)
+    {
+        string fullPreviousPath;
+        try
+        {
+            fullPreviousPath = Path.GetFullPath(previousPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return;
+        }
+
+        if (!IsPathWithinRoot(ManagedArtifactsRoot(), fullPreviousPath) ||
+            PathsEqual(fullPreviousPath, currentPath) ||
+            _entries.Values.Any(entry => PathsEqual(entry.IpaPath, fullPreviousPath)))
+        {
+            return;
+        }
+
+        TryDelete(fullPreviousPath);
+    }
+
+    private static bool IsPathWithinRoot(string root, string candidate)
+    {
+        string relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(candidate));
+        return !Path.IsPathRooted(relative) &&
+               relative != ".." &&
+               !relative.StartsWith($"..{Path.DirectorySeparatorChar}", PathComparison);
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), PathComparison);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static string NormalizeIpaPath(string ipaPath)
     {
@@ -386,6 +525,18 @@ public sealed class FileAppCatalog : IAppCatalog
 
         return builder.ToString().Trim('-');
     }
+
+    private static int EffectiveVersion(CatalogAppDto entry) => Math.Max(1, entry.CatalogVersion);
+
+    private static IReadOnlyList<CatalogArtifactSourceDto> EffectiveArtifactSources(CatalogAppDto entry) =>
+        entry.ArtifactSources is { Count: > 0 }
+            ? entry.ArtifactSources
+            : entry.Source switch
+            {
+                "upload" => [new CatalogArtifactSourceDto("browser-upload", "This computer")],
+                "seed" => [new CatalogArtifactSourceDto("server", "Configured seed")],
+                _ => [new CatalogArtifactSourceDto("server", "On this server")],
+            };
 }
 
 public sealed class CatalogConflictException(string id) : Exception($"Catalog app '{id}' already exists.")

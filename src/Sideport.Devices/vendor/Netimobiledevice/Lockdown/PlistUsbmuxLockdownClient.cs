@@ -14,19 +14,6 @@ namespace Netimobiledevice.Lockdown
         {
         }
 
-        public override void SavePairRecord()
-        {
-            base.SavePairRecord();
-
-            ulong? deviceId = _service?.MuxDevice?.DeviceId;
-            if (deviceId != null && _pairRecord != null) {
-                byte[] recordData = PropertyList.SaveAsByteArray(_pairRecord, PlistFormat.Xml);
-                using (PlistMuxConnection muxConnection = (PlistMuxConnection) UsbmuxConnection.Create(logger: Logger)) {
-                    muxConnection.SavePairRecord(Identifier, (ulong) deviceId, recordData);
-                }
-            }
-        }
-
         /// <summary>
         /// Create a LockdownClient instance
         /// </summary>

@@ -74,7 +74,7 @@ export const IssueResolved: Story = { name: 'Diagnostics — resolved', render: 
 // ---------- Atoms ----------
 const healthStates: HealthState[] = ['healthy', 'warning', 'blocked', 'failed', 'offline']
 const sources: SourceKind[] = ['live', 'derived', 'demo', 'planned']
-const roles: WorkspaceRole[] = ['owner', 'admin', 'operator', 'viewer']
+const roles: WorkspaceRole[] = ['owner', 'family']
 
 export const StatusPills: Story = { name: 'StatusPill — all states', render: () => <div className="story-row">{healthStates.map((state) => <StatusPill key={state} state={state} label={state} />)}</div> }
 export const SourcePills: Story = { name: 'SourcePill — all sources', render: () => <div className="story-row">{sources.map((source) => <SourcePill key={source} source={source} label={source} />)}</div> }

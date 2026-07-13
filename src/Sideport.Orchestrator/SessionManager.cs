@@ -23,8 +23,10 @@ public sealed class SessionManager : ISessionManager
     private readonly IAppleCredentialProvider _credentials;
     private readonly ILogger<SessionManager> _logger;
 
-    private readonly ConcurrentDictionary<string, AppleSession> _sessions = new();
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private readonly ConcurrentDictionary<string, AppleSession> _sessions =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public SessionManager(
         IAppleDeveloperPortal portal,
@@ -34,6 +36,12 @@ public sealed class SessionManager : ISessionManager
         _portal = portal;
         _credentials = credentials;
         _logger = logger ?? NullLogger<SessionManager>.Instance;
+    }
+
+    public AppleSession? TryGetCachedSession(string appleId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(appleId);
+        return _sessions.GetValueOrDefault(appleId);
     }
 
     public async Task<AppleSession> GetSessionAsync(string appleId, CancellationToken ct = default)
@@ -94,6 +102,12 @@ public sealed class SessionManager : ISessionManager
                 throw new InteractiveLoginRequiredException(appleId, twoFactor.Challenge),
             _ => throw new InvalidOperationException($"unexpected login result {result.GetType().Name}"),
         };
+    }
+
+    public void RememberSession(AppleSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        Cache(session.AppleId, session);
     }
 
     public void Invalidate(string appleId) => _sessions.TryRemove(appleId, out _);

@@ -21,10 +21,10 @@ jobs:
           cache: npm
           cache-dependency-path: src/Sideport.Admin/package-lock.json
       - run: npm ci
-      - run: npm run lint
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ci
       - run: npm run build
       - run: npm run build-storybook
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:screens -- --project=desktop --project=mobile
 
   build-test:
@@ -44,7 +44,10 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
-      - run: dotnet test --no-build -c Release
+      # The solution contains process-backed/device-deadline integration tests.
+      # Serialize project execution so cross-project scheduler pressure cannot
+      # turn a deterministic timeout into a product failure.
+      - run: dotnet test --no-build -c Release --maxcpucount:1
 
   build-image:
     # Publish the runnable image after the suite is green. Skipped on PRs (no
@@ -84,11 +87,11 @@ jobs:
           # zsign is a static amd64 ELF (baked from altserver-linux), so the
           # image is amd64 (a native arm64 build would need an arm64 zsign).
           platforms: linux/amd64
-          # Single-platform image: skip the provenance/SBOM attestation
-          # manifests so the GHCR package lists just `linux/amd64` instead of an
-          # extra `unknown/unknown` entry.
-          provenance: false
-          sbom: false
+          # Release evidence is part of the production gate. GHCR may display
+          # attestation manifests as unknown/unknown; that is expected OCI
+          # metadata, not another runnable platform.
+          provenance: mode=max
+          sbom: true
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

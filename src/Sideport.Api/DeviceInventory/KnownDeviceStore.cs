@@ -56,6 +56,7 @@ public sealed class KnownDeviceStore
         try
         {
             EnsureLoaded();
+            record = NormalizeForWrite(record);
             int index = _records!.FindIndex(device => SameUdid(device.Udid, record.Udid));
             bool created = index < 0;
             KnownDeviceRecord? previous = created ? null : _records[index];
@@ -127,7 +128,9 @@ public sealed class KnownDeviceStore
         try
         {
             using FileStream stream = File.OpenRead(_path);
-            _records = JsonSerializer.Deserialize<List<KnownDeviceRecord>>(stream, JsonOptions) ?? [];
+            _records = (JsonSerializer.Deserialize<List<KnownDeviceRecord>>(stream, JsonOptions) ?? [])
+                .Select(MigrateLoadedRecord)
+                .ToList();
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -157,6 +160,73 @@ public sealed class KnownDeviceStore
     }
 
     private static bool SameUdid(string left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    private static KnownDeviceRecord MigrateLoadedRecord(KnownDeviceRecord record)
+    {
+        string inventoryState = NormalizeInventoryState(record.InventoryState, legacyFallback: true);
+        bool hasCompleteAcceptanceEvidence =
+            inventoryState == "accepted" &&
+            record.AcceptedAt is not null &&
+            !string.IsNullOrWhiteSpace(record.AcceptedBy) &&
+            !string.IsNullOrWhiteSpace(record.EnrollmentOperationId);
+
+        if (!hasCompleteAcceptanceEvidence && inventoryState == "accepted")
+            inventoryState = "legacy-unverified";
+
+        return record with
+        {
+            InventoryState = inventoryState,
+            AcceptedAt = hasCompleteAcceptanceEvidence ? record.AcceptedAt : null,
+            AcceptedBy = hasCompleteAcceptanceEvidence ? record.AcceptedBy : null,
+            EnrollmentOperationId = hasCompleteAcceptanceEvidence ? record.EnrollmentOperationId : null,
+            OwnerMemberId = NormalizeOptional(record.OwnerMemberId),
+            TrustState = NormalizeTrustState(record.TrustState),
+            UsableForInstall = record.UsableForInstall && NormalizeTrustState(record.TrustState) == "trusted",
+        };
+    }
+
+    private static KnownDeviceRecord NormalizeForWrite(KnownDeviceRecord record)
+    {
+        string inventoryState = NormalizeInventoryState(record.InventoryState, legacyFallback: true);
+        if (inventoryState == "accepted" &&
+            (record.AcceptedAt is null ||
+             string.IsNullOrWhiteSpace(record.AcceptedBy) ||
+             string.IsNullOrWhiteSpace(record.EnrollmentOperationId)))
+        {
+            throw new ArgumentException("Accepted devices require timestamp, actor, and enrollment-operation evidence.", nameof(record));
+        }
+
+        return record with
+        {
+            InventoryState = inventoryState,
+            AcceptedAt = inventoryState == "accepted" ? record.AcceptedAt : null,
+            AcceptedBy = inventoryState == "accepted" ? record.AcceptedBy?.Trim() : null,
+            EnrollmentOperationId = inventoryState == "accepted" ? record.EnrollmentOperationId?.Trim() : null,
+            OwnerMemberId = NormalizeOptional(record.OwnerMemberId),
+            TrustState = NormalizeTrustState(record.TrustState),
+            UsableForInstall = record.UsableForInstall && NormalizeTrustState(record.TrustState) == "trusted",
+        };
+    }
+
+    private static string NormalizeInventoryState(string? state, bool legacyFallback) => state?.Trim().ToLowerInvariant() switch
+    {
+        "discovered" => "discovered",
+        "legacy-unverified" => "legacy-unverified",
+        "accepted" => "accepted",
+        _ => legacyFallback ? "legacy-unverified" : "discovered",
+    };
+
+    private static string NormalizeTrustState(string? state) => state?.Trim().ToLowerInvariant() switch
+    {
+        "trusted" => "trusted",
+        "untrusted" => "untrusted",
+        "locked" => "locked",
+        "error" => "error",
+        _ => "unknown",
+    };
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 public sealed record KnownDeviceRecord(
@@ -172,6 +242,14 @@ public sealed record KnownDeviceRecord(
     string TrustState,
     string? Owner,
     string? Notes,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? InventoryState = null,
+    DateTimeOffset? AcceptedAt = null,
+    string? AcceptedBy = null,
+    string? EnrollmentOperationId = null,
+    string? TrustReason = null,
+    DateTimeOffset? LockdownCheckedAt = null,
+    bool UsableForInstall = false,
+    string? OwnerMemberId = null);
 
 public sealed class KnownDeviceStoreException(string message, Exception innerException) : Exception(message, innerException);

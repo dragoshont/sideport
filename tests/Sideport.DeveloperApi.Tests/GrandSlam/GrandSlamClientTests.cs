@@ -170,6 +170,43 @@ public class GrandSlamClientTests
         GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
             () => client.AuthenticateAsync(Username, Password));
         Assert.Contains("502", ex.Message);
+        Assert.Equal(HttpStatusCode.BadGateway, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Authenticate_ServerReturns429_PreservesHttpStatus()
+    {
+        var http = new HttpClient(new FixedStatusHandler(HttpStatusCode.TooManyRequests));
+        var client = new GrandSlamClient(
+            http,
+            new StubAnisetteProvider(),
+            new GrandSlamClientOptions { DeviceId = "test" },
+            NullLogger<GrandSlamClient>.Instance);
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
+        Assert.Null(ex.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Authenticate_MalformedSpd_DoesNotExposeDecryptedByteFragments()
+    {
+        byte[] sensitivePlaintext = [0xDE, 0xAD, 0xBE, 0xEF, 0xFA, 0xCE, 0xCA, 0xFE];
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            SpdPlaintextOverride = sensitivePlaintext,
+        };
+        GrandSlamClient client = ClientFor(handler);
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Contains("plain=8B", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(Convert.ToHexString(sensitivePlaintext), ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("head=", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("tail=", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

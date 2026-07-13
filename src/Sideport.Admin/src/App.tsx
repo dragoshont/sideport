@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
   Apple,
-  Building2,
   Cable,
   CheckCircle2,
   ChevronRight,
@@ -15,7 +14,6 @@ import {
   HardDrive,
   History,
   KeyRound,
-  ListChecks,
   Loader2,
   Network,
   Package,
@@ -46,8 +44,8 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import './App.css'
-import { cancelOperation, completePersonalAppleTwoFactor, getStoredSideportApiToken, inspectCatalogApp, preflightSideportRefresh, refreshSideportApp, registerSideportApp, rerunOperation, retryOperation, runDeviceDiagnostics, saveSideportApiToken, signInPersonalApple, uploadCatalogIpa, useSideportAdminData, type AdminDataStatus, type AppRegistrationPayload, type DeviceDiagnosticsDto, type OperationPreflightDto } from './api/sideportApi'
-import type { OnboardingStep, OnboardingStepState } from './api/sideportApi'
+import { AddAppDialog, AddIPhoneDialog, GlobalAddMenu, type AddAppCatalogItem, type AddAppServices, type AddIPhoneServices, type EnrollmentCandidate, type EnrollmentOperation, type GitHubCallbackResume } from './add-flows/AddFlows'
+import { cancelOperation, completePersonalAppleTwoFactor, completeReplacementAppleTwoFactor, completeSideportOnboarding, connectPersonalApple, connectReplacementAppleAccount, createGitHubCatalogConnection, cutoverPersonalAppleSigning, getGitHubCatalogConnection, getSideportOperation, getStoredSideportApiToken, importGitHubCatalogApp, inspectCatalogAppV2, installSideportCatalogApp, listCatalogImportRoots, listGitHubCatalogReleases, listGitHubCatalogSources, listReachableDevices, preflightPersonalAppleSigning, preflightSideportInstall, preflightSideportRefresh, reconcileSideportOperation, refreshSideportApp, registerPendingSideportApp, rerunOperation, retryOperation, runDeviceDiagnostics, saveSideportApiToken, selectPersonalAppleTeam, SideportApiError, signInPersonalApple, startDeviceEnrollment, updateSideportSchedulerSettings, uploadCatalogIpaV2, useSideportAdminData, type AdminDataStatus, type AppleAccountReplacementCandidateDto, type AppRegistrationDto, type CatalogAppV2Dto, type DeviceDiagnosticsDto, type InstallOperationPayload, type InstallPreflightPayload, type OnboardingCompletionPayload, type OperationPreflightDto, type OperationRecordDto, type PendingAppRegistrationPayload, type PersonalAppleSigningPreflightDto, type ReachableDeviceDto, type SchedulerStatusDto } from './api/sideportApi'
 import {
   runtimeEmptyData,
   type ActivityEvent,
@@ -75,20 +73,16 @@ import {
   type WorkspaceSummary,
 } from './data/sideportTypes'
 import { compactUdid, relativeTime, shortDateTime, sourceLabel, timeUntil } from './lib/format'
+import { RuntimeFirstRunOnboarding } from './onboarding/RuntimeFirstRunOnboarding'
 
-export type RouteId = 'onboarding' | 'overview' | 'devices' | 'device-detail' | 'catalog' | 'install-app' | 'renewals' | 'operations' | 'apple-access' | 'diagnostics' | 'teams' | 'users' | 'settings'
+export type RouteId = 'home' | 'apps' | 'devices' | 'people' | 'activity' | 'settings' | 'device-detail' | 'install-app'
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
-  { id: 'onboarding', label: 'Onboarding', icon: ListChecks },
-  { id: 'overview', label: 'Overview', icon: Gauge },
+  { id: 'home', label: 'Home', icon: Gauge },
+  { id: 'apps', label: 'Apps', icon: Package },
   { id: 'devices', label: 'Devices', icon: Smartphone },
-  { id: 'catalog', label: 'App Catalog', icon: Package },
-  { id: 'renewals', label: 'Renewals', icon: TimerReset },
-  { id: 'operations', label: 'Operations', icon: Activity },
-  { id: 'apple-access', label: 'Apple Access', icon: KeyRound },
-  { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
-  { id: 'teams', label: 'Teams', icon: Building2 },
-  { id: 'users', label: 'Users', icon: Users },
+  { id: 'people', label: 'People', icon: Users },
+  { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
@@ -121,6 +115,15 @@ export interface SideportAdminAppProps {
   apiStatus?: AdminDataStatus
   initialRoute?: RouteId
   initialCommandOpen?: boolean
+  addIPhoneServices?: AddIPhoneServices
+  addAppServices?: AddAppServices
+  installAppService?: (payload: InstallOperationPayload) => Promise<OperationRecordDto>
+  preflightInstallService?: (payload: InstallPreflightPayload) => Promise<OperationPreflightDto>
+  readOperationService?: (operationId: string) => Promise<OperationRecordDto>
+  reconcileOperationService?: (operationId: string, payload: { idempotencyKey: string; note?: string }) => Promise<OperationRecordDto>
+  completeOnboardingService?: (payload: OnboardingCompletionPayload) => Promise<unknown>
+  registerPendingAppService?: (payload: PendingAppRegistrationPayload) => Promise<AppRegistrationDto>
+  schedulerSettingsService?: (enabled: boolean) => Promise<SchedulerStatusDto>
   onApiTokenSaved?: () => void
 }
 
@@ -131,23 +134,478 @@ const runtimeStatus: AdminDataStatus = {
   canMutate: false,
 }
 
-export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding', initialCommandOpen = false, onApiTokenSaved }: SideportAdminAppProps) {
+function newUiIdempotencyKey(scope: string): string {
+  const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `ui-${scope}-${suffix}`
+}
+
+function catalogDtoToAddItem(app: CatalogAppV2Dto): AddAppCatalogItem {
+  return {
+    id: app.id,
+    name: app.name,
+    purpose: app.purpose,
+    versionLabel: app.shortVersion || app.version || 'Version unavailable',
+    status: app.status,
+    artifactSources: app.artifactSources,
+    icon: app.icon ?? undefined,
+  }
+}
+
+function operationToEnrollment(record: OperationRecordDto): EnrollmentOperation {
+  return {
+    operationId: record.operationId ?? '',
+    status: record.status ?? 'unknown',
+    stages: (record.stages ?? []).map((stage) => ({ id: stage.id ?? '', status: stage.status ?? 'pending', message: stage.message ?? '' })),
+    result: record.result ? { deviceEnrollment: record.result.deviceEnrollment } : null,
+    error: record.error ? { code: record.error.code, message: record.error.message } : null,
+    retryable: record.retryable === true,
+    candidateDevices: record.candidateDevices?.map((candidate) => ({
+      udidSuffix: candidate.udidSuffix ?? '',
+      name: candidate.name ?? 'Connected iPhone',
+      productType: candidate.productType,
+      osVersion: candidate.osVersion,
+      connection: candidate.connection ?? 'usb',
+    })) ?? null,
+  }
+}
+
+function githubCallbackFromLocation(): GitHubCallbackResume | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  const connectionId = params.get('githubConnection')?.trim() ?? ''
+  const sourceId = params.get('source')?.trim() ?? ''
+  if (!connectionId || connectionId.length > 256 || sourceId.length > 256) return null
+  return { connectionId, sourceId: sourceId || null }
+}
+
+function clearGitHubCallbackFromLocation(): void {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has('githubConnection')) return
+  url.searchParams.delete('githubConnection')
+  url.searchParams.delete('source')
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function isUsbDevice(device: ReachableDeviceDto): boolean {
+  return device.connection === 0 || (typeof device.connection === 'string' && device.connection.toLowerCase() === 'usb')
+}
+
+function authoritativeCandidateUdid(candidate: EnrollmentCandidate, devices: ReachableDeviceDto[]): string | null {
+  const suffix = candidate.udidSuffix.trim().toLowerCase()
+  if (suffix.length !== 8 || candidate.connection.toLowerCase() !== 'usb') return null
+  const matches = devices.filter((device) =>
+    Boolean(device.udid)
+    && isUsbDevice(device)
+    && device.udid!.toLowerCase().endsWith(suffix))
+  return matches.length === 1 ? matches[0].udid! : null
+}
+
+const ACTIVE_INSTALL_STATUSES = new Set(['queued', 'waiting', 'running'])
+const ONBOARDING_INSTALL_SESSION_PREFIX = 'sideport.onboarding.install.v1:'
+
+function attemptCompletionChime(): void {
+  try {
+    const AudioContextClass = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextClass) return
+    const context = new AudioContextClass()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    oscillator.frequency.setValueAtTime(660, context.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(880, context.currentTime + 0.16)
+    gain.gain.setValueAtTime(0.0001, context.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.28)
+    oscillator.connect(gain).connect(context.destination)
+    oscillator.start()
+    oscillator.stop(context.currentTime + 0.3)
+    oscillator.addEventListener('ended', () => void context.close(), { once: true })
+  } catch {
+    // Browser audio is best-effort and never changes verified install state.
+  }
+}
+
+function hasCapability(data: SideportReadModel, status: AdminDataStatus, capability: string): boolean {
+  return status.canMutate
+    && data.workspace.source !== 'planned'
+    && data.workspace.authMode !== 'open-behind-proxy'
+    && data.workspace.capabilities?.[capability] === true
+}
+
+function onboardingInstallSessionKey(baseUrl: string): string {
+  return `${ONBOARDING_INSTALL_SESSION_PREFIX}${encodeURIComponent((baseUrl || '/').split(/[?#]/, 1)[0])}`
+}
+
+function readRememberedOperationId(key: string): string | null {
+  try {
+    const value = window.sessionStorage.getItem(key)?.trim() ?? ''
+    return value && value.length <= 256 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function rememberOperationId(key: string, operationId: string | null): void {
+  try {
+    if (operationId) window.sessionStorage.setItem(key, operationId)
+    else window.sessionStorage.removeItem(key)
+  } catch {
+    // The workflow activeOperationId remains the durable resume source.
+  }
+}
+
+function replacementInstallPreflight(error: unknown): OperationPreflightDto | null {
+  if (!(error instanceof SideportApiError) || error.code !== 'install-preflight-stale') return null
+  const data = error.data
+  if (!data || typeof data !== 'object') return null
+  const record = data as Record<string, unknown>
+  const candidate = (record.preflight ?? record.replacementPreflight ?? data) as Partial<OperationPreflightDto>
+  if (typeof candidate.ready !== 'boolean' || !Array.isArray(candidate.blockers) || !Array.isArray(candidate.warnings) || !Array.isArray(candidate.plannedMutations) || !Array.isArray(candidate.scarceLimits)) return null
+  return candidate as OperationPreflightDto
+}
+
+function preferredAcceptedUsbDevice(data: SideportReadModel): DeviceSummary | undefined {
+  const candidates = data.devices.filter((device) =>
+    device.inventoryState === 'accepted'
+    && device.connection === 'usb'
+    && device.usableForInstall !== false)
+  return candidates.find((device) => device.supportedForFirstInstall) ?? candidates[0]
+}
+
+function operationFailure(record: OperationRecordDto): string | null {
+  if (ACTIVE_INSTALL_STATUSES.has(record.status ?? '')) return null
+  return record.error?.message ?? record.error?.detail ?? (record.status === 'failed' || record.status === 'blocked' ? 'Sideport could not start this install.' : null)
+}
+
+export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initialCommandOpen = false, addIPhoneServices: injectedAddIPhoneServices, addAppServices: injectedAddAppServices, installAppService: injectedInstallAppService, preflightInstallService: injectedPreflightInstallService, readOperationService: injectedReadOperationService, reconcileOperationService: injectedReconcileOperationService, completeOnboardingService: injectedCompleteOnboardingService, registerPendingAppService: injectedRegisterPendingAppService, schedulerSettingsService: injectedSchedulerSettingsService, onApiTokenSaved }: SideportAdminAppProps) {
+  const queryClient = useQueryClient()
   const viewData = data ?? runtimeEmptyData
   const viewStatus = apiStatus ?? runtimeStatus
   const catalogApps = viewData.catalogApps
   const [route, setRoute] = useState<RouteId>(initialRoute)
-  const [selectedCatalogAppId, setSelectedCatalogAppId] = useState(catalogApps[0]?.id ?? '')
+  const [selectedCatalogAppId, setSelectedCatalogAppId] = useState('')
   const [selectedDeviceUdid, setSelectedDeviceUdid] = useState(viewData.devices[0]?.udid ?? '')
   const [commandOpen, setCommandOpen] = useState(initialCommandOpen)
+  const [addIPhoneOpen, setAddIPhoneOpen] = useState(false)
+  const [githubCallback, setGitHubCallback] = useState<GitHubCallbackResume | null>(() => githubCallbackFromLocation())
+  const [addAppOpen, setAddAppOpen] = useState(Boolean(githubCallback))
+  const [installRequestPending, setInstallRequestPending] = useState(false)
+  const [installRequestError, setInstallRequestError] = useState<string | null>(null)
+  const onboardingInstallKey = useMemo(() => onboardingInstallSessionKey(viewStatus.baseUrl), [viewStatus.baseUrl])
+  const [submittedInstallOperationId, setSubmittedInstallOperationId] = useState<string | null>(() => readRememberedOperationId(onboardingInstallSessionKey(viewStatus.baseUrl)))
+  const [onboardingPreflight, setOnboardingPreflight] = useState<OperationPreflightDto | null>(null)
+  const [onboardingInstallOperation, setOnboardingInstallOperation] = useState<OperationRecordDto | null>(null)
+  const [ignoredInstallOperationId, setIgnoredInstallOperationId] = useState<string | null>(null)
+  const [installPollError, setInstallPollError] = useState<string | null>(null)
+  const [finalizationPending, setFinalizationPending] = useState(false)
+  const [reconciliationPending, setReconciliationPending] = useState(false)
+  const [appSelectionPending, setAppSelectionPending] = useState(false)
+  const [appSelectionError, setAppSelectionError] = useState<string | null>(null)
+  const addFlowReturnFocusRef = useRef<HTMLElement | null>(null)
+  const globalAddTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const installRequestInFlightRef = useRef(false)
+  const appSelectionInFlightRef = useRef(false)
+  const installApp = injectedInstallAppService ?? installSideportCatalogApp
+  const preflightInstall = injectedPreflightInstallService ?? preflightSideportInstall
+  const readOperation = injectedReadOperationService ?? getSideportOperation
+  const reconcileOperation = injectedReconcileOperationService ?? reconcileSideportOperation
+  const finalizeOnboarding = injectedCompleteOnboardingService ?? completeSideportOnboarding
+  const registerPendingApp = injectedRegisterPendingAppService ?? registerPendingSideportApp
+  const canManageAppleSigner = hasCapability(viewData, viewStatus, 'apple.signer.manage')
+  const canAddIPhone = hasCapability(viewData, viewStatus, 'devices.enroll')
+  const canImportCatalog = hasCapability(viewData, viewStatus, 'catalog.import')
+  const canManageGitHub = hasCapability(viewData, viewStatus, 'integrations.github.manage')
+  const canRunOperations = hasCapability(viewData, viewStatus, 'operations.run')
+  const canCompleteOnboarding = hasCapability(viewData, viewStatus, 'onboarding.complete')
+  const canManageScheduler = hasCapability(viewData, viewStatus, 'scheduler.manage')
+  const workflowInstallStep = viewStatus.onboarding?.workflow?.steps.find((step) => step.id === 'install')
   const selectedDevice = viewData.devices.find((device) => device.udid === selectedDeviceUdid) ?? viewData.devices[0]
   const openDevice = (device: DeviceSummary) => {
     setSelectedDeviceUdid(device.udid)
     setRoute('device-detail')
   }
-  const openInstallWizard = (catalogAppId = selectedCatalogAppId) => {
+  const openInstallPage = (catalogAppId = selectedCatalogAppId) => {
     setSelectedCatalogAppId(catalogAppId || catalogApps[0]?.id || '')
     setRoute('install-app')
   }
+  const continueAfterIPhone = () => {
+    setAddIPhoneOpen(false)
+    setRoute('apps')
+    void refreshAdminData()
+  }
+  const rememberAddFlowTrigger = () => {
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const transientOrigin = activeElement?.closest('.add-menu-popover, .command-content')
+    addFlowReturnFocusRef.current = transientOrigin ? globalAddTriggerRef.current : activeElement
+  }
+  const openAddIPhone = () => {
+    rememberAddFlowTrigger()
+    setAddAppOpen(false)
+    setAddIPhoneOpen(true)
+  }
+  const openAddApp = () => {
+    rememberAddFlowTrigger()
+    setGitHubCallback(null)
+    setAddIPhoneOpen(false)
+    setAddAppOpen(true)
+  }
+  const handleAddAppOpenChange = (nextOpen: boolean) => {
+    setAddAppOpen(nextOpen)
+    if (!nextOpen) setGitHubCallback(null)
+  }
+  const refreshAdminData = () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+  const selectOnboardingApp = async (catalogAppId: string, acceptFreshImport = false): Promise<boolean> => {
+    if (appSelectionInFlightRef.current) return false
+    setInstallRequestError(null)
+    setOnboardingPreflight(null)
+    if (!onboardingInstallOperation || !ACTIVE_INSTALL_STATUSES.has(onboardingInstallOperation.status ?? '')) {
+      setIgnoredInstallOperationId(onboardingInstallOperation?.operationId ?? workflowInstallStep?.activeOperationId ?? null)
+      setOnboardingInstallOperation(null)
+    }
+    setSelectedCatalogAppId(catalogAppId)
+    setAppSelectionError(null)
+    if (viewStatus.mode === 'demo') return true
+    const catalogApp = catalogApps.find((app) => app.id === catalogAppId && app.status === 'ready')
+    const device = preferredAcceptedUsbDevice(viewData) ?? viewData.devices.find((candidate) => candidate.inventoryState === 'accepted')
+    const accountProfileId = viewData.personalApple.accountProfileId?.trim() ?? ''
+    if ((!catalogApp && !acceptFreshImport) || !catalogAppId.trim() || !device || !accountProfileId || !canImportCatalog) {
+      setAppSelectionError('Sideport needs an accepted iPhone, connected Apple account, and permission to save this app choice.')
+      return false
+    }
+    appSelectionInFlightRef.current = true
+    setAppSelectionPending(true)
+    try {
+      await registerPendingApp({ catalogAppId, deviceUdid: device.udid, accountProfileId, lifecycle: 'pending-install' })
+      await refreshAdminData()
+      return true
+    } catch (reason) {
+      setAppSelectionError(reason instanceof Error ? reason.message : 'Sideport could not save this app choice.')
+      void refreshAdminData()
+      return false
+    } finally {
+      setAppSelectionPending(false)
+      appSelectionInFlightRef.current = false
+    }
+  }
+  const chooseAppFromAddFlow = (app: AddAppCatalogItem) => {
+    setSelectedCatalogAppId(app.id)
+    setInstallRequestError(null)
+    setRoute('install-app')
+    void refreshAdminData()
+  }
+  const onboardingInstallTarget = useCallback((catalogAppId: string) => {
+    const catalogApp = catalogApps.find((app) => app.id === catalogAppId && app.status === 'ready')
+    const device = preferredAcceptedUsbDevice(viewData)
+    const selectedTeam = viewData.personalApple.teams.find((team) => team.teamId === viewData.personalApple.selectedTeamId)
+    const accountProfileId = viewData.personalApple.accountProfileId?.trim() ?? ''
+    const blocker = !catalogApp
+      ? 'Choose an app that Sideport has inspected.'
+      : !device
+        ? 'Connect an accepted iPhone by USB before the first install.'
+        : viewData.personalApple.state !== 'authenticated' || !accountProfileId || !selectedTeam
+          ? 'Finish Apple sign-in and choose a team returned by Apple.'
+          : !canRunOperations
+            ? 'Sign in to a protected Sideport session before installing.'
+            : null
+    return { catalogApp, device, accountProfileId, blocker }
+  }, [canRunOperations, catalogApps, viewData])
+
+  const prepareOnboardingInstall = useCallback(async (catalogAppId: string) => {
+    if (installRequestInFlightRef.current) return
+    const { catalogApp, device, accountProfileId, blocker } = onboardingInstallTarget(catalogAppId)
+    if (blocker || !catalogApp || !device || !accountProfileId) {
+      setInstallRequestError(blocker ?? 'Sideport is missing an install requirement.')
+      return
+    }
+    installRequestInFlightRef.current = true
+    setInstallRequestPending(true)
+    setInstallRequestError(null)
+    setOnboardingPreflight(null)
+    if (!onboardingInstallOperation || !ACTIVE_INSTALL_STATUSES.has(onboardingInstallOperation.status ?? '')) {
+      setIgnoredInstallOperationId(onboardingInstallOperation?.operationId ?? workflowInstallStep?.activeOperationId ?? null)
+      setOnboardingInstallOperation(null)
+      setSubmittedInstallOperationId(null)
+      rememberOperationId(onboardingInstallKey, null)
+    }
+    try {
+      await registerPendingApp({ catalogAppId: catalogApp.id, deviceUdid: device.udid, accountProfileId, lifecycle: 'pending-install' })
+      setOnboardingPreflight(await preflightInstall({ deviceUdid: device.udid, bundleId: catalogApp.expectedBundleId, catalogAppId: catalogApp.id, accountProfileId, finishOnboarding: true }))
+    } catch (reason) {
+      setInstallRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.')
+    } finally {
+      setInstallRequestPending(false)
+      installRequestInFlightRef.current = false
+    }
+  }, [onboardingInstallKey, onboardingInstallOperation, onboardingInstallTarget, preflightInstall, registerPendingApp, workflowInstallStep?.activeOperationId])
+
+  const startOnboardingInstall = async (catalogAppId: string) => {
+    const workflowBlocksNewInstall = workflowInstallStep?.state === 'in-progress'
+      || workflowInstallStep?.nextAction?.action === 'retry-finalization'
+      || workflowInstallStep?.nextAction?.action === 'reconcile-install'
+    if (installRequestInFlightRef.current || submittedInstallOperationId || workflowBlocksNewInstall) return
+    const { catalogApp, device, accountProfileId, blocker } = onboardingInstallTarget(catalogAppId)
+    if (blocker || !catalogApp || !device || !accountProfileId || !onboardingPreflight?.preflightId || !onboardingPreflight.planVersion || !onboardingPreflight.ready) {
+      setInstallRequestError(blocker ?? 'Review the current install checks before continuing.')
+      return
+    }
+
+    installRequestInFlightRef.current = true
+    setInstallRequestPending(true)
+    setInstallRequestError(null)
+    try {
+      const record = await installApp({
+        deviceUdid: device.udid,
+        bundleId: catalogApp.expectedBundleId,
+        catalogAppId: catalogApp.id,
+        accountProfileId,
+        preflightId: onboardingPreflight.preflightId,
+        planVersion: onboardingPreflight.planVersion,
+        finishOnboarding: true,
+        confirmedPlannedMutations: true,
+        idempotencyKey: newUiIdempotencyKey('onboarding-install'),
+      })
+      const failure = operationFailure(record)
+      if (failure) setInstallRequestError(failure)
+      else if (record.operationId) {
+        setIgnoredInstallOperationId((ignored) => ignored === record.operationId ? null : ignored)
+        setSubmittedInstallOperationId(record.operationId)
+        setOnboardingInstallOperation(record)
+        rememberOperationId(onboardingInstallKey, record.operationId)
+      }
+      else setInstallRequestError('Sideport accepted the request without returning an operation to follow.')
+      await refreshAdminData()
+    } catch (reason) {
+      const replacement = replacementInstallPreflight(reason)
+      if (replacement) {
+        setOnboardingPreflight(replacement)
+        setInstallRequestError('The install plan changed. Review the updated checks, then press Install and finish again.')
+      } else setInstallRequestError(reason instanceof Error ? reason.message : 'Sideport could not start the install.')
+    } finally {
+      setInstallRequestPending(false)
+      installRequestInFlightRef.current = false
+    }
+  }
+  const runtimeAddIPhoneServices = useMemo<AddIPhoneServices>(() => ({
+    start: async (deviceUdid) => operationToEnrollment(await startDeviceEnrollment({ idempotencyKey: newUiIdempotencyKey('device-enrollment'), deviceUdid })),
+    read: async (operationId) => operationToEnrollment(await getSideportOperation(operationId)),
+    retry: async (operationId) => operationToEnrollment(await retryOperation(operationId)),
+    selectCandidate: async (candidate) => {
+      const deviceUdid = authoritativeCandidateUdid(candidate, await listReachableDevices())
+      if (!deviceUdid) throw new Error('Sideport could not safely match that iPhone. Leave only one new iPhone connected over USB, close this window, then start again.')
+      return operationToEnrollment(await startDeviceEnrollment({ idempotencyKey: newUiIdempotencyKey('device-enrollment-selection'), deviceUdid }))
+    },
+  }), [])
+  const runtimeAddAppServices = useMemo<AddAppServices>(() => ({
+    loadImportRoots: async () => (await listCatalogImportRoots()).map((root) => ({ id: root.id, label: root.label, available: root.available })),
+    upload: async (file) => catalogDtoToAddItem(await uploadCatalogIpaV2(file, { idempotencyKey: newUiIdempotencyKey('catalog-upload') })),
+    importFromRoot: async (rootId, relativePath) => catalogDtoToAddItem(await inspectCatalogAppV2({ rootId, relativePath, idempotencyKey: newUiIdempotencyKey('catalog-root') })),
+    loadGitHubSources: async () => {
+      const snapshot = await listGitHubCatalogSources()
+      return {
+        capability: {
+          kind: snapshot.capability.kind,
+          supported: snapshot.capability.supported,
+          allowedNow: snapshot.capability.allowedNow,
+          blockedReason: snapshot.capability.blockedReason,
+        },
+        sources: snapshot.sources.map((source) => ({ id: source.id, repository: source.repository, visibility: source.visibility, status: source.status })),
+      }
+    },
+    connectGitHub: async (repository, visibility) => createGitHubCatalogConnection({ repository, visibility, idempotencyKey: newUiIdempotencyKey('github-connection') }),
+    readGitHubConnection: async (connectionId) => getGitHubCatalogConnection(connectionId),
+    loadGitHubReleases: async (sourceId) => listGitHubCatalogReleases(sourceId),
+    importGitHub: async (sourceId, releaseId, asset) => catalogDtoToAddItem(await importGitHubCatalogApp({ sourceId, releaseId, assetId: asset.assetId, expectedDigest: asset.digest ?? undefined, idempotencyKey: newUiIdempotencyKey('github-import') })),
+  }), [])
+
+  useEffect(() => {
+    clearGitHubCallbackFromLocation()
+  }, [])
+
+  const workflowInstallOperationId = workflowInstallStep?.activeOperationId ?? null
+  const reportedOnboardingInstallOperationId = workflowInstallOperationId ?? viewStatus.onboarding?.activeInstallOperationId ?? null
+  const activeOnboardingInstallOperationId = reportedOnboardingInstallOperationId === ignoredInstallOperationId
+    ? null
+    : reportedOnboardingInstallOperationId
+  const completedOperationId = viewStatus.onboarding?.completionReceipt?.verifiedOperationId
+  const resumableSubmittedOperationId = completedOperationId === submittedInstallOperationId ? null : submittedInstallOperationId
+  const polledInstallOperationId = activeOnboardingInstallOperationId ?? resumableSubmittedOperationId
+  const workflowWaitingForFinalization = workflowInstallStep?.nextAction?.action === 'retry-finalization'
+    && workflowInstallOperationId === polledInstallOperationId
+  useEffect(() => {
+    if (!polledInstallOperationId) return
+    let cancelled = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const operation = await readOperation(polledInstallOperationId)
+        if (cancelled) return
+        setOnboardingInstallOperation(operation)
+        setInstallPollError(null)
+        const active = ACTIVE_INSTALL_STATUSES.has(operation.status ?? '') && !workflowWaitingForFinalization
+        if (active) timer = window.setTimeout(() => void poll(), 1_000)
+        await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+      } catch (reason) {
+        if (cancelled) return
+        setInstallPollError(reason instanceof Error ? reason.message : 'Sideport could not read the current install operation.')
+        timer = window.setTimeout(() => void poll(), 2_000)
+      }
+    }
+    rememberOperationId(onboardingInstallKey, polledInstallOperationId)
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [onboardingInstallKey, polledInstallOperationId, queryClient, readOperation, workflowWaitingForFinalization])
+
+  useEffect(() => {
+    if (!completedOperationId) return
+    rememberOperationId(onboardingInstallKey, null)
+  }, [completedOperationId, onboardingInstallKey])
+
+  const retryOnboardingFinalization = async () => {
+    const operationId = onboardingInstallOperation?.operationId ?? polledInstallOperationId
+    if (!operationId || finalizationPending || !canCompleteOnboarding) return
+    setFinalizationPending(true)
+    setInstallRequestError(null)
+    try {
+      await finalizeOnboarding({ verifiedOperationId: operationId, idempotencyKey: newUiIdempotencyKey('onboarding-finalization') })
+      await refreshAdminData()
+    } catch (reason) {
+      setInstallRequestError(reason instanceof Error ? reason.message : 'Sideport could not finish setup.')
+    } finally {
+      setFinalizationPending(false)
+    }
+  }
+
+  const reconcileOnboardingInstall = async () => {
+    const sourceOperationId = onboardingInstallOperation?.type === 'reconcile'
+      ? onboardingInstallOperation.parentOperationId
+      : onboardingInstallOperation?.operationId ?? workflowInstallOperationId
+    if (!sourceOperationId || reconciliationPending || !canRunOperations) return
+    setReconciliationPending(true)
+    setInstallRequestError(null)
+    try {
+      const child = await reconcileOperation(sourceOperationId, {
+        idempotencyKey: newUiIdempotencyKey('onboarding-reconcile'),
+        note: 'Verify the first-install outcome from the Sideport setup UI.',
+      })
+      if (!child.operationId) throw new Error('Sideport accepted the iPhone check without returning an operation to follow.')
+      setIgnoredInstallOperationId(sourceOperationId)
+      setOnboardingInstallOperation(child)
+      setSubmittedInstallOperationId(child.operationId)
+      rememberOperationId(onboardingInstallKey, child.operationId)
+      await refreshAdminData()
+    } catch (reason) {
+      setInstallRequestError(reason instanceof Error ? reason.message : 'Sideport could not start the verify-only iPhone check.')
+    } finally {
+      setReconciliationPending(false)
+    }
+  }
+
+  const activeEnrollmentOperationId = viewStatus.onboarding?.workflow?.steps.find((step) => step.id === 'device')?.activeOperationId ?? null
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -160,6 +618,11 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const setupIncomplete = viewStatus.onboarding !== undefined && viewStatus.onboarding.setupState !== 'complete'
+  if (setupIncomplete) {
+    return <RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={openAddIPhone} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />
+  }
+
   return (
     <div className="admin-root">
       <aside className="sidebar" aria-label="Primary navigation">
@@ -167,7 +630,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
           <div className="brand-mark"><Apple size={18} /></div>
           <div>
             <div className="brand-name">Sideport</div>
-            <div className="brand-meta">Admin console</div>
+            <div className="brand-meta">Apps for people you trust</div>
           </div>
         </div>
 
@@ -196,238 +659,36 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'onboarding',
       </aside>
 
       <div className="workspace">
-        <TopBar system={viewData.system} apiStatus={viewStatus} onOpenCommand={() => setCommandOpen(true)} />
+        <TopBar addTriggerRef={globalAddTriggerRef} apiStatus={viewStatus} onAddApp={canImportCatalog ? openAddApp : undefined} onAddIPhone={openAddIPhone} onOpenCommand={() => setCommandOpen(true)} system={viewData.system} />
         <main className="content-area">
-          {route === 'onboarding' && <OnboardingPage data={viewData} apiStatus={viewStatus} onNavigate={setRoute} onInstallFirstApp={() => openInstallWizard(catalogApps[0]?.id)} />}
-          {route === 'overview' && <OverviewPage data={viewData} onNavigate={setRoute} />}
-          {route === 'devices' && <DevicesPage data={viewData} onOpenDevice={openDevice} />}
-          {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} apiStatus={viewStatus} onInstallApp={() => openInstallWizard(catalogApps[0]?.id)} />}
-          {route === 'catalog' && <AppCatalogPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} onInstallApp={openInstallWizard} />}
-          {route === 'install-app' && <InstallWizardPage data={viewData} apiStatus={viewStatus} catalogApps={catalogApps} initialCatalogAppId={selectedCatalogAppId} onOpenCatalog={() => setRoute('catalog')} />}
-          {route === 'renewals' && <RenewalsPage data={viewData} apiStatus={viewStatus} />}
-          {route === 'operations' && <OperationsPage data={viewData} apiStatus={viewStatus} />}
-          {route === 'apple-access' && <AppleAccessPage appleAccess={viewData.appleAccess} personalApple={viewData.personalApple} apiStatus={viewStatus} />}
-          {route === 'diagnostics' && <DiagnosticsPage data={viewData} />}
-          {route === 'teams' && <TeamsPage data={viewData} onNavigate={setRoute} />}
-          {route === 'users' && <UsersPage workspace={viewData.workspace} activity={viewData.activity} apiStatus={viewStatus} />}
-          {route === 'settings' && <SettingsPage system={viewData.system} apiStatus={viewStatus} onApiTokenSaved={onApiTokenSaved} />}
+          {route === 'home' && <OverviewPage data={viewData} onNavigate={setRoute} />}
+          {route === 'devices' && <DevicesPage data={viewData} onAddIPhone={openAddIPhone} onOpenDevice={openDevice} />}
+          {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} apiStatus={viewStatus} onInstallApp={() => openInstallPage(catalogApps[0]?.id)} />}
+          {route === 'apps' && <AppCatalogPage data={viewData} catalogApps={catalogApps} onAddApp={canImportCatalog ? openAddApp : undefined} onInstallApp={openInstallPage} />}
+          {route === 'install-app' && <InstallAppPage key={selectedCatalogAppId || 'default-app'} data={viewData} canRunOperations={canRunOperations} catalogApps={catalogApps} initialCatalogAppId={selectedCatalogAppId} installApp={installApp} onAddApp={canImportCatalog ? openAddApp : undefined} onAddIPhone={canAddIPhone ? openAddIPhone : undefined} onOpenCatalog={() => setRoute('apps')} preflightInstall={preflightInstall} readOperation={readOperation} registerPendingApp={registerPendingApp} />}
+          {route === 'people' && <UsersPage workspace={viewData.workspace} activity={viewData.activity} apiStatus={viewStatus} />}
+          {route === 'activity' && <ActivityPage data={viewData} apiStatus={viewStatus} />}
+          {route === 'settings' && <CanonicalSettingsPage data={viewData} apiStatus={viewStatus} canManageScheduler={canManageScheduler} canManageSigner={canManageAppleSigner} schedulerSettingsService={injectedSchedulerSettingsService ?? updateSideportSchedulerSettings} onApiTokenSaved={onApiTokenSaved} />}
         </main>
       </div>
-      <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} data={viewData} onNavigate={setRoute} onOpenDevice={openDevice} />
+      <CommandMenu data={viewData} onAddApp={canImportCatalog ? openAddApp : undefined} onAddIPhone={openAddIPhone} onNavigate={setRoute} onOpenChange={setCommandOpen} onOpenDevice={openDevice} open={commandOpen} />
+      <AddIPhoneDialog canMutate={canAddIPhone} demoMode={viewStatus.mode === 'demo'} onAccepted={() => void refreshAdminData()} onContinue={continueAfterIPhone} onOpenChange={setAddIPhoneOpen} open={addIPhoneOpen} persistenceKey={`${viewStatus.baseUrl}:device-enrollment`} resumeOperationId={activeEnrollmentOperationId} returnFocusRef={addFlowReturnFocusRef} services={injectedAddIPhoneServices ?? runtimeAddIPhoneServices} />
+      <AddAppDialog canImport={canImportCatalog} canManageGitHub={canManageGitHub} catalogApps={catalogApps} demoMode={viewStatus.mode === 'demo'} githubCallback={githubCallback} onChooseApp={chooseAppFromAddFlow} onOpenChange={handleAddAppOpenChange} open={addAppOpen} returnFocusRef={addFlowReturnFocusRef} services={injectedAddAppServices ?? runtimeAddAppServices} />
     </div>
   )
 }
 
-export function OnboardingPage({ data, apiStatus, onNavigate, onInstallFirstApp }: { data: SideportReadModel; apiStatus: AdminDataStatus; onNavigate?: (route: RouteId) => void; onInstallFirstApp?: () => void }) {
-  const onboarding = apiStatus.onboarding
-  const steps = onboarding?.steps ?? []
-  const iphoneSteps = steps.filter((step) => step.surface === 'iphone')
-  const completeSteps = steps.filter((step) => step.state === 'complete').length
-  const requiredComplete = onboarding?.firstRunComplete ?? false
-  const readyCatalogApps = data.catalogApps.filter((app) => app.status === 'ready').length
-  const primaryBlocked = !data.system.ready.ready || readyCatalogApps === 0
-  const hasApiSnapshot = apiStatus.mode === 'live' || apiStatus.mode === 'partial' || apiStatus.mode === 'demo'
-  const wizardSteps = buildOnboardingWizardSteps(data, apiStatus, iphoneSteps, onNavigate, onInstallFirstApp)
-  const [activeStepId, setActiveStepId] = useState(wizardSteps[0]?.id ?? 'server')
-  const activeIndex = Math.max(0, wizardSteps.findIndex((step) => step.id === activeStepId))
-  const activeStep = wizardSteps[activeIndex] ?? wizardSteps[0]
-  const goStep = (index: number) => setActiveStepId(wizardSteps[Math.min(Math.max(index, 0), wizardSteps.length - 1)]?.id ?? activeStepId)
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="First run"
-        title="Bring Sideport online in the right order"
-        description="The portal starts here because signing and install actions are only safe after auth, anisette, signer, device, and app-registration prerequisites are visible."
-      />
-
-      <section className="onboarding-hero" aria-label="Onboarding progress">
-        <div>
-          <span className={`setup-ring ${requiredComplete ? 'complete' : primaryBlocked ? 'blocked' : 'pending'}`}>{completeSteps}/{Math.max(steps.length, 1)}</span>
-        </div>
-        <div>
-          <h2>{requiredComplete ? 'Ready for controlled refreshes' : 'Setup still needs attention'}</h2>
-          <p>{apiStatus.message}</p>
-          <div className="setup-meta">
-            <SourcePill source={apiStatus.mode === 'unavailable' ? 'planned' : apiStatus.mode === 'demo' ? 'demo' : 'live'} label={apiStatus.mode === 'unavailable' ? 'No API data' : apiStatus.mode === 'demo' ? 'Demo data' : 'Live backend'} />
-            <span>{apiStatus.lastUpdatedAt ? `Updated ${shortDateTime(apiStatus.lastUpdatedAt)}` : 'Waiting for first API snapshot'}</span>
-          </div>
-        </div>
-        <div className="hero-actions">
-          <button className="primary-action" disabled={primaryBlocked} onClick={onInstallFirstApp} type="button"><Plus size={16} /> Register first app</button>
-          <button className="ghost-action" onClick={() => onNavigate?.('settings')} type="button">View checks<ChevronRight size={15} /></button>
-        </div>
-      </section>
-
-      {activeStep && (
-        <section className="setup-wizard" aria-label="Focused setup wizard">
-          <aside className="setup-stepper">
-            {wizardSteps.map((step, index) => (
-              <button className={step.id === activeStep.id ? 'setup-step-tab active' : 'setup-step-tab'} aria-current={step.id === activeStep.id ? 'step' : undefined} key={step.id} onClick={() => setActiveStepId(step.id)} type="button">
-                <span>{index + 1}</span>
-                <div><strong>{step.title}</strong><small>{step.kicker}</small></div>
-                <StatusPill state={step.health} label={step.statusLabel} />
-              </button>
-            ))}
-          </aside>
-          <Panel title={activeStep.title}>
-            <div className="setup-step-panel">
-              <p>{activeStep.description}</p>
-              {activeStep.content}
-              <div className="setup-step-actions">
-                <button className="ghost-action" disabled={activeIndex === 0} onClick={() => goStep(activeIndex - 1)} type="button">Back</button>
-                {activeStep.secondaryAction && <button className="ghost-action" onClick={activeStep.secondaryAction.onClick} type="button">{activeStep.secondaryAction.label}<ChevronRight size={15} /></button>}
-                {activeStep.primaryAction && <button className="primary-action" disabled={activeStep.primaryAction.disabled} onClick={activeStep.primaryAction.onClick} type="button">{activeStep.primaryAction.label}<ChevronRight size={15} /></button>}
-                {!activeStep.primaryAction && <button className="primary-action" disabled={activeIndex === wizardSteps.length - 1} onClick={() => goStep(activeIndex + 1)} type="button">Next<ChevronRight size={15} /></button>}
-              </div>
-            </div>
-          </Panel>
-        </section>
-      )}
-
-      <div className="two-column-layout">
-        <Panel title="First app registration path">
-          <div className="setup-path">
-            <FactTile label="Device" value={hasApiSnapshot ? data.devices[0]?.name ?? 'No reachable device' : 'Waiting for API'} source={hasApiSnapshot && data.devices.length ? 'live' : 'planned'} />
-            <FactTile label="Ready catalog apps" value={hasApiSnapshot ? String(readyCatalogApps) : 'Unknown'} source={readyCatalogApps ? 'live' : 'planned'} />
-            <FactTile label="Sideport registrations" value={hasApiSnapshot && data.devices[0] ? `${data.devices[0].appSlotsUsed}/3 used` : 'Unknown'} source={hasApiSnapshot ? 'derived' : 'planned'} />
-            <FactTile label="Registered apps" value={hasApiSnapshot ? String(data.apps.length) : 'Unknown'} source={hasApiSnapshot && data.apps.length ? 'live' : 'planned'} />
-          </div>
-        </Panel>
-        <Panel title="Backend posture">
-          <SystemChecks system={data.system} />
-        </Panel>
-      </div>
-    </div>
-  )
-}
-
-interface SetupWizardStep {
-  id: string
-  title: string
-  kicker: string
-  statusLabel: string
-  health: HealthState
-  description: string
-  content: ReactNode
-  primaryAction?: { label: string; onClick: () => void; disabled?: boolean }
-  secondaryAction?: { label: string; onClick: () => void }
-}
-
-function buildOnboardingWizardSteps(
-  data: SideportReadModel,
-  apiStatus: AdminDataStatus,
-  iphoneSteps: OnboardingStep[],
-  onNavigate?: (route: RouteId) => void,
-  onInstallFirstApp?: () => void,
-): SetupWizardStep[] {
-  const readyCatalogApps = data.catalogApps.filter((app) => app.status === 'ready').length
-  const canRegister = apiStatus.canMutate && data.devices.length > 0 && readyCatalogApps > 0
-  const appleAccessConfigured = data.personalApple.state === 'authenticated' || data.personalApple.state === 'two-factor-required' || data.appleAccess.state === 'read-only-verified' || data.appleAccess.state === 'partial'
-
-  return [
-    {
-      id: 'server',
-      title: 'Server readiness',
-      kicker: 'Verified by Sideport',
-      statusLabel: data.system.ready.ready ? 'Ready' : 'Blocked',
-      health: data.system.ready.ready ? 'healthy' : 'blocked',
-      description: 'Start with checks Sideport can verify automatically: API, anisette, signer, API auth, and scheduler posture.',
-      content: <SystemChecks system={data.system} />,
-      secondaryAction: { label: 'Open settings', onClick: () => onNavigate?.('settings') },
-    },
-    {
-      id: 'identity',
-      title: 'Sideport identity',
-      kicker: 'Optional Apple login',
-      statusLabel: 'Optional',
-      health: 'offline',
-      description: 'Sign in with Apple should be an optional Sideport login provider. It can identify the portal user, but it does not grant Developer signing access.',
-      content: (
-        <div className="check-list">
-          <CheckRow label="Reverse proxy or local auth" ok source="planned" detail="Sideport can run without Sign in with Apple." />
-          <CheckRow label="Sign in with Apple" ok={false} source="planned" detail="Optional identity provider. Not required for signing." />
-          <CheckRow label="Developer access" ok={false} source="planned" detail="Handled separately by Personal Apple ID or App Store Connect connector." />
-        </div>
-      ),
-      secondaryAction: { label: 'Open Apple Access', onClick: () => onNavigate?.('apple-access') },
-    },
-    {
-      id: 'apple-access',
-      title: 'Apple signing access',
-      kicker: 'Separate from login',
-      statusLabel: appleAccessConfigured ? 'Probe ready' : 'Planned',
-      health: appleAccessConfigured ? 'warning' : 'offline',
-      description: `For your free Apple ID, Sideport uses the Personal Apple ID connector backed by ${credentialCustodyLabel(data.personalApple.secretCustody)}. Paid-team App Store Connect JWT is optional and currently read-only.`,
-      content: <AppleAccessSetupSummary appleAccess={data.appleAccess} personalApple={data.personalApple} />,
-      secondaryAction: { label: 'Open Apple Access', onClick: () => onNavigate?.('apple-access') },
-    },
-    {
-      id: 'iphone',
-      title: 'iPhone readiness',
-      kicker: 'Live and guided',
-      statusLabel: data.devices.length ? 'Reachable' : 'Waiting',
-      health: data.devices.length ? 'healthy' : 'warning',
-      description: 'Sideport can detect reachable devices. Physical iPhone steps like Developer Mode and profile trust stay guided until a real signal exists.',
-      content: iphoneSteps.length ? <IPhoneSetupList steps={iphoneSteps} /> : <EmptyState icon={Smartphone} title="No iPhone actions yet" detail="Connect and unlock an iPhone, tap Trust This Computer, then retry discovery." />,
-      secondaryAction: { label: 'Open devices', onClick: () => onNavigate?.('devices') },
-    },
-    {
-      id: 'catalog',
-      title: 'Catalog app',
-      kicker: 'Detected from IPA',
-      statusLabel: readyCatalogApps ? 'Ready' : 'Needed',
-      health: readyCatalogApps ? 'healthy' : 'blocked',
-      description: 'The IPA should provide app identity automatically: bundle ID, version, checksum, and profile state. Server-path import works now; upload comes later.',
-      content: data.catalogApps.length ? <CatalogReadinessList apps={data.catalogApps} /> : <EmptyState icon={Package} title="No catalog apps" detail="Inspect a server IPA path in App Catalog before registering it on a phone." />,
-      secondaryAction: { label: 'Open catalog', onClick: () => onNavigate?.('catalog') },
-    },
-    {
-      id: 'registration',
-      title: 'Register first app',
-      kicker: 'Stored registration',
-      statusLabel: data.apps.length ? 'Saved' : 'Next action',
-      health: data.apps.length ? 'healthy' : canRegister ? 'warning' : 'blocked',
-      description: 'This saves Sideport intent for one catalog app on one reachable phone. It does not sign or install until the preflight/operation slice exists.',
-      content: (
-        <div className="setup-path">
-          <FactTile label="Reachable devices" value={String(data.devices.length)} source={data.devices.length ? 'live' : 'planned'} />
-          <FactTile label="Ready catalog apps" value={String(readyCatalogApps)} source={readyCatalogApps ? 'live' : 'planned'} />
-          <FactTile label="Existing registrations" value={String(data.apps.length)} source={data.apps.length ? 'live' : 'planned'} />
-        </div>
-      ),
-      primaryAction: { label: 'Register first app', onClick: () => onInstallFirstApp?.(), disabled: !canRegister },
-      secondaryAction: { label: 'Open catalog', onClick: () => onNavigate?.('catalog') },
-    },
-  ]
-}
-
-function AppleAccessSetupSummary({ appleAccess, personalApple }: { appleAccess: AppleAccessSummary; personalApple: PersonalAppleSummary }) {
-  return (
-    <div className="check-list">
-      <CheckRow label="Optional portal login" ok={false} source="planned" detail="Sign in with Apple can identify the Sideport user, but is not required." />
-      <CheckRow label={`Personal Apple ID via ${credentialCustodyShortLabel(personalApple.secretCustody)}`} ok={personalApple.state === 'authenticated'} source={personalApple.source} detail={personalApple.message} />
-      <CheckRow label="App Store Connect JWT" ok={appleAccess.state === 'read-only-verified'} source={appleAccess.source} detail={appleAccess.message} />
-    </div>
-  )
-}
-
-function CatalogReadinessList({ apps }: { apps: CatalogAppSummary[] }) {
-  return (
-    <div className="check-list">
-      {apps.map((app) => <CheckRow key={app.id} label={app.name} ok={app.status === 'ready'} source={app.source} detail={`${app.expectedBundleId} - ${app.statusLabel}`} />)}
-    </div>
-  )
-}
-
-function TopBar({ system, apiStatus, onOpenCommand }: { system: SystemStatus; apiStatus: AdminDataStatus; onOpenCommand: () => void }) {
+function TopBar({ system, apiStatus, onOpenCommand, onAddIPhone, onAddApp, addTriggerRef }: { system: SystemStatus; apiStatus: AdminDataStatus; onOpenCommand: () => void; onAddIPhone: () => void; onAddApp?: () => void; addTriggerRef: RefObject<HTMLButtonElement | null> }) {
   return (
     <header className="topbar">
-      <button className="search-shell" onClick={onOpenCommand} type="button" aria-label="Search devices, apps, and screens">
-        <Search size={17} />
-        <span className="search-label">Search devices, bundle IDs, blockers</span>
-        <span className="search-kbd"><kbd>⌘</kbd><kbd>K</kbd></span>
-      </button>
+      <div className="topbar-primary">
+        <button className="search-shell" onClick={onOpenCommand} type="button" aria-label="Search devices, apps, and screens">
+          <Search size={17} />
+          <span className="search-label">Search devices, bundle IDs, blockers</span>
+          <span className="search-kbd"><kbd>⌘</kbd><kbd>K</kbd></span>
+        </button>
+        <GlobalAddMenu onAddApp={onAddApp} onAddIPhone={onAddIPhone} triggerRef={addTriggerRef} />
+      </div>
       <div className="topbar-actions">
         <span className={`api-mode ${apiStatus.mode}`}>{apiModeLabel(apiStatus.mode)}</span>
         <span className="api-base">{apiStatus.baseUrl}</span>
@@ -448,28 +709,27 @@ export function OverviewPage({ data, onNavigate }: { data: SideportReadModel; on
   const reachable = data.devices.filter((device) => device.connection !== 'offline').length
   const blocked = data.renewals.filter((item) => item.risk === 'blocked').length
   const due = data.renewals.filter((item) => item.risk === 'due-now').length
-  const openIssues = data.issues.filter((issue) => issue.status !== 'resolved').length
 
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Operations overview"
-        title="Sideport health at a glance"
-        description="Live API checks are shown as they arrive. If the backend has no devices or apps yet, those sections stay empty."
+        eyebrow="Your Sideport"
+        title="Apps and iPhones at a glance"
+        description="Sideport keeps watching for connected iPhones and handles approved app updates in the background."
       />
 
       <section className="metric-grid" aria-label="Fleet health summary">
-        <MetricCard icon={Smartphone} label="Reachable devices" value={String(reachable)} detail="Returned by /api/devices." source="live" tone="blue" />
-        <MetricCard icon={TimerReset} label="Due soon" value={String(due)} detail="Inside configured renewal lead time." source="derived" tone="amber" />
-        <MetricCard icon={AlertTriangle} label="Blocked" value={String(blocked)} detail="From app refresh errors and readiness blockers." source="derived" tone="red" />
-        <MetricCard icon={Activity} label="Open issues" value={String(openIssues)} detail="From API failures and app lastError fields." source="derived" tone="green" />
+        <MetricCard icon={Smartphone} label="Reachable iPhones" value={String(reachable)} detail="Available over USB or paired Wi-Fi." source="live" tone="blue" />
+        <MetricCard icon={TimerReset} label="Updates due" value={String(due)} detail="Approved apps inside the refresh window." source="derived" tone="amber" />
+        <MetricCard icon={AlertTriangle} label="Needs attention" value={String(blocked)} detail="Usually a cable, Trust, or Owner action." source="derived" tone="red" />
+        <MetricCard icon={Package} label="Approved apps" value={String(data.catalogApps.length)} detail="Ready to install from the shared library." source="live" tone="green" />
       </section>
 
       <div className="two-column-layout">
-        <Panel title="Renewal risk" actionLabel="View renewals" onAction={() => onNavigate?.('renewals')}>
+        <Panel title="App updates" actionLabel="Find apps" onAction={() => onNavigate?.('apps')}>
           <RenewalQueueList items={data.renewals.slice(0, 4)} apps={data.apps} compact />
         </Panel>
-        <Panel title="System checks" actionLabel="View settings" onAction={() => onNavigate?.('settings')}>
+        <Panel title="Sideport status" actionLabel="View settings" onAction={() => onNavigate?.('settings')}>
           <SystemChecks system={data.system} />
         </Panel>
       </div>
@@ -481,7 +741,7 @@ export function OverviewPage({ data, onNavigate }: { data: SideportReadModel; on
   )
 }
 
-export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; onOpenDevice?: (device: DeviceSummary) => void }) {
+export function DevicesPage({ data, onOpenDevice, onAddIPhone }: { data: SideportReadModel; onOpenDevice?: (device: DeviceSummary) => void; onAddIPhone?: () => void }) {
   const [query, setQuery] = useState('')
   const [connectionFacet, setConnectionFacet] = useState<'all' | DeviceSummary['connection']>('all')
   const [healthFacet, setHealthFacet] = useState<'all' | HealthState>('all')
@@ -490,7 +750,7 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
     return (
       <div className="page-stack">
         <PageHeader eyebrow="Devices" title="No devices known yet" description="Known devices come from /api/devices/known. Connect a trusted iPhone over USB or Wi-Fi, or add a known-device record, to populate this view." />
-        <EmptyState icon={Cable} title="No known devices returned" detail="Sideport has no durable device inventory yet, and the current reachability poll did not add a device to this snapshot." />
+        <EmptyState actionLabel="Add iPhone" detail="Sideport has no durable device inventory yet, and the current reachability poll did not add a device to this snapshot." icon={Cable} onAction={onAddIPhone} title="No known devices returned" />
       </div>
     )
   }
@@ -506,12 +766,16 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Devices" title="Device inventory" description="Known devices come from /api/devices/known. Current reachability is overlaid from the live device poll without pretending every known device is reachable now." />
+      <PageHeader eyebrow="Always watching the Sideport cable" title="Devices" description="See who owns each iPhone, where Sideport can reach it, and whether an app needs attention." />
+
+      <div className="observability-panel"><Cable size={20} /><div><strong>USB port monitor is active</strong><p>Trusted iPhones are recognized when connected. A new iPhone starts the guided Trust setup.</p></div></div>
+
+      {onAddIPhone && <div className="context-actions"><button className="ghost-action context-add-action" onClick={onAddIPhone} type="button"><Plus size={16} /> Add iPhone</button></div>}
 
       <div className="devices-toolbar">
         <div className="devices-search">
           <Search size={16} />
-          <input aria-label="Search devices" onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Name, UDID, bundle ID, team" value={query} />
+          <input aria-label="Search devices" onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Name, app, or connection" value={query} />
         </div>
         <div className="facet-group" role="group" aria-label="Filter by connection">
           <span className="facet-label"><Filter size={13} /> Connection</span>
@@ -543,12 +807,11 @@ export function DevicesPage({ data, onOpenDevice }: { data: SideportReadModel; o
 }
 
 export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { data: SideportReadModel; device?: DeviceSummary; apiStatus: AdminDataStatus; onInstallApp?: () => void }) {
-  const tabs: Array<{ id: 'apps' | 'signing' | 'network' | 'diagnostics' | 'activity'; label: string; count?: number }> = [
+  const tabs: Array<{ id: 'apps' | 'signing' | 'network' | 'activity'; label: string; count?: number }> = [
     { id: 'apps', label: 'Apps', count: device ? appsForDevice(data.apps, device.udid).length : undefined },
     { id: 'signing', label: 'Signing' },
     { id: 'network', label: 'Network' },
-    { id: 'diagnostics', label: 'Diagnostics', count: device ? data.issues.filter((issue) => issue.deviceUdid === device.udid).length || undefined : undefined },
-    { id: 'activity', label: 'Activity' },
+    { id: 'activity', label: 'Activity', count: device ? data.issues.filter((issue) => issue.deviceUdid === device.udid).length || undefined : undefined },
   ]
   type DeviceTab = (typeof tabs)[number]['id']
   const [activeTab, setActiveTab] = useState<DeviceTab>('apps')
@@ -630,7 +893,7 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
                   {apps.map((app) => (
                     <div key={app.bundleId}>
                       <dt>{app.displayName.value}</dt>
-                      <dd>Profile {expiryCopy(app.expiresAt?.value)} · {app.lastSucceeded === false ? 'last refresh failed' : 'healthy'}</dd>
+                      <dd>{app.lifecycle === 'pending-install' ? 'Awaiting verified install' : `Profile ${expiryCopy(app.expiresAt?.value)} · ${app.lastSucceeded === false ? 'last refresh failed' : 'healthy'}`}</dd>
                     </div>
                   ))}
                 </dl>
@@ -652,35 +915,33 @@ export function DeviceDetailPage({ data, device, apiStatus, onInstallApp }: { da
           </Panel>
         )}
 
-        {activeTab === 'diagnostics' && (
-          <Panel title="Diagnostics for this device">
-            {issues.length ? <DiagnosticIssueList issues={issues} /> : <EmptyState icon={CheckCircle2} title="No open device issues" detail="Durable issue grouping appears when operation evidence exists for this device." />}
-          </Panel>
-        )}
-
         {activeTab === 'activity' && (
-          <Panel title="Device activity">
-            {data.activity.length ? <ActivityTimeline events={data.activity} /> : <EmptyState icon={Activity} title="No recent activity" detail="Sign, install, and refresh events will appear here." />}
-            <p className="pipeline-note"><AlertTriangle size={14} /> Showing the workspace activity feed. Per-device filtering activates once the API tags each event with a device UDID.</p>
-          </Panel>
+          <div className="page-stack"><Panel title="Device activity">{data.activity.length ? <ActivityTimeline events={data.activity} /> : <EmptyState icon={Activity} title="No recent activity" detail="Sign, install, and refresh events will appear here." />}</Panel>{issues.length ? <Panel title="Issues for this device"><DiagnosticIssueList issues={issues} /></Panel> : null}</div>
         )}
       </div>
     </div>
   )
 }
 
-export function AppCatalogPage({ data, apiStatus, catalogApps, onInstallApp }: { data: SideportReadModel; apiStatus: AdminDataStatus; catalogApps: CatalogAppSummary[]; onInstallApp: (catalogAppId: string) => void }) {
+export function AppCatalogPage({ data, catalogApps, onInstallApp, onAddApp }: { data: SideportReadModel; catalogApps: CatalogAppSummary[]; onInstallApp: (catalogAppId: string) => void; onAddApp?: () => void }) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const filteredApps = q ? catalogApps.filter((app) => `${app.name} ${app.purpose} ${app.expectedBundleId} ${app.versionLabel} ${app.artifactSources?.map((source) => `${source.label} ${source.repository ?? ''}`).join(' ') ?? ''}`.toLowerCase().includes(q)) : catalogApps
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="App Catalog"
-        title="Reusable apps, separate from phone slots"
-        description="Catalog apps are reusable IPA definitions from /api/catalog/apps. Registered installations are /api/apps records that occupy Sideport slots on phones."
+        eyebrow="Approved by the Owner"
+        title="Apps"
+        description="Find an app, choose an iPhone, and install. Sideport keeps approved apps updated afterward."
       />
 
-      {catalogApps.length ? (
+      {onAddApp && <div className="context-actions"><button className="ghost-action context-add-action" onClick={onAddApp} type="button"><Plus size={16} /> Add app</button></div>}
+
+      <label className="devices-search app-library-search"><Search size={17} /><span className="visually-hidden">Search approved apps</span><input aria-label="Search approved apps" onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search apps by name or description" type="search" value={query} /></label>
+
+      {filteredApps.length ? (
         <div className="catalog-grid">
-          {catalogApps.map((catalogApp) => (
+          {filteredApps.map((catalogApp) => (
             <CatalogAppCard
               catalogApp={catalogApp}
               installationCount={data.apps.filter((app) => app.bundleId === catalogApp.expectedBundleId).length}
@@ -689,17 +950,9 @@ export function AppCatalogPage({ data, apiStatus, catalogApps, onInstallApp }: {
             />
           ))}
         </div>
-      ) : (
-        <EmptyState icon={Package} title="No catalog apps returned" detail="The live runtime only shows apps returned by /api/catalog/apps. Inspect a server IPA path to add one." />
+      ) : catalogApps.length ? <EmptyState icon={Search} title="No apps match" detail="Try another name, description, version, or source." /> : (
+        <EmptyState actionLabel="Add app" detail="Choose an IPA from this computer, this server, or a GitHub release." icon={Package} onAction={onAddApp} title="No apps in Sideport yet" />
       )}
-
-      <Panel title="Add a server IPA">
-        <CatalogInspectPanel apiStatus={apiStatus} />
-      </Panel>
-
-      <Panel title="Import IPA from this browser">
-        <CatalogUploadPanel apiStatus={apiStatus} />
-      </Panel>
 
       <Panel title="Registered installations">
         {data.apps.length ? <RegisteredInstallationList apps={data.apps} /> : (
@@ -718,227 +971,274 @@ export function AppCatalogPage({ data, apiStatus, catalogApps, onInstallApp }: {
   )
 }
 
-function CatalogInspectPanel({ apiStatus }: { apiStatus: AdminDataStatus }) {
+export function InstallAppPage({ data, canRunOperations, catalogApps, initialCatalogAppId, installApp, preflightInstall, readOperation, registerPendingApp, onOpenCatalog, onAddIPhone, onAddApp }: { data: SideportReadModel; canRunOperations: boolean; catalogApps: CatalogAppSummary[]; initialCatalogAppId: string; installApp: (payload: InstallOperationPayload) => Promise<OperationRecordDto>; preflightInstall: (payload: InstallPreflightPayload) => Promise<OperationPreflightDto>; readOperation: (operationId: string) => Promise<OperationRecordDto>; registerPendingApp: (payload: PendingAppRegistrationPayload) => Promise<AppRegistrationDto>; onOpenCatalog: () => void; onAddIPhone?: () => void; onAddApp?: () => void }) {
   const queryClient = useQueryClient()
-  const [ipaPath, setIpaPath] = useState('')
-  const inspectMutation = useMutation({
-    mutationFn: () => inspectCatalogApp({ ipaPath: ipaPath.trim() }),
-    onSuccess: () => {
-      setIpaPath('')
-      queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
-    },
-  })
-  const canInspect = apiStatus.canMutate && ipaPath.trim().length > 0 && !inspectMutation.isPending
-
-  return (
-    <div className="inspect-form">
-      <label className="form-field wide-field">
-        <span>Server IPA path</span>
-        <input autoComplete="off" onChange={(event) => setIpaPath(event.currentTarget.value)} placeholder="/var/lib/sideport/ipa/App.ipa" value={ipaPath} />
-      </label>
-      <button className="primary-action" disabled={!canInspect} onClick={() => inspectMutation.mutate()} type="button">
-        <RefreshCw size={16} /> {inspectMutation.isPending ? 'Inspecting...' : 'Inspect IPA'}
-      </button>
-      {!apiStatus.canMutate && <p className="mutation-message">Catalog changes are disabled for this build.</p>}
-      {inspectMutation.isSuccess && <p className="mutation-message success">Catalog app inspected and saved.</p>}
-      {inspectMutation.error && <p className="mutation-message error">{inspectMutation.error.message}</p>}
-    </div>
-  )
-}
-
-function CatalogUploadPanel({ apiStatus }: { apiStatus: AdminDataStatus }) {
-  const queryClient = useQueryClient()
-  const [file, setFile] = useState<File | null>(null)
-  const [id, setId] = useState('')
-  const [name, setName] = useState('')
-  const [replace, setReplace] = useState(false)
-  const uploadMutation = useMutation({
-    mutationFn: () => {
-      if (!file) throw new Error('Choose an .ipa file first.')
-      return uploadCatalogIpa(file, { id, name, replace })
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
-  })
-  return (
-    <div className="catalog-inspect">
-      <label className="form-field">
-        <span>IPA file</span>
-        <input accept=".ipa" disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)} type="file" />
-      </label>
-      <div className="form-grid">
-        <label className="form-field">
-          <span>Catalog ID (optional)</span>
-          <input disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setId(event.currentTarget.value)} placeholder="cert-clock" value={id} />
-        </label>
-        <label className="form-field">
-          <span>Name (optional)</span>
-          <input disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setName(event.currentTarget.value)} placeholder="Cert Clock" value={name} />
-        </label>
-      </div>
-      <label className="checkbox-row"><input checked={replace} disabled={!apiStatus.canMutate || uploadMutation.isPending} onChange={(event) => setReplace(event.currentTarget.checked)} type="checkbox" /> Replace existing catalog ID after inspection succeeds</label>
-      <button className="primary-action" disabled={!apiStatus.canMutate || !file || uploadMutation.isPending} onClick={() => uploadMutation.mutate()} type="button"><Plus size={16} /> {uploadMutation.isPending ? 'Importing...' : 'Import IPA'}</button>
-      {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. IPA import is unavailable in read-only mode.</p>}
-      {uploadMutation.isSuccess && <p className="mutation-message success">Imported {uploadMutation.data.name}. This saved and inspected the IPA; it did not register, sign, or install it.</p>}
-      {uploadMutation.error && <p className="mutation-message error">{uploadMutation.error.message}</p>}
-    </div>
-  )
-}
-
-export function InstallWizardPage({ data, apiStatus, catalogApps, initialCatalogAppId, onOpenCatalog }: { data: SideportReadModel; apiStatus: AdminDataStatus; catalogApps: CatalogAppSummary[]; initialCatalogAppId: string; onOpenCatalog: () => void }) {
-  const firstDevice = data.devices[0]
-  const [catalogAppId, setCatalogAppId] = useState(initialCatalogAppId || catalogApps[0]?.id || '')
-  const selectedCatalogApp = catalogApps.find((app) => app.id === catalogAppId) ?? catalogApps[0]
-  const catalogReady = selectedCatalogApp?.status === 'ready'
-  const queryClient = useQueryClient()
-  const [form, setForm] = useState<AppRegistrationPayload>({
-    bundleId: '',
-    deviceUdid: firstDevice?.udid ?? '',
-    appleId: '',
-    teamId: firstDevice?.teamId && firstDevice.teamId !== 'Unknown' ? firstDevice.teamId : '',
-    inputIpaPath: '',
-  })
-  const defaultTeamId = firstDevice?.teamId && firstDevice.teamId !== 'Unknown' ? firstDevice.teamId : ''
-  const registrationPayload: AppRegistrationPayload = {
-    ...form,
-    bundleId: form.bundleId || selectedCatalogApp?.expectedBundleId || '',
-    deviceUdid: form.deviceUdid || firstDevice?.udid || '',
-    teamId: form.teamId || defaultTeamId,
-    inputIpaPath: form.inputIpaPath || selectedCatalogApp?.suggestedIpaPath || '',
-  }
-  const selectedDevice = data.devices.find((device) => device.udid === registrationPayload.deviceUdid) ?? firstDevice
+  const readyApps = catalogApps.filter((app) => app.status === 'ready')
+  const usbDevices = data.devices.filter((device) => device.inventoryState === 'accepted' && device.connection === 'usb' && device.usableForInstall !== false)
+  const [catalogAppId, setCatalogAppId] = useState(initialCatalogAppId || readyApps[0]?.id || '')
+  const [deviceUdid, setDeviceUdid] = useState((usbDevices.find((device) => device.supportedForFirstInstall) ?? usbDevices[0])?.udid ?? '')
+  const [requestPending, setRequestPending] = useState(false)
+  const [requestError, setRequestError] = useState<string | null>(null)
+  const [preflight, setPreflight] = useState<OperationPreflightDto | null>(null)
+  const [submittedOperation, setSubmittedOperation] = useState<OperationRecordDto | null>(null)
+  const [pollError, setPollError] = useState<string | null>(null)
+  const requestInFlightRef = useRef(false)
+  const preparedTargetRef = useRef('')
+  const installErrorRef = useRef<HTMLParagraphElement>(null)
+  const selectedCatalogApp = readyApps.find((app) => app.id === catalogAppId) ?? readyApps[0]
+  const selectedDevice = usbDevices.find((device) => device.udid === deviceUdid) ?? usbDevices[0]
+  const selectedTeam = data.personalApple.teams.find((team) => team.teamId === data.personalApple.selectedTeamId)
+  const accountProfileId = data.personalApple.accountProfileId?.trim() ?? ''
   const selectedDeviceRegistrations = selectedDevice ? appsForDevice(data.apps, selectedDevice.udid) : []
-  const slotAvailable = Boolean(selectedDevice && selectedDeviceRegistrations.length < 3)
-  const registerMutation = useMutation({
-    mutationFn: () => registerSideportApp(registrationPayload),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
-  })
-  const update = (key: keyof AppRegistrationPayload, value: string) => setForm((current) => ({ ...current, [key]: value }))
-  const hasRequiredFields = Object.values(registrationPayload).every((value) => value.trim().length > 0)
-  const canSubmit = apiStatus.canMutate && catalogReady && hasRequiredFields && slotAvailable && !registerMutation.isPending
-  const registrationHelp = registrationDisabledHelp(apiStatus.canMutate, registrationPayload, catalogReady, slotAvailable)
+  const alreadyRegistered = Boolean(selectedCatalogApp && selectedDeviceRegistrations.some((app) => app.bundleId === selectedCatalogApp.expectedBundleId))
+  const slotAvailable = Boolean(selectedDevice && (alreadyRegistered || selectedDeviceRegistrations.length < 3))
+  const resumableStandaloneOperation = selectedCatalogApp && selectedDevice
+    ? data.operations.find((operation) =>
+        operation.type === 'install'
+        && operation.finishOnboarding === false
+        && operation.deviceUdid === selectedDevice.udid
+        && operation.bundleId === selectedCatalogApp.expectedBundleId
+        && ACTIVE_INSTALL_STATUSES.has(operation.status))
+    : undefined
+  const resumableOperationRecord: OperationRecordDto | null = resumableStandaloneOperation ? {
+    operationId: resumableStandaloneOperation.operationId,
+    type: resumableStandaloneOperation.type,
+    status: resumableStandaloneOperation.status,
+    createdAt: resumableStandaloneOperation.createdAt,
+    updatedAt: resumableStandaloneOperation.updatedAt,
+    completedAt: resumableStandaloneOperation.completedAt,
+    target: {
+      deviceUdid: resumableStandaloneOperation.deviceUdid,
+      bundleId: resumableStandaloneOperation.bundleId,
+    },
+    stages: resumableStandaloneOperation.stages.map((stage) => ({
+      id: stage.id,
+      label: stage.label,
+      status: stage.status,
+      startedAt: stage.startedAt,
+      completedAt: stage.completedAt,
+      message: stage.message,
+      error: stage.error ? { message: stage.error } : null,
+    })),
+    error: resumableStandaloneOperation.error ? { message: resumableStandaloneOperation.error } : null,
+    parentOperationId: resumableStandaloneOperation.parentOperationId,
+  } : null
+  const trackedOperation = submittedOperation ?? resumableOperationRecord
+  const operationStatus = trackedOperation?.status
+  const operationActive = Boolean(operationStatus && ACTIVE_INSTALL_STATUSES.has(operationStatus))
+  const appleReady = data.personalApple.state === 'authenticated' && Boolean(accountProfileId && selectedTeam)
+  const blockers = [
+    !selectedCatalogApp ? 'Add or choose an inspected app.' : null,
+    !appleReady ? 'Finish Apple sign-in and choose a team returned by Apple.' : null,
+    !selectedDevice ? 'Connect an accepted iPhone by USB.' : null,
+    selectedDevice && !slotAvailable ? `This iPhone already uses all 3 Sideport app slots.` : null,
+    !canRunOperations ? 'This protected Sideport session does not have permission to install apps.' : null,
+  ].filter((blocker): blocker is string => Boolean(blocker))
+  const targetKey = selectedCatalogApp && selectedDevice ? `${selectedDevice.udid}:${selectedCatalogApp.expectedBundleId}` : ''
+  const preflightReady = Boolean(preflight?.ready && preflight.preflightId && preflight.planVersion)
+  const canInstall = blockers.length === 0 && preflightReady && !requestPending && !operationActive && !resumableStandaloneOperation
+  const completedChimeRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (operationStatus !== 'succeeded' || !trackedOperation?.operationId || trackedOperation.result?.success !== true) return
+    if (completedChimeRef.current === trackedOperation.operationId) return
+    completedChimeRef.current = trackedOperation.operationId
+    attemptCompletionChime()
+  }, [operationStatus, trackedOperation?.operationId, trackedOperation?.result?.success])
+
+  useEffect(() => {
+    if (requestError) installErrorRef.current?.focus()
+  }, [requestError])
+
+  const resetInstallTargetState = () => {
+    setPreflight(null)
+    setSubmittedOperation(null)
+    setRequestError(null)
+    setPollError(null)
+    preparedTargetRef.current = ''
+  }
+
+  const prepareInstall = async () => {
+    if (requestInFlightRef.current || blockers.length || !selectedCatalogApp || !selectedDevice || !accountProfileId) return
+    requestInFlightRef.current = true
+    setRequestPending(true)
+    setRequestError(null)
+    setPreflight(null)
+    try {
+      await registerPendingApp({ catalogAppId: selectedCatalogApp.id, deviceUdid: selectedDevice.udid, accountProfileId, lifecycle: 'pending-install' })
+      setPreflight(await preflightInstall({ deviceUdid: selectedDevice.udid, bundleId: selectedCatalogApp.expectedBundleId, catalogAppId: selectedCatalogApp.id, accountProfileId, finishOnboarding: false }))
+    } catch (reason) {
+      setRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.')
+    } finally {
+      setRequestPending(false)
+      requestInFlightRef.current = false
+    }
+  }
+
+  const autoPreflightEligible = Boolean(targetKey && blockers.length === 0 && !resumableStandaloneOperation)
+  const autoPreflightDeviceUdid = selectedDevice?.udid ?? ''
+  const autoPreflightBundleId = selectedCatalogApp?.expectedBundleId ?? ''
+  const autoPreflightCatalogAppId = selectedCatalogApp?.id ?? ''
+  useEffect(() => {
+    if (!autoPreflightEligible || preparedTargetRef.current === targetKey) return
+    preparedTargetRef.current = targetKey
+    let cancelled = false
+    requestInFlightRef.current = true
+    void Promise.resolve().then(() => {
+      if (!cancelled) setRequestPending(true)
+      return registerPendingApp({ catalogAppId: autoPreflightCatalogAppId, deviceUdid: autoPreflightDeviceUdid, accountProfileId, lifecycle: 'pending-install' })
+        .then(() => preflightInstall({ deviceUdid: autoPreflightDeviceUdid, bundleId: autoPreflightBundleId, catalogAppId: autoPreflightCatalogAppId, accountProfileId, finishOnboarding: false }))
+    })
+      .then((next) => { if (!cancelled) setPreflight(next) })
+      .catch((reason) => { if (!cancelled) setRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.') })
+      .finally(() => {
+        if (!cancelled) setRequestPending(false)
+        requestInFlightRef.current = false
+    })
+    return () => { cancelled = true }
+  }, [accountProfileId, autoPreflightBundleId, autoPreflightCatalogAppId, autoPreflightDeviceUdid, autoPreflightEligible, preflightInstall, registerPendingApp, targetKey])
+
+  useEffect(() => {
+    if (!trackedOperation?.operationId || !operationActive) return
+    let cancelled = false
+    let timer: number | undefined
+    const operationId = trackedOperation.operationId
+    const poll = async () => {
+      try {
+        const next = await readOperation(operationId)
+        if (cancelled) return
+        setSubmittedOperation(next)
+        setPollError(null)
+        if (ACTIVE_INSTALL_STATUSES.has(next.status ?? '')) timer = window.setTimeout(() => void poll(), 1_000)
+        await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+      } catch (reason) {
+        if (cancelled) return
+        setPollError(reason instanceof Error ? reason.message : 'Sideport could not read this install yet.')
+        timer = window.setTimeout(() => void poll(), 2_000)
+      }
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [operationActive, queryClient, readOperation, trackedOperation?.operationId])
+
+  const submitInstall = async () => {
+    if (!canInstall || requestInFlightRef.current || !selectedCatalogApp || !selectedDevice || !preflight?.preflightId || !preflight.planVersion) return
+    requestInFlightRef.current = true
+    setRequestPending(true)
+    setRequestError(null)
+    try {
+      const record = await installApp({
+        deviceUdid: selectedDevice.udid,
+        bundleId: selectedCatalogApp.expectedBundleId,
+        catalogAppId: selectedCatalogApp.id,
+        accountProfileId,
+        preflightId: preflight.preflightId,
+        planVersion: preflight.planVersion,
+        finishOnboarding: false,
+        confirmedPlannedMutations: true,
+        idempotencyKey: newUiIdempotencyKey('install'),
+      })
+      setSubmittedOperation(record)
+      const failure = operationFailure(record)
+      if (failure) setRequestError(failure)
+      else if (!record.operationId) setRequestError('Sideport accepted the request without returning an operation to follow.')
+      await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+    } catch (reason) {
+      const replacement = replacementInstallPreflight(reason)
+      if (replacement) {
+        setPreflight(replacement)
+        setRequestError('The install plan changed. Review the updated checks, then press Install app again.')
+      } else setRequestError(reason instanceof Error ? reason.message : 'Sideport could not start the install.')
+    } finally {
+      setRequestPending(false)
+      requestInFlightRef.current = false
+    }
+  }
 
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Registration wizard"
-        title="Register a catalog app for Sideport refresh"
-        description="This saves a durable /api/apps registration after the catalog IPA has been inspected by the backend. It does not sign, install, or refresh the IPA yet."
+        eyebrow="Install app"
+        title="Install an app on your iPhone"
+        description="Choose the app and an accepted USB-connected iPhone. Sideport uses the Apple account and team you already connected."
       />
-      <div className="wizard-shell">
-        <aside className="wizard-step-rail" aria-label="Registration steps">
-          {([
-            ['1', 'Catalog IPA', Boolean(catalogReady)],
-            ['2', 'Reachable phone', Boolean(selectedDevice)],
-            ['3', 'Registration fields', hasRequiredFields],
-            ['4', 'Save record', canSubmit || registerMutation.isSuccess],
-          ] satisfies Array<[string, string, boolean]>).map(([index, label, complete]) => (
-            <div className={complete ? 'wizard-step complete' : 'wizard-step'} key={String(label)}>
-              <span>{index}</span>
-              <strong>{label}</strong>
-            </div>
-          ))}
-        </aside>
 
-        <div className="wizard-content">
-          <Panel title="Choose catalog app">
-            {catalogApps.length ? (
-              <div className="catalog-picker">
-                {catalogApps.map((catalogApp) => (
-                  <button className={catalogApp.id === catalogAppId ? 'catalog-pick selected' : 'catalog-pick'} key={catalogApp.id} onClick={() => setCatalogAppId(catalogApp.id)} type="button">
-                    <span className={`app-icon ${catalogApp.iconTone}`}>{catalogApp.name.slice(0, 1)}</span>
-                    <span><strong>{catalogApp.name}</strong><small>{catalogApp.statusLabel}</small></span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <EmptyState icon={Package} title="No catalog app selected" detail="Inspect a server IPA path in App Catalog before registering it on a phone." />
-            )}
-          </Panel>
+      <div className="two-column-layout">
+        <Panel title="App">
+          {readyApps.length ? (
+            <label className="form-field">
+              <span>App to install</span>
+              <select onChange={(event) => { resetInstallTargetState(); setCatalogAppId(event.currentTarget.value) }} value={selectedCatalogApp?.id ?? ''}>
+                {readyApps.map((app) => <option key={app.id} value={app.id}>{app.name} · {app.versionLabel}</option>)}
+              </select>
+            </label>
+          ) : <EmptyState actionLabel="Add app" detail="Upload an IPA, choose configured storage, or import a GitHub release." icon={Package} onAction={onAddApp} title="No app is ready" />}
+          {selectedCatalogApp && <p className="pipeline-note">{selectedCatalogApp.purpose}</p>}
+        </Panel>
 
-          {selectedCatalogApp && (
-            <Panel title="Catalog metadata">
-              <dl className="catalog-meta compact">
-                <div><dt>Bundle ID</dt><dd>{selectedCatalogApp.expectedBundleId}</dd></div>
-                <div><dt>Server IPA path</dt><dd>{selectedCatalogApp.suggestedIpaPath}</dd></div>
-                <div><dt>Version</dt><dd>{selectedCatalogApp.versionLabel}</dd></div>
-                <div><dt>Inspection</dt><dd>{selectedCatalogApp.lastInspectedAt ? shortDateTime(selectedCatalogApp.lastInspectedAt) : selectedCatalogApp.statusLabel}</dd></div>
-                <div><dt>SHA-256</dt><dd>{selectedCatalogApp.sha256 ? `${selectedCatalogApp.sha256.slice(0, 12)}...` : 'Not available'}</dd></div>
-                <div><dt>Profile</dt><dd>{selectedCatalogApp.hasEmbeddedProfile ? expiryCopy(selectedCatalogApp.signatureExpiresAt) : 'No embedded profile'}</dd></div>
-              </dl>
-              {selectedCatalogApp.status !== 'ready' && <p className="mutation-message error">This catalog app is not ready for registration: {selectedCatalogApp.statusLabel}.</p>}
-            </Panel>
-          )}
-
-          <Panel title="Choose reachable phone">
-            {data.devices.length ? (
-              <label className="form-field">
-                <span>Target phone</span>
-                <select value={registrationPayload.deviceUdid} onChange={(event) => update('deviceUdid', event.currentTarget.value)}>
-                  {data.devices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · {compactUdid(device.udid)} · {appsForDevice(data.apps, device.udid).length}/3 registered</option>)}
-                </select>
-              </label>
-            ) : (
-              <EmptyState icon={Smartphone} title="No reachable iPhone" detail="The live API only reports reachable phones today. Persistent known-offline phones need the planned device store." />
-            )}
-          </Panel>
-
-          <Panel title="Registration fields">
-            <div className="form-grid">
-              <label className="form-field">
-                <span>Apple ID</span>
-                <input autoComplete="username" onChange={(event) => update('appleId', event.currentTarget.value)} placeholder="name@example.com" value={form.appleId} />
-              </label>
-              <label className="form-field">
-                <span>Team ID</span>
-                <input autoComplete="off" onChange={(event) => update('teamId', event.currentTarget.value)} placeholder="TEAMID1234" value={registrationPayload.teamId} />
-              </label>
-            </div>
-          </Panel>
-
-          <Panel title="Registration preflight">
-            <PreflightList items={[
-              ['Catalog IPA inspected', Boolean(catalogReady), selectedCatalogApp?.source ?? 'planned'],
-              ['Reachable phone selected', Boolean(selectedDevice), selectedDevice ? 'live' : 'planned'],
-              [`Sideport registrations ${selectedDeviceRegistrations.length}/3`, slotAvailable, 'derived'],
-              ['Signer ready for future refresh', data.system.ready.checks.signer.ok, 'live'],
-              ['Anisette identity trusted', data.system.ready.checks.anisette.ok, 'live'],
-              ['Mutation endpoint enabled', apiStatus.canMutate, apiStatus.canMutate ? 'live' : 'planned'],
-            ]} />
-            <button className="primary-action wide" disabled={!canSubmit} onClick={() => registerMutation.mutate()} type="button">
-              <Play size={16} /> {registerMutation.isPending ? 'Saving...' : 'Save registration'}
-            </button>
-            {registrationHelp && <p className="mutation-message">{registrationHelp}</p>}
-            {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. Set VITE_SIDEPORT_ENABLE_MUTATIONS=true for the real portal bundle.</p>}
-            {registerMutation.isSuccess && <p className="mutation-message success">Registration saved. This records the app for Sideport refresh; it did not install the IPA yet.</p>}
-            {registerMutation.error && <p className="mutation-message error">{registerMutation.error.message}</p>}
-            <button className="ghost-action" onClick={onOpenCatalog} type="button">Back to catalog<ChevronRight size={15} /></button>
-          </Panel>
-
-          <Panel title="What happens when you refresh">
-            <SigningPipeline
-              title="Operation preview"
-              stages={[
-                { id: 'authorize', label: 'Authorize', detail: 'GrandSlam login', state: 'pending' },
-                { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'pending' },
-                { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'pending' },
-                { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
-                { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
-              ]}
-              note="Saving a registration records intent only. These stages run when the refresh operation is wired to this device."
-            />
-          </Panel>
-        </div>
+        <Panel title="iPhone">
+          {usbDevices.length ? (
+            <label className="form-field">
+              <span>Install on</span>
+              <select onChange={(event) => { resetInstallTargetState(); setDeviceUdid(event.currentTarget.value) }} value={selectedDevice?.udid ?? ''}>
+                {usbDevices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · USB · {appsForDevice(data.apps, device.udid).length}/3 apps</option>)}
+              </select>
+            </label>
+          ) : <EmptyState actionLabel="Add iPhone" detail="Use an accepted iPhone connected directly to the Sideport computer." icon={Smartphone} onAction={onAddIPhone} title="USB iPhone required" />}
+          <p className="pipeline-note"><Cable size={14} /> Keep the iPhone unlocked and connected by USB. Sideport does not switch this install to Wi-Fi.</p>
+        </Panel>
       </div>
+
+      <Panel title="Ready to install">
+        <div className="facts-grid">
+          <FactTile label="App" source={selectedCatalogApp?.source ?? 'planned'} value={selectedCatalogApp?.name ?? 'Choose an app'} />
+          <FactTile label="iPhone" source={selectedDevice ? 'live' : 'planned'} value={selectedDevice?.name ?? 'Connect USB'} />
+          <FactTile label="Apple Developer Team" source={selectedTeam ? data.personalApple.source : 'planned'} value={selectedTeam?.name ?? 'Finish Apple setup'} />
+          <FactTile label="Sideport slots" source="derived" value={selectedDevice ? `${selectedDeviceRegistrations.length}/3 used` : 'Unknown'} />
+        </div>
+
+        <PreflightList items={[
+          ['IPA inspected and ready', Boolean(selectedCatalogApp), selectedCatalogApp?.source ?? 'planned'],
+          ['Accepted iPhone connected by USB', Boolean(selectedDevice), selectedDevice ? 'live' : 'planned'],
+          ['Apple account and returned team connected', appleReady, data.personalApple.source],
+          ['App slot available', slotAvailable, 'derived'],
+          ['Permission to install', canRunOperations, 'live'],
+        ]} />
+
+        {blockers.length > 0 && <div className="mutation-message" role="status">{blockers[0]}</div>}
+        {preflight?.blockers.map((blocker) => <p className="mutation-message error" key={blocker.code}>{blocker.message}</p>)}
+        {preflight?.warnings.map((warning) => <p className="mutation-message" key={warning.code}>{warning.message}</p>)}
+        {preflight?.plannedMutations.length ? <details className="add-flow-advanced"><summary>Install plan</summary><ul>{preflight.plannedMutations.map((mutation) => <li key={mutation}>{mutation}</li>)}</ul></details> : null}
+        {requestError && <p className="mutation-message error" id="standalone-install-error-summary" ref={installErrorRef} role="alert" tabIndex={-1}>{requestError}</p>}
+        {pollError && <p className="mutation-message error" role="status">The install is still being tracked. {pollError}</p>}
+        {operationStatus && !requestError && <p className={`mutation-message ${operationStatus === 'succeeded' ? 'success' : ''}`} role="status">{operationStatus === 'succeeded' && trackedOperation?.result?.success === true ? 'Installed — you can unplug. Sideport verified the app on the iPhone.' : operationActive ? 'Sideport is signing, installing, and verifying the app.' : `Install ${operationStatus}.`}</p>}
+        {operationStatus === 'succeeded' && trackedOperation?.result?.success === true && <div className="install-completion-receipt"><CheckCircle2 size={22} /><div><strong>Installed — you can unplug</strong><span>{selectedCatalogApp?.name ?? trackedOperation.result.bundleId ?? 'The app'} was verified on {selectedDevice?.name ?? 'the iPhone'}. Automatic refresh remains enabled; paired Wi-Fi may work, with USB as the reliable fallback.</span><small>The completion chime was attempted when browser audio was available. Sideport verifies installation, not that the app opened.</small></div></div>}
+
+        <div className="dialog-actions">
+          <button className="ghost-action" onClick={onOpenCatalog} type="button">Back to apps</button>
+          <button aria-describedby={requestError ? 'standalone-install-error-summary' : undefined} className="primary-action" disabled={operationActive || requestPending || (preflight ? !canInstall : blockers.length > 0)} onClick={() => void (preflight ? submitInstall() : prepareInstall())} type="button"><Play size={16} /> {requestPending ? preflight ? 'Starting install…' : 'Checking install…' : operationActive ? 'Installing…' : preflight ? 'Install app' : 'Check install'}</button>
+        </div>
+
+        <details className="add-flow-advanced"><summary>Technical details</summary><p>Sideport resolves the managed artifact and selected Apple account on the server, creates the device registration if needed, signs the app, installs over USB, then verifies the bundle and provisioning profile on the iPhone.</p></details>
+      </Panel>
+
+      {trackedOperation?.stages?.length ? <SigningPipeline title="Install progress" stages={trackedOperation.stages.map((stage) => ({ id: stage.id ?? 'stage', label: stage.label ?? stage.id ?? 'Stage', state: stage.status === 'succeeded' ? 'done' : stage.status === 'running' ? 'active' : stage.status === 'failed' || stage.status === 'blocked' ? 'failed' : 'pending', detail: stage.error?.message ?? stage.message ?? '' }))} /> : null}
     </div>
   )
 }
 
 function CatalogAppCard({ catalogApp, installationCount, onInstall }: { catalogApp: CatalogAppSummary; installationCount: number; onInstall: () => void }) {
   const canRegister = catalogApp.status === 'ready'
+  const sourceLabelText = catalogApp.artifactSources?.length
+    ? catalogApp.artifactSources.map((source) => source.repository ? `${source.label} · ${source.repository}` : source.label).join(' · ')
+    : 'Sideport managed library'
   return (
     <article className="catalog-card">
       <div className="catalog-card-top">
-        <div className={`app-icon ${catalogApp.iconTone}`}>{catalogApp.name.slice(0, 1)}</div>
+        <div className={`app-icon ${catalogApp.iconTone}`}>{catalogApp.icon ? <img alt="" src={catalogApp.icon} /> : catalogApp.name.slice(0, 1)}</div>
         <div>
           <h2>{catalogApp.name}</h2>
           <span>{catalogApp.statusLabel}</span>
@@ -948,7 +1248,7 @@ function CatalogAppCard({ catalogApp, installationCount, onInstall }: { catalogA
       <p>{catalogApp.purpose}</p>
       <dl className="catalog-meta">
         <div><dt>Bundle ID</dt><dd>{catalogApp.expectedBundleId}</dd></div>
-        <div><dt>Server path</dt><dd>{catalogApp.suggestedIpaPath}</dd></div>
+        <div><dt>Source</dt><dd>{sourceLabelText}</dd></div>
         <div><dt>Version</dt><dd>{catalogApp.versionLabel}</dd></div>
         <div><dt>Sideport registrations</dt><dd>{installationCount}</dd></div>
         <div><dt>Profile</dt><dd>{catalogApp.hasEmbeddedProfile ? expiryCopy(catalogApp.signatureExpiresAt) : 'No embedded profile'}</dd></div>
@@ -957,16 +1257,17 @@ function CatalogAppCard({ catalogApp, installationCount, onInstall }: { catalogA
       <ul className="catalog-notes">
         {catalogApp.notes.map((note) => <li key={note}>{note}</li>)}
       </ul>
-      <button className="primary-action" disabled={!canRegister} onClick={onInstall} type="button"><Plus size={16} /> Register on phone</button>
+      <button className="primary-action" disabled={!canRegister} onClick={onInstall} type="button"><Plus size={16} /> Install on iPhone</button>
     </article>
   )
 }
 
 function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) {
-  const [view, setView] = useState<'all' | 'healthy' | 'failed'>('all')
+  const [view, setView] = useState<'all' | 'healthy' | 'pending' | 'failed'>('all')
   const filtered = apps.filter((app) => {
     if (view === 'failed') return app.lastSucceeded === false
-    if (view === 'healthy') return app.lastSucceeded !== false
+    if (view === 'pending') return app.lifecycle === 'pending-install'
+    if (view === 'healthy') return app.lifecycle !== 'pending-install' && app.lastSucceeded !== false
     return true
   })
 
@@ -975,7 +1276,7 @@ function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) 
       <div className="devices-toolbar">
         <div className="facet-group" role="group" aria-label="Filter installations">
           <span className="facet-label"><Filter size={13} /> View</span>
-          {([['all', 'All'], ['healthy', 'Healthy'], ['failed', 'Failed refresh']] as const).map(([value, label]) => (
+          {([['all', 'All'], ['healthy', 'Healthy'], ['pending', 'Awaiting install'], ['failed', 'Failed refresh']] as const).map(([value, label]) => (
             <FacetToggleButton key={value} onClick={() => setView(value)} pressed={view === value}>{label}</FacetToggleButton>
           ))}
         </div>
@@ -990,7 +1291,7 @@ function RegisteredInstallationList({ apps }: { apps: RegisteredAppSummary[] }) 
                 <span>{compactUdid(app.deviceUdid)}</span>
                 <span>{app.teamId}</span>
                 <span>{expiryCopy(app.expiresAt?.value)}</span>
-                <StatusPill state={app.lastSucceeded === false ? 'failed' : 'healthy'} label={app.lastSucceeded === false ? 'Last refresh failed' : 'Healthy'} />
+                <StatusPill state={app.lifecycle === 'pending-install' ? 'warning' : app.lastSucceeded === false ? 'failed' : 'healthy'} label={app.lifecycle === 'pending-install' ? 'Awaiting verified install' : app.lastSucceeded === false ? 'Last refresh failed' : 'Healthy'} />
               </div>
               {app.lastError && <p className="registration-error">{app.lastError}</p>}
             </article>
@@ -1026,10 +1327,10 @@ function InstalledAppList({ apps }: { apps: InstalledAppSummary[] }) {
 
 function AppIngestionGuide() {
   const steps = [
-    ['Seeded app', 'Cert Clock is configured as the first server-side catalog seed.'],
-    ['Server IPA path', 'The operator points Sideport at an IPA already present on the server.'],
-    ['Inspection endpoint', '/api/catalog/apps/inspect reads bundle ID, version, checksum, and embedded-profile state.'],
-    ['Catalog store', 'Inspected apps become durable catalog records that can be registered on one or more phones.'],
+    ['Choose a source', 'Upload an IPA, choose a configured Sideport location, or connect a GitHub release.'],
+    ['Inspect automatically', 'Sideport reads the bundle ID, version, checksum, and embedded-profile state.'],
+    ['Save safely', 'The validated IPA moves into Sideport-managed durable storage; host paths stay private.'],
+    ['Install anywhere', 'A saved app can be installed on any accepted iPhone without re-entering its identity.'],
   ]
 
   return (
@@ -1190,7 +1491,7 @@ function OperationHistoryList({ operations, apps, apiStatus }: { operations: Sid
             <button className="row-action" disabled={!apiStatus.canMutate || !operation.retryable || actionMutation.isPending} onClick={() => actionMutation.mutate({ action: 'retry', operationId: operation.operationId })} type="button"><RefreshCw size={13} /> Retry</button>
             <button className="row-action" disabled={!apiStatus.canMutate || !operation.rerunnable || actionMutation.isPending} onClick={() => actionMutation.mutate({ action: 'rerun', operationId: operation.operationId })} type="button"><Play size={13} /> Rerun</button>
           </div>
-          {operation.stages.length ? <SigningPipeline title="Stages" stages={operationPipelineStages(operation.stages)} /> : null}
+          {operation.stages.length ? <SigningPipeline title={`${appName(operation)} stages`} stages={operationPipelineStages(operation.stages)} /> : null}
         </article>
       ))}
       {actionMutation.error && <p className="mutation-message error">{actionMutation.error.message}</p>}
@@ -1198,7 +1499,22 @@ function OperationHistoryList({ operations, apps, apiStatus }: { operations: Sid
   )
 }
 
-export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { appleAccess: AppleAccessSummary; personalApple: PersonalAppleSummary; apiStatus: AdminDataStatus }) {
+export function ActivityPage({ data, apiStatus }: { data: SideportReadModel; apiStatus: AdminDataStatus }) {
+  const needsAttention = data.operations.filter((operation) => operation.status === 'failed' || operation.status === 'blocked')
+  return (
+    <div className="page-stack">
+      <PageHeader eyebrow="What happened and who needs help" title="Activity" description="Installs, updates, device changes, and access events in one plain-language history. Technical evidence stays inside detailed rows." />
+      {needsAttention.length ? <Panel title={`Needs attention (${needsAttention.length})`}><OperationHistoryList operations={needsAttention} apps={data.apps} apiStatus={apiStatus} /></Panel> : null}
+      <Panel title={`Recent operations (${data.operations.length})`}>
+        {data.operations.length ? <OperationHistoryList operations={data.operations.filter((operation) => !needsAttention.includes(operation))} apps={data.apps} apiStatus={apiStatus} /> : <EmptyState icon={Activity} title="No activity yet" detail="App installs, refreshes, and device work will appear here." />}
+      </Panel>
+      {data.issues.length ? <Panel title={`Issues (${data.issues.length})`}><DiagnosticIssueList issues={data.issues} /></Panel> : null}
+      {data.activity.length ? <Panel title="Workspace history"><ActivityTimeline events={data.activity} /></Panel> : null}
+    </div>
+  )
+}
+
+export function AppleAccessPage({ appleAccess, personalApple, canManageSigner = false }: { appleAccess: AppleAccessSummary; personalApple: PersonalAppleSummary; canManageSigner?: boolean }) {
   const verified = appleAccess.capabilities.filter((capability) => capability.state === 'verified').length
   const blocked = appleAccess.capabilities.filter((capability) => capability.state !== 'verified' && capability.state !== 'not-checked').length
 
@@ -1207,7 +1523,7 @@ export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { app
       <PageHeader
         eyebrow="Apple Access"
         title="Connect Apple data without over-trusting it"
-        description="This page runs a read-only App Store Connect API-key probe. It does not use browser cookies, does not ask for an Apple ID password, and performs no Apple mutations."
+        description="Use the protected Personal Apple Account connection for signing. The separate App Store Connect section is a read-only capability probe; Sideport never captures browser cookies."
       />
 
       <section className="section-grid three">
@@ -1221,7 +1537,7 @@ export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { app
       </section>
 
       <Panel title={`Personal Apple ID via ${credentialCustodyShortLabel(personalApple.secretCustody)}`}>
-        <PersonalAppleConnectorPanel personalApple={personalApple} apiStatus={apiStatus} />
+        <PersonalAppleConnectorPanel personalApple={personalApple} canManageSigner={canManageSigner} />
       </Panel>
 
       <Panel title="Connector posture">
@@ -1253,7 +1569,7 @@ export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { app
           <div className="ingestion-steps compact">
             {[
               ['No browser scraping', 'Being logged into Apple in a browser helps create an API key; Sideport must not capture cookies.'],
-              ['No routine revocation', 'Certificate creation or revocation requires explicit cutover acknowledgement.'],
+              ['Exact replacement only', 'Sideport never revokes certificates during install or refresh. The Owner-only signing flow can replace only the exact certificate IDs shown in its current impact review.'],
               ['No hidden mutations', 'This page only performs GET probes. Install and refresh actions must run through preflight.'],
             ].map(([title, detail], index) => <InfoStep detail={detail} index={index} key={title} title={title} />)}
           </div>
@@ -1263,10 +1579,29 @@ export function AppleAccessPage({ appleAccess, personalApple, apiStatus }: { app
   )
 }
 
-function PersonalAppleConnectorPanel({ personalApple, apiStatus }: { personalApple: PersonalAppleSummary; apiStatus: AdminDataStatus }) {
+function PersonalAppleConnectorPanel({ personalApple, canManageSigner = false }: { personalApple: PersonalAppleSummary; canManageSigner?: boolean }) {
   const queryClient = useQueryClient()
   const [appleId, setAppleId] = useState('')
+  const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
+  const [connectPending, setConnectPending] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
+  const [signingPreflight, setSigningPreflight] = useState<PersonalAppleSigningPreflightDto | null>(null)
+  const [signingPending, setSigningPending] = useState(false)
+  const [signingError, setSigningError] = useState<string | null>(null)
+  const [signingAcknowledged, setSigningAcknowledged] = useState(false)
+  const [signingOperation, setSigningOperation] = useState<OperationRecordDto | null>(null)
+  const [replacementOpen, setReplacementOpen] = useState(false)
+  const [replacementAppleId, setReplacementAppleId] = useState('')
+  const [replacementPassword, setReplacementPassword] = useState('')
+  const [replacementCode, setReplacementCode] = useState('')
+  const [replacementCandidate, setReplacementCandidate] = useState<AppleAccountReplacementCandidateDto | null>(null)
+  const connectInFlightRef = useRef(false)
+  const signingIdempotencyKeyRef = useRef(newUiIdempotencyKey('signer-cutover'))
+  const twoFactorInputRef = useRef<HTMLInputElement>(null)
+  const credentialEntry = personalApple.credentialEntry
+  const managedEntryAvailable = Boolean(credentialEntry?.supported && credentialEntry.allowedNow)
+  const needsCredential = personalApple.state === 'not-configured'
   const signInMutation = useMutation({
     mutationFn: () => signInPersonalApple({ appleId: appleId.trim() }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
@@ -1277,9 +1612,106 @@ function PersonalAppleConnectorPanel({ personalApple, apiStatus }: { personalApp
       setCode('')
       queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
     },
+    onError: () => {
+      setCode('')
+      window.requestAnimationFrame(() => twoFactorInputRef.current?.focus())
+    },
   })
-  const canSignIn = apiStatus.canMutate && appleId.trim().length > 0 && !signInMutation.isPending
-  const canComplete2Fa = apiStatus.canMutate && Boolean(personalApple.pendingChallengeId) && code.trim().length >= 4 && !twoFactorMutation.isPending
+  const teamMutation = useMutation({
+    mutationFn: (teamId: string) => selectPersonalAppleTeam({ accountProfileId: personalApple.accountProfileId ?? '', teamId }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] }),
+  })
+  const canConnect = canManageSigner && managedEntryAvailable && appleId.trim().length > 0 && password.length > 0 && !connectPending
+  const canSignIn = canManageSigner && (Boolean(personalApple.accountProfileId) || appleId.trim().length > 0) && !signInMutation.isPending
+  const canComplete2Fa = canManageSigner && Boolean(personalApple.pendingChallengeId) && /^\d{6}$/.test(code.trim()) && !twoFactorMutation.isPending
+
+  const reviewSigning = async () => {
+    if (!personalApple.accountProfileId || !personalApple.selectedTeamId || signingPending) return
+    setSigningPending(true)
+    setSigningError(null)
+    setSigningOperation(null)
+    try {
+      setSigningPreflight(await preflightPersonalAppleSigning(personalApple.accountProfileId, personalApple.selectedTeamId))
+      setSigningAcknowledged(false)
+    } catch (reason) {
+      setSigningError(reason instanceof Error ? reason.message : 'Sideport could not review the current signing impact.')
+    } finally { setSigningPending(false) }
+  }
+  const replaceSigning = async () => {
+    if (!signingPreflight || signingPending || (signingPreflight.requiresAcknowledgement && !signingAcknowledged)) return
+    setSigningPending(true)
+    setSigningError(null)
+    try {
+      const operation = await cutoverPersonalAppleSigning({
+        preflightId: signingPreflight.preflightId,
+        inventoryVersion: signingPreflight.inventoryVersion,
+        acknowledgedCertificateIds: signingPreflight.appleCertificates.map((certificate) => certificate.id),
+        acknowledgedImpactCodes: [signingPreflight.impact],
+        idempotencyKey: signingIdempotencyKeyRef.current,
+      })
+      setSigningOperation(operation)
+      if (operation.status === 'succeeded') {
+        signingIdempotencyKeyRef.current = newUiIdempotencyKey('signer-cutover')
+        setSigningPreflight(null)
+        await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+      }
+    } catch (reason) {
+      setSigningError(reason instanceof Error ? reason.message : 'Sideport could not replace the signing identity.')
+    } finally { setSigningPending(false) }
+  }
+  const connectReplacement = async () => {
+    if (!replacementAppleId.trim() || !replacementPassword || signingPending) return
+    let submittedPassword = replacementPassword
+    setReplacementPassword('')
+    setSigningPending(true)
+    setSigningError(null)
+    try {
+      const request = connectReplacementAppleAccount(replacementAppleId.trim(), submittedPassword)
+      submittedPassword = ''
+      setReplacementCandidate(await request)
+    } catch (reason) { setSigningError(reason instanceof Error ? reason.message : 'Sideport could not verify the replacement Apple account.') }
+    finally { setReplacementPassword(''); setSigningPending(false) }
+  }
+  const verifyReplacementTwoFactor = async () => {
+    if (!replacementCandidate || !/^\d{6}$/.test(replacementCode) || signingPending) return
+    setSigningPending(true); setSigningError(null)
+    try { setReplacementCandidate(await completeReplacementAppleTwoFactor(replacementCandidate.candidateId, replacementCode)); setReplacementCode('') }
+    catch (reason) { setReplacementCode(''); setSigningError(reason instanceof Error ? reason.message : 'Apple rejected the verification code.') }
+    finally { setSigningPending(false) }
+  }
+  const reviewReplacementTeam = async (teamId: string) => {
+    if (!replacementCandidate || !personalApple.accountProfileId || signingPending) return
+    setSigningPending(true); setSigningError(null)
+    try {
+      setSigningPreflight(await preflightPersonalAppleSigning(replacementCandidate.accountProfileId, teamId, undefined, replacementCandidate.candidateId, personalApple.accountProfileId))
+      setSigningAcknowledged(false)
+      setReplacementOpen(false)
+    } catch (reason) { setSigningError(reason instanceof Error ? reason.message : 'Sideport could not review the replacement account impact.') }
+    finally { setSigningPending(false) }
+  }
+
+  const submitManagedCredential = async () => {
+    if (!canConnect || connectInFlightRef.current) return
+    const submittedAppleId = appleId.trim()
+    let submittedPassword = password
+    connectInFlightRef.current = true
+    setConnectPending(true)
+    setConnectError(null)
+    setPassword('')
+    try {
+      const request = connectPersonalApple({ appleId: submittedAppleId, password: submittedPassword })
+      submittedPassword = ''
+      await request
+      setAppleId('')
+      await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+    } catch (reason) {
+      setConnectError(reason instanceof Error ? reason.message : 'Sideport could not connect this Apple account.')
+    } finally {
+      setPassword('')
+      setConnectPending(false)
+      connectInFlightRef.current = false
+    }
+  }
 
   return (
     <div className="personal-apple-panel">
@@ -1291,48 +1723,112 @@ function PersonalAppleConnectorPanel({ personalApple, apiStatus }: { personalApp
           <span>{personalApple.appleIdHint ? `Apple ID ${personalApple.appleIdHint}` : 'No Apple ID is configured or authenticated yet.'}</span>
         </div>
       </div>
-      <div className="form-grid">
-        <label className="form-field">
-          <span>Apple ID</span>
-          <input autoComplete="username" onChange={(event) => setAppleId(event.currentTarget.value)} placeholder="name@example.com" value={appleId} />
-        </label>
-        <div className="form-field action-field">
-          <span>{credentialCustodyShortLabel(personalApple.secretCustody)} credential</span>
-          <button className="primary-action" disabled={!canSignIn} onClick={() => signInMutation.mutate()} type="button">Start sign-in</button>
+
+      {needsCredential && managedEntryAvailable && (
+        <form className="personal-apple-connect" onSubmit={(event) => { event.preventDefault(); void submitManagedCredential() }}>
+          <div className="form-grid">
+            <label className="form-field"><span>Apple Account email</span><input autoComplete="username" disabled={connectPending} onChange={(event) => setAppleId(event.currentTarget.value)} placeholder="name@example.com" value={appleId} /></label>
+            <label className="form-field"><span>Password</span><input autoComplete="current-password" disabled={connectPending} onChange={(event) => setPassword(event.currentTarget.value)} type="password" value={password} /></label>
+          </div>
+          <p className="data-boundary-note">Your password is sent once to this protected Sideport server. The field clears when you submit, and only the server can keep the encrypted credential after Apple authentication succeeds.</p>
+          <button className="primary-action" disabled={!canConnect} type="submit">{connectPending ? 'Connecting…' : 'Connect Apple account'}</button>
+        </form>
+      )}
+
+      {needsCredential && credentialEntry?.supported && !credentialEntry.allowedNow && <p className="mutation-message">{credentialEntry.blockedReason?.message ?? 'Open Sideport over HTTPS or directly on the loopback address to add an Apple account.'}</p>}
+
+      {needsCredential && !credentialEntry?.supported && (
+        <div className="connector-readonly-setup">
+          <p className="data-boundary-note">This deployment uses read-only {credentialCustodyLabel(personalApple.secretCustody)}. Its owner must configure the Apple credential in that provider; Sideport will never copy it into browser storage.</p>
+          <label className="form-field"><span>Configured Apple Account email</span><input autoComplete="username" onChange={(event) => setAppleId(event.currentTarget.value)} placeholder="name@example.com" value={appleId} /></label>
+          <button className="primary-action" disabled={!canSignIn} onClick={() => signInMutation.mutate()} type="button">Sign in</button>
         </div>
-      </div>
-      <p className="data-boundary-note">Sideport does not accept Apple passwords in the browser. Configure the matching {credentialCustodyLabel(personalApple.secretCustody)} first, then start sign-in. If Apple requires 2FA, enter the code here locally.</p>
+      )}
+
+      {!needsCredential && personalApple.state !== 'authenticated' && personalApple.state !== 'two-factor-required' && (
+        <div className="saved-apple-account">
+          <div><strong>{personalApple.appleIdHint ?? 'Saved Apple account'}</strong><span>Credential held by {credentialCustodyShortLabel(personalApple.secretCustody)} custody.</span></div>
+          <button className="primary-action" disabled={!canSignIn} onClick={() => signInMutation.mutate()} type="button">{signInMutation.isPending ? 'Signing in…' : 'Sign in saved account'}</button>
+        </div>
+      )}
+
       {personalApple.pendingChallengeId && (
         <div className="form-grid">
           <label className="form-field">
             <span>{personalApple.pendingChallengeKind ?? '2FA'} code</span>
-            <input autoComplete="one-time-code" inputMode="numeric" onChange={(event) => setCode(event.currentTarget.value)} placeholder="123456" value={code} />
+            <input autoComplete="one-time-code" inputMode="numeric" maxLength={6} onChange={(event) => setCode(event.currentTarget.value.replace(/\D/g, '').slice(0, 6))} placeholder="123456" ref={twoFactorInputRef} value={code} />
           </label>
           <div className="form-field action-field">
-            <span>Pending challenge</span>
-            <button className="primary-action" disabled={!canComplete2Fa} onClick={() => twoFactorMutation.mutate()} type="button">Complete 2FA</button>
+            <span>{personalApple.pendingChallengeExpiresAt ? `Expires ${relativeTime(personalApple.pendingChallengeExpiresAt)}` : 'Short-lived verification'}</span>
+            <button className="primary-action" disabled={!canComplete2Fa} onClick={() => twoFactorMutation.mutate()} type="button">Continue</button>
           </div>
         </div>
       )}
-      {!apiStatus.canMutate && <p className="mutation-message">Mutations are disabled for this build. Personal Apple sign-in is unavailable in read-only mode.</p>}
-      {signInMutation.error && <p className="mutation-message error">{signInMutation.error.message}</p>}
-      {twoFactorMutation.error && <p className="mutation-message error">{twoFactorMutation.error.message}</p>}
-      {personalApple.teams.length > 0 && <PersonalAppleTeamList teams={personalApple.teams} />}
+      {!canManageSigner && <p className="mutation-message">This protected Sideport session does not have permission to manage the Apple signer.</p>}
+      {connectError && <p className="mutation-message error" role="alert">{connectError}</p>}
+      {signInMutation.error && <p className="mutation-message error" role="alert">{signInMutation.error.message}</p>}
+      {twoFactorMutation.error && <p className="mutation-message error" role="alert">{twoFactorMutation.error.message}</p>}
+      {teamMutation.error && <p className="mutation-message error" role="alert">{teamMutation.error.message}</p>}
+      {personalApple.teams.length > 0 && <PersonalAppleTeamList disabled={!canManageSigner || teamMutation.isPending} onSelect={(teamId) => {
+        if (!personalApple.selectedTeamId) teamMutation.mutate(teamId)
+        else if (teamId !== personalApple.selectedTeamId && personalApple.accountProfileId) void (async () => {
+          setSigningPending(true)
+          setSigningError(null)
+          try {
+            setSigningPreflight(await preflightPersonalAppleSigning(personalApple.accountProfileId!, teamId))
+            setSigningAcknowledged(false)
+          } catch (reason) { setSigningError(reason instanceof Error ? reason.message : 'Sideport could not review the team change.') }
+          finally { setSigningPending(false) }
+        })()
+      }} selectedTeamId={personalApple.selectedTeamId} teams={personalApple.teams} />}
+      {canManageSigner && personalApple.accountProfileId && personalApple.selectedTeamId && (
+        <div className="signing-maintenance">
+          <div><strong>Signing identity</strong><span>Review the exact Apple certificate impact before changing the active account or team.</span></div>
+          <button className="ghost-action" disabled={signingPending} onClick={() => void reviewSigning()} type="button">{signingPending && !signingPreflight ? 'Checking…' : 'Review signing'}</button>
+        </div>
+      )}
+      {canManageSigner && managedEntryAvailable && !needsCredential && <button className="ghost-action" onClick={() => setReplacementOpen((open) => !open)} type="button">Use a different Apple account</button>}
+      {replacementOpen && <section className="signing-impact" aria-label="Replacement Apple account">
+        <h3>Verify a different Apple account</h3>
+        <p>The working account remains active until the new account, returned team, signing identity, and app registrations finish together.</p>
+        {!replacementCandidate && <form className="form-grid" onSubmit={(event) => { event.preventDefault(); void connectReplacement() }}>
+          <label className="form-field"><span>Replacement Apple Account</span><input autoComplete="username" onChange={(event) => setReplacementAppleId(event.currentTarget.value)} type="email" value={replacementAppleId} /></label>
+          <label className="form-field"><span>Password</span><input autoComplete="current-password" onChange={(event) => setReplacementPassword(event.currentTarget.value)} type="password" value={replacementPassword} /></label>
+          <button className="primary-action" disabled={!replacementAppleId.trim() || !replacementPassword || signingPending} type="submit">Verify replacement account</button>
+        </form>}
+        {replacementCandidate?.state === 'two-factor-required' && <div className="form-grid"><label className="form-field"><span>{replacementCandidate.challengeKind ?? '2FA'} code</span><input autoComplete="one-time-code" inputMode="numeric" maxLength={6} onChange={(event) => setReplacementCode(event.currentTarget.value.replace(/\D/g, '').slice(0, 6))} value={replacementCode} /></label><button className="primary-action" disabled={!/^\d{6}$/.test(replacementCode) || signingPending} onClick={() => void verifyReplacementTwoFactor()} type="button">Continue</button></div>}
+        {replacementCandidate?.state === 'validated' && <div className="apple-team-list" role="radiogroup" aria-label="Replacement Apple Developer Team">{replacementCandidate.teams.map((team) => <button key={team.teamId} onClick={() => void reviewReplacementTeam(team.teamId)} role="radio" type="button"><span><strong>{team.name}</strong><small>{team.type} · returned by Apple</small></span><span className="apple-team-radio" /></button>)}</div>}
+      </section>}
+      {signingPreflight && (
+        <section className="signing-impact" aria-label="Signing replacement impact">
+          <h3>{signingPreflight.impact === 'reuse' ? 'Current identity can be reused' : signingPreflight.impact === 'mint' ? 'Sideport can create its first identity' : 'Replacing signing affects Apple certificates'}</h3>
+          <dl className="detail-list">
+            <div><dt>Apple certificates</dt><dd>{signingPreflight.appleCertificates.length}</dd></div>
+            <div><dt>Registered apps</dt><dd>{signingPreflight.registrationCount}</dd></div>
+            <div><dt>iPhones</dt><dd>{signingPreflight.deviceCount}</dd></div>
+            <div><dt>Profiles</dt><dd>{signingPreflight.profileCount}</dd></div>
+          </dl>
+          {signingPreflight.appleCertificates.map((certificate) => <p key={certificate.id}>Certificate ending {certificate.serialSuffix ?? certificate.id.slice(-4)} will be the only certificate authorized for replacement.</p>)}
+          {signingPreflight.requiresAcknowledgement && <label className="checkbox-row"><input checked={signingAcknowledged} onChange={(event) => setSigningAcknowledged(event.currentTarget.checked)} type="checkbox" /> I understand the exact certificate list above.</label>}
+          <button className="primary-action" disabled={signingPending || (signingPreflight.requiresAcknowledgement && !signingAcknowledged)} onClick={() => void replaceSigning()} type="button">{signingPending ? 'Replacing…' : signingPreflight.impact === 'reuse' ? 'Keep current identity' : 'Replace signing identity'}</button>
+        </section>
+      )}
+      {signingOperation?.status === 'succeeded' && <p className="mutation-message success">The new signing identity was verified.</p>}
+      {signingOperation?.status === 'blocked' && <p className="mutation-message error" role="alert">{signingOperation.error?.message ?? 'The signing impact changed. Review it again.'}</p>}
+      {signingOperation?.status === 'recovery-required' && <div className="mutation-message error" role="alert"><strong>Signing change needs recovery.</strong> Authenticate the same replacement Apple account again, choose the same returned team, review the unchanged impact, then retry. Sideport will reuse this saved operation and must not repeat a completed certificate replacement.<button className="ghost-action" onClick={() => { setReplacementCandidate(null); setSigningPreflight(null); setSigningAcknowledged(false); setReplacementOpen(true) }} type="button">Authenticate again and resume saved signing change</button></div>}
+      {signingError && <p className="mutation-message error" role="alert">{signingError}</p>}
     </div>
   )
 }
 
-function PersonalAppleTeamList({ teams }: { teams: PersonalAppleSummary['teams'] }) {
+function PersonalAppleTeamList({ teams, selectedTeamId, disabled, onSelect }: { teams: PersonalAppleSummary['teams']; selectedTeamId?: string | null; disabled: boolean; onSelect: (teamId: string) => void }) {
   return (
-    <div className="registration-list">
+    <div className="apple-team-list" role="radiogroup" aria-label="Apple Developer Team">
       {teams.map((team) => (
-        <article className="registration-card" key={team.teamId}>
-          <div>
-            <strong>{team.name}</strong>
-            <span>{team.teamId}</span>
-          </div>
-          <div className="registration-meta"><span>{team.type}</span><span>Detected from Apple</span></div>
-        </article>
+        <button aria-checked={selectedTeamId === team.teamId} disabled={disabled} key={team.teamId} onClick={() => onSelect(team.teamId)} role="radio" type="button">
+          <span><strong>{team.name}</strong><small>{team.type} · returned by Apple</small></span>
+          {selectedTeamId === team.teamId ? <CheckCircle2 size={19} /> : <span className="apple-team-radio" />}
+        </button>
       ))}
     </div>
   )
@@ -1456,13 +1952,48 @@ export function DiagnosticsPage({ data }: { data: SideportReadModel }) {
   )
 }
 
-export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: SystemStatus; apiStatus: AdminDataStatus; onApiTokenSaved?: () => void }) {
+function schedulerIntervalCopy(value: string | undefined): string {
+  if (!value) return 'Unavailable'
+  const match = /^(?:(\d+)\.)?(\d{2}):(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return value
+  const totalHours = Number(match[1] ?? 0) * 24 + Number(match[2])
+  const minutes = Number(match[3])
+  if (totalHours === 1 && minutes === 0) return 'Every hour'
+  if (totalHours > 0 && minutes === 0) return `Every ${totalHours} hours`
+  if (totalHours === 0 && minutes === 1) return 'Every minute'
+  if (totalHours === 0 && minutes > 0) return `Every ${minutes} minutes`
+  return value
+}
+
+export function SettingsPage({ system, apiStatus, canManageScheduler = false, schedulerSettingsService = updateSideportSchedulerSettings, onApiTokenSaved }: { system: SystemStatus; apiStatus: AdminDataStatus; canManageScheduler?: boolean; schedulerSettingsService?: (enabled: boolean) => Promise<SchedulerStatusDto>; onApiTokenSaved?: () => void }) {
+  const queryClient = useQueryClient()
   const [token, setToken] = useState(getStoredSideportApiToken())
   const [saved, setSaved] = useState(false)
+  const [schedulerOverride, setSchedulerOverride] = useState<SchedulerStatusDto | null>(null)
+  const [schedulerPending, setSchedulerPending] = useState(false)
+  const [schedulerError, setSchedulerError] = useState<string | null>(null)
+  const schedulerEnabled = schedulerOverride?.enabled ?? system.scheduler.enabled
+  const schedulerPolicy = schedulerOverride?.policy ?? system.scheduler.policy
+  const nextEvaluationAt = schedulerOverride?.nextEvaluationAt ?? system.scheduler.nextEvaluationAt
+  const schedulerLock = schedulerOverride?.concurrency ?? system.scheduler.concurrency
   const saveToken = () => {
     saveSideportApiToken(token)
     setSaved(true)
     onApiTokenSaved?.()
+  }
+  const changeScheduler = async () => {
+    if (!canManageScheduler || schedulerPending) return
+    setSchedulerPending(true)
+    setSchedulerError(null)
+    try {
+      const updated = await schedulerSettingsService(!schedulerEnabled)
+      setSchedulerOverride(updated)
+      await queryClient.invalidateQueries({ queryKey: ['sideport-admin-data'] })
+    } catch (reason) {
+      setSchedulerError(reason instanceof Error ? reason.message : 'Sideport could not change automatic refresh.')
+    } finally {
+      setSchedulerPending(false)
+    }
   }
 
   return (
@@ -1483,11 +2014,17 @@ export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: S
       </Panel>
       <Panel title="Scheduler">
         <dl className="detail-list">
-          <div><dt>Automatic refresh</dt><dd>{system.scheduler.enabled ? 'Enabled' : 'Disabled'}</dd></div>
-          <div><dt>Cadence</dt><dd>Every 6 hours (Sideport__Scheduler__ResignInterval).</dd></div>
-          <div><dt>Behavior</dt><dd>Re-signs apps due within the lead time, soonest first, single-flight.</dd></div>
+          <div><dt>Automatic refresh</dt><dd>{schedulerEnabled ? 'Enabled' : 'Disabled'}</dd></div>
+          <div><dt>Checks</dt><dd>{schedulerIntervalCopy(schedulerPolicy?.evaluationInterval)} · only apps that are due</dd></div>
+          <div><dt>Next check</dt><dd>{schedulerEnabled && nextEvaluationAt ? relativeTime(nextEvaluationAt) : 'Not scheduled'}</dd></div>
+          <div><dt>Current work</dt><dd>{schedulerLock?.lockState === 'busy' ? 'One operation is running' : schedulerLock?.lockState === 'held' ? 'Paused for an unresolved device operation' : 'Idle'}</dd></div>
         </dl>
         <SourcePill source={system.scheduler.source} label={sourceLabel(system.scheduler.source)} />
+        {schedulerError && <p className="mutation-message error" role="alert">{schedulerError}</p>}
+        <div className="dialog-actions">
+          <button className="primary-action" disabled={!canManageScheduler || schedulerPending} onClick={() => void changeScheduler()} type="button">{schedulerPending ? 'Saving…' : schedulerEnabled ? 'Turn off automatic refresh' : 'Turn on automatic refresh'}</button>
+        </div>
+        {!canManageScheduler && <p className="pipeline-note">This session can view scheduler status but cannot change it.</p>}
       </Panel>
 
       <Panel title="Signer binary">
@@ -1534,6 +2071,19 @@ export function SettingsPage({ system, apiStatus, onApiTokenSaved }: { system: S
         </dl>
         <SourcePill source="planned" label={sourceLabel('planned')} />
       </Panel>
+    </div>
+  )
+}
+
+function CanonicalSettingsPage({ data, apiStatus, canManageScheduler, canManageSigner, schedulerSettingsService, onApiTokenSaved }: { data: SideportReadModel; apiStatus: AdminDataStatus; canManageScheduler: boolean; canManageSigner: boolean; schedulerSettingsService: (enabled: boolean) => Promise<SchedulerStatusDto>; onApiTokenSaved?: () => void }) {
+  return (
+    <div className="page-stack">
+      <PageHeader eyebrow="Simple by default" title="Settings" description="Sign-in, automatic refresh, Apple signing, and technical setup." />
+      <Panel title="Sign-in and recovery">
+        <p className="muted">Managed by Authentik. Passkeys stay on the member's trusted devices; Sideport stores only membership by validated OIDC identity.</p>
+      </Panel>
+      <SettingsPage system={data.system} apiStatus={apiStatus} canManageScheduler={canManageScheduler} schedulerSettingsService={schedulerSettingsService} onApiTokenSaved={onApiTokenSaved} />
+      {canManageSigner ? <AppleAccessPage appleAccess={data.appleAccess} personalApple={data.personalApple} canManageSigner={canManageSigner} /> : null}
     </div>
   )
 }
@@ -1653,11 +2203,11 @@ function SystemChecks({ system }: { system: SystemStatus }) {
   return (
     <div className="check-list">
       <CheckRow label="API process" ok={system.api.ok} source={system.api.source} detail="/healthz responds." />
-      <CheckRow label="Readiness" ok={system.ready.ready} source={system.ready.source} detail="Aggregates signer and anisette." />
+      <CheckRow label="Operational readiness" ok={system.operational} source={system.ready.source} detail="Authenticated system checks for signing, storage, and device transport." />
       <CheckRow label="Anisette" ok={system.ready.checks.anisette.ok} source={system.ready.checks.anisette.source} detail={system.ready.checks.anisette.error ?? 'Client info available.'} />
       <CheckRow label="Signer binary" ok={system.ready.checks.signer.ok} source={system.ready.checks.signer.source} detail={system.ready.checks.signer.path} />
       <CheckRow label="API bearer token" ok={system.apiAuth.configured} source={system.apiAuth.source} detail="Do not expose /api refresh actions without auth." />
-      <CheckRow label="Scheduler" ok={!system.scheduler.enabled} source={system.scheduler.source} detail={system.scheduler.enabled ? 'Automatic refresh scheduling is enabled.' : 'Automatic refresh scheduling is disabled.'} />
+      <CheckRow label="Scheduler" ok={system.scheduler.enabled} source={system.scheduler.source} detail={system.scheduler.enabled ? 'Automatic due-only refresh is enabled.' : 'Automatic refresh scheduling is disabled.'} />
     </div>
   )
 }
@@ -1670,31 +2220,6 @@ function CheckRow({ label, ok, detail, source }: { label: string; ok: boolean; d
       <SourcePill source={source} label={sourceLabel(source)} />
     </div>
   )
-}
-
-function IPhoneSetupList({ steps }: { steps: OnboardingStep[] }) {
-  if (!steps.length) return <EmptyState icon={Smartphone} title="No iPhone actions yet" detail="Connect a device or register an app to reveal the iPhone-side setup prompts." />
-  return (
-    <div className="iphone-guide">
-      {steps.map((step, index) => (
-        <article className={`iphone-action ${step.state}`} key={step.id}>
-          <div className="step-number">{index + 1}</div>
-          <div>
-            <strong>{step.label}</strong>
-            <span>{step.description}</span>
-            {step.settingsPath && <code className="settings-path">{step.settingsPath}</code>}
-            {step.detail && <small>{step.detail}</small>}
-          </div>
-          <StatusLabel state={step.state} />
-        </article>
-      ))}
-    </div>
-  )
-}
-
-function StatusLabel({ state }: { state: OnboardingStepState }) {
-  const label = state === 'complete' ? 'Complete' : state === 'blocked' ? 'Blocked' : state === 'warning' ? 'Warning' : 'Pending'
-  return <span className={`status-label ${state}`}>{label}</span>
 }
 
 function FacetToggleButton({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
@@ -1744,7 +2269,7 @@ function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: Device
     },
     {
       id: 'action',
-      header: '',
+      header: 'Actions',
       cell: ({ row }) => <button className="row-action" onClick={() => onOpenDevice?.(row.original)} type="button">Open</button>,
     },
   ], [apps, onOpenDevice])
@@ -1756,7 +2281,7 @@ function DeviceInventoryTable({ devices, apps, onOpenDevice }: { devices: Device
       <table>
         <thead>
           {table.getHeaderGroups().map((group) => (
-            <tr key={group.id}>{group.headers.map((header) => <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>)}</tr>
+            <tr key={group.id}>{group.headers.map((header) => <th key={header.id} scope="col">{flexRender(header.column.columnDef.header, header.getContext())}</th>)}</tr>
           ))}
         </thead>
         <tbody>
@@ -1815,7 +2340,7 @@ function AppSummary({ app }: { app: RegisteredAppSummary }) {
       <div>
         <strong>{app.displayName.value}</strong>
         <span>{app.bundleId}</span>
-        <small>Expires {timeUntil(app.expiresAt?.value)}</small>
+        <small>{app.lifecycle === 'pending-install' ? 'Install not verified yet' : `Expires ${timeUntil(app.expiresAt?.value)}`}</small>
       </div>
     </div>
   )
@@ -1985,7 +2510,7 @@ function LogTailConsole({ logs }: { logs: OperationLogEntry[] }) {
         <span><Terminal size={15} /> Protected /api/logs tail</span>
         <small>{logs.length} lines · newest first</small>
       </div>
-      <pre className="log-tail-scroll">
+      <pre aria-label="Log entries" className="log-tail-scroll" tabIndex={0}>
         {logs.slice(0, 60).map((entry) => <code className={`tail-line level-${entry.level.toLowerCase()}`} key={entry.id}>{tailLine(entry)}</code>)}
       </pre>
     </div>
@@ -1994,24 +2519,6 @@ function LogTailConsole({ logs }: { logs: OperationLogEntry[] }) {
 
 function PreflightList({ items }: { items: Array<[string, boolean, SourceKind]> }) {
   return <div className="check-list">{items.map(([label, ok, source]) => <CheckRow key={label} label={label} ok={ok} detail={ok ? 'Ready' : 'Not available yet'} source={source} />)}</div>
-}
-
-function registrationDisabledHelp(canMutate: boolean, payload: AppRegistrationPayload, catalogReady: boolean, slotAvailable: boolean): string | null {
-  if (!canMutate) return null
-  if (!catalogReady) return 'Inspect a ready catalog IPA before saving a phone registration.'
-  if (!slotAvailable) return 'This phone already has 3 Sideport registrations. Apps installed outside Sideport are reported separately when device app inspection is available.'
-  const labels: Record<keyof AppRegistrationPayload, string> = {
-    bundleId: 'Bundle ID',
-    deviceUdid: 'Device UDID',
-    appleId: 'Apple ID',
-    teamId: 'Team ID',
-    inputIpaPath: 'Server IPA path',
-  }
-  const missing = Object.entries(payload)
-    .filter(([, value]) => !value.trim())
-    .map(([key]) => labels[key as keyof AppRegistrationPayload])
-  if (!missing.length) return null
-  return `Fill ${missing.join(', ')} to enable registration.`
 }
 
 function expiryCopy(value?: string): string {
@@ -2025,12 +2532,13 @@ function tailLine(entry: OperationLogEntry): string {
   return `${stamp}  ${entry.level.padEnd(11)}  ${entry.category}  ${entry.message}${suffix}\n`
 }
 
-function EmptyState({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
+function EmptyState({ icon: Icon, title, detail, actionLabel, onAction }: { icon: LucideIcon; title: string; detail: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <div className="empty-state">
       <Icon size={24} />
       <strong>{title}</strong>
       <span>{detail}</span>
+      {actionLabel && onAction && <button className="primary-action empty-state-action" onClick={onAction} type="button"><Plus size={16} /> {actionLabel}</button>}
     </div>
   )
 }
@@ -2078,7 +2586,7 @@ const defaultPipelineStages: PipelineStage[] = [
   { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'pending' },
   { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'pending' },
   { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
-  { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+  { id: 'verify', label: 'Verify', detail: 'Bundle + profile evidence', state: 'pending' },
 ]
 
 export function SigningPipeline({ title = 'Sign · install · verify', stages = defaultPipelineStages, note }: { title?: string; stages?: PipelineStage[]; note?: string }) {
@@ -2089,7 +2597,7 @@ export function SigningPipeline({ title = 'Sign · install · verify', stages = 
   const overallLabel = failed ? 'Failed' : allDone ? 'Verified' : active ? `Running · ${active.label}` : 'Not started'
 
   return (
-    <section className="signing-pipeline" aria-label="Signing pipeline">
+    <section className="signing-pipeline" aria-label={`${title} pipeline`}>
       <div className="pipeline-head">
         <div>
           <h3>{title}</h3>
@@ -2120,12 +2628,12 @@ interface CommandTarget {
   id: string
   label: string
   meta?: string
-  group: 'Go to' | 'Devices' | 'Apps'
+  group: 'Actions' | 'Go to' | 'Devices' | 'Apps'
   icon: LucideIcon
   run: () => void
 }
 
-function CommandMenu({ open, onOpenChange, data, onNavigate, onOpenDevice }: { open: boolean; onOpenChange: (open: boolean) => void; data: SideportReadModel; onNavigate: (route: RouteId) => void; onOpenDevice: (device: DeviceSummary) => void }) {
+function CommandMenu({ open, onOpenChange, data, onNavigate, onOpenDevice, onAddIPhone, onAddApp }: { open: boolean; onOpenChange: (open: boolean) => void; data: SideportReadModel; onNavigate: (route: RouteId) => void; onOpenDevice: (device: DeviceSummary) => void; onAddIPhone: () => void; onAddApp?: () => void }) {
   const [query, setQuery] = useState('')
   const dismiss = (run: () => void) => {
     run()
@@ -2134,13 +2642,16 @@ function CommandMenu({ open, onOpenChange, data, onNavigate, onOpenDevice }: { o
   }
 
   const targets: CommandTarget[] = [
+    { id: 'action:add-iphone', label: 'Add iPhone', meta: 'Connect once with USB', group: 'Actions', icon: Smartphone, run: onAddIPhone },
+    ...(onAddApp ? [{ id: 'action:add-app', label: 'Add app', meta: 'Computer, server, or GitHub', group: 'Actions' as const, icon: Plus, run: onAddApp }] : []),
     ...routeItems.map((item) => ({ id: `route:${item.id}`, label: item.label, meta: 'Screen', group: 'Go to' as const, icon: item.icon, run: () => onNavigate(item.id) })),
     ...data.devices.map((device) => ({ id: `device:${device.udid}`, label: device.name, meta: `${connectionLabel(device.connection)} · ${compactUdid(device.udid)}`, group: 'Devices' as const, icon: Smartphone, run: () => onOpenDevice(device) })),
-    ...data.apps.map((app) => ({ id: `app:${app.deviceUdid}:${app.bundleId}`, label: app.displayName.value, meta: app.bundleId, group: 'Apps' as const, icon: Package, run: () => onNavigate('catalog') })),
+    ...data.catalogApps.map((app) => ({ id: `catalog:${app.id}`, label: app.name, meta: `${app.versionLabel} · ${app.purpose}`, group: 'Apps' as const, icon: Package, run: () => onNavigate('apps') })),
+    ...data.apps.map((app) => ({ id: `app:${app.deviceUdid}:${app.bundleId}`, label: app.displayName.value, meta: app.bundleId, group: 'Apps' as const, icon: Package, run: () => onNavigate('apps') })),
   ]
   const q = query.trim().toLowerCase()
   const filtered = q ? targets.filter((target) => `${target.label} ${target.meta ?? ''}`.toLowerCase().includes(q)) : targets
-  const groups = (['Go to', 'Devices', 'Apps'] as const).map((group) => ({ group, items: filtered.filter((target) => target.group === group) })).filter((entry) => entry.items.length)
+  const groups = (['Actions', 'Go to', 'Devices', 'Apps'] as const).map((group) => ({ group, items: filtered.filter((target) => target.group === group) })).filter((entry) => entry.items.length)
 
   return (
     <Dialog.Root onOpenChange={onOpenChange} open={open}>
@@ -2181,119 +2692,15 @@ function CommandMenu({ open, onOpenChange, data, onNavigate, onOpenDevice }: { o
   )
 }
 
-interface DerivedAppleTeam {
-  teamId: string
-  name: string
-  type: string
-  appsUsing: number
-  devicesRegistered: number
-  certificateLabel: string
-  certificateState: HealthState
-  source: SourceKind
-}
-
-function deriveAppleTeams(data: SideportReadModel): DerivedAppleTeam[] {
-  const ids = new Set<string>()
-  data.devices.forEach((device) => { if (device.teamId && device.teamId !== 'Unknown') ids.add(device.teamId) })
-  data.apps.forEach((app) => { if (app.teamId && app.teamId !== 'Unknown') ids.add(app.teamId) })
-  data.personalApple.teams.forEach((team) => ids.add(team.teamId))
-  const certCap = data.appleAccess.capabilities.find((capability) => capability.id === 'certificates')
-
-  return Array.from(ids).map((teamId) => {
-    const personalTeam = data.personalApple.teams.find((team) => team.teamId === teamId)
-    let certificateState: HealthState = 'offline'
-    let certificateLabel = 'Not probed'
-    if (certCap) {
-      if (certCap.state === 'verified') { certificateState = 'healthy'; certificateLabel = `Readable (${certCap.count ?? 0})` }
-      else if (certCap.state === 'denied' || certCap.state === 'unauthorized') { certificateState = 'warning'; certificateLabel = 'Access denied by role' }
-      else { certificateState = 'blocked'; certificateLabel = capabilityStateLabel(certCap.state) }
-    }
-    return {
-      teamId,
-      name: personalTeam?.name ?? 'Apple Developer Team',
-      type: personalTeam?.type ?? (data.personalApple.connector === 'personal-apple-id' ? 'Free (personal)' : 'Unknown'),
-      appsUsing: data.apps.filter((app) => app.teamId === teamId).length,
-      devicesRegistered: data.devices.filter((device) => device.teamId === teamId).length,
-      certificateLabel,
-      certificateState,
-      source: 'derived',
-    }
-  })
-}
-
-export function TeamsPage({ data, onNavigate }: { data: SideportReadModel; onNavigate?: (route: RouteId) => void }) {
-  const appleTeams = deriveAppleTeams(data)
-  const workspace = data.workspace
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Teams"
-        title="Two different kinds of team"
-        description="An Apple Developer Team is where certificates, App IDs, and provisioning profiles come from. The Sideport workspace is who can operate this console. They are intentionally kept separate."
-      />
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Apple Developer Teams</h2>
-          <button className="ghost-action" onClick={() => onNavigate?.('apple-access')} type="button">Apple Access<ChevronRight size={15} /></button>
-        </div>
-        {appleTeams.length ? (
-          <div className="teams-grid">
-            {appleTeams.map((team) => (
-              <article className="team-card" key={team.teamId}>
-                <div className="team-card-top">
-                  <div className="team-mark"><Apple size={18} /></div>
-                  <div>
-                    <h3>{team.name}</h3>
-                    <span>{team.teamId} · {team.type}</span>
-                  </div>
-                  <SourcePill source={team.source} label={sourceLabel(team.source)} />
-                </div>
-                <div className="team-stats">
-                  <div><strong>{team.appsUsing}</strong><span>Apps using it</span></div>
-                  <div><strong>{team.devicesRegistered}</strong><span>Devices registered</span></div>
-                </div>
-                <StatusPill state={team.certificateState} label={`Certificates: ${team.certificateLabel}`} />
-              </article>
-            ))}
-          </div>
-        ) : <EmptyState icon={Apple} title="No Apple team detected yet" detail="Connect a Personal Apple ID or App Store Connect key in Apple Access. Teams are derived from devices, registered apps, and the Apple connector." />}
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Sideport workspace</h2>
-          <button className="ghost-action" onClick={() => onNavigate?.('users')} type="button">Manage users<ChevronRight size={15} /></button>
-        </div>
-        <div className="workspace-row">
-          <div className="team-mark workspace-mark"><Building2 size={18} /></div>
-          <dl className="detail-list workspace-detail">
-            <div><dt>Workspace</dt><dd>{workspace.name}</dd></div>
-            <div><dt>Current member</dt><dd>{workspace.currentMember?.name ?? 'API token client'}</dd></div>
-            <div><dt>Members</dt><dd>{workspace.members.length} reported · user admin {workspace.supportsUserAdministration ? 'available' : 'not available'}</dd></div>
-            <div><dt>Authentication</dt><dd>{workspace.authMode}</dd></div>
-            <div><dt>Role enforcement</dt><dd>{workspace.roleEnforcement ?? 'not reported'}</dd></div>
-          </dl>
-          <SourcePill source={workspace.source} label={sourceLabel(workspace.source)} />
-        </div>
-        <p className="pipeline-note"><AlertTriangle size={14} /> The workspace controls who can use Sideport. It does not grant Apple signing access — that always comes from an Apple Developer Team above.</p>
-      </section>
-    </div>
-  )
-}
-
 const roleCopy: Record<WorkspaceRole, { label: string; permissions: string }> = {
   owner: { label: 'Owner', permissions: 'Credentials, settings, users, refresh, and destructive actions.' },
-  admin: { label: 'Admin', permissions: 'Teams, devices, apps, refresh, and diagnostics.' },
-  operator: { label: 'Operator', permissions: 'Refresh and diagnostics; read-only on devices and apps.' },
-  viewer: { label: 'Viewer', permissions: 'Read-only status and diagnostics.' },
+  family: { label: 'Member', permissions: 'Approved apps, owned devices, and relevant activity.' },
 }
 
 const memberStatusCopy: Record<MemberStatus, string> = {
   active: 'Active',
-  invited: 'Invite pending',
   suspended: 'Suspended',
+  offboarded: 'Offboarded',
 }
 
 export function RoleBadge({ role }: { role: WorkspaceRole }) {
@@ -2302,20 +2709,18 @@ export function RoleBadge({ role }: { role: WorkspaceRole }) {
 
 export function UsersPage({ workspace, activity, apiStatus }: { workspace: WorkspaceSummary; activity: ActivityEvent[]; apiStatus: AdminDataStatus }) {
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<WorkspaceRole>('viewer')
-  const canInvite = apiStatus.canMutate && inviteEmail.trim().length > 3 && !workspace.authDelegated && Boolean(workspace.capabilities?.['users.invite'])
+  const [inviteRole, setInviteRole] = useState<WorkspaceRole>('family')
+  const canInvite = apiStatus.canMutate && inviteEmail.trim().length > 3 && Boolean(workspace.capabilities?.['members.invite'])
 
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Users & roles"
-        title="Who can operate Sideport"
-        description="Roles scope what each person can do — from read-only status to destructive credential actions. These are workspace roles, separate from any Apple Developer Team."
+        eyebrow="Your Sideport"
+        title="People"
+        description="Invite someone you trust. Members can use approved apps on their own iPhone; Apple signing and app sources stay with the Owner."
       />
 
-      {workspace.authDelegated && (
-        <p className="pipeline-note"><AlertTriangle size={14} /> Authentication is delegated to {workspace.authMode}. Role enforcement is {workspace.roleEnforcement ?? 'advisory'} and user administration is {workspace.supportsUserAdministration ? 'available' : 'not live yet'}.</p>
-      )}
+      <p className="pipeline-note"><ShieldCheck size={14} /> Authentik proves sign-in. Sideport enforces Owner and Member access for every device, app, and action.</p>
 
       <Panel title="Roles">
         <div className="role-legend">
@@ -2347,8 +2752,8 @@ export function UsersPage({ workspace, activity, apiStatus }: { workspace: Works
                   <div><strong>{member.name}</strong><span>{member.email}</span></div>
                 </div>
                 <RoleBadge role={member.role} />
-                <span className={`status-label ${member.status === 'active' ? 'complete' : member.status === 'invited' ? 'pending' : 'blocked'}`}>{memberStatusCopy[member.status]}</span>
-                <span className="muted">{member.status === 'invited' ? `Invited ${member.invitedAt ? relativeTime(member.invitedAt) : ''}` : member.lastActiveAt ? relativeTime(member.lastActiveAt) : '—'}</span>
+                <span className={`status-label ${member.status === 'active' ? 'complete' : 'blocked'}`}>{memberStatusCopy[member.status]}</span>
+                <span className="muted">{member.lastActiveAt ? relativeTime(member.lastActiveAt) : '—'}</span>
                 <button className="row-action member-action" disabled type="button">Manage</button>
               </div>
             ))}
@@ -2370,7 +2775,7 @@ export function UsersPage({ workspace, activity, apiStatus }: { workspace: Works
               </select>
             </label>
             <button className="primary-action" disabled={!canInvite} type="button"><UserPlus size={16} /> Send invite</button>
-            {workspace.authDelegated && <p className="mutation-message">Invites are disabled while authentication is delegated to the reverse proxy.</p>}
+            {!workspace.capabilities?.['members.invite'] && <p className="mutation-message">Only the Sideport Owner can create an invitation.</p>}
           </div>
         </Panel>
         <Panel title="Audit trail">

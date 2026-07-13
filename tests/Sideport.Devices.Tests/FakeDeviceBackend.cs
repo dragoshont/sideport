@@ -14,6 +14,10 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
     public Dictionary<string, int> ListInstalledAppsCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> ListProvisioningProfilesCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Exception? ThrowOnInstall { get; set; }
+    public int PairCalls { get; private set; }
+    public int ProbeTrustCalls { get; private set; }
+    public Dictionary<string, DeviceTrustProbe> TrustByUdid { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Func<string, IProgress<DevicePairingProgress>?, CancellationToken, Task<DevicePairingResult>>? PairHandler { get; set; }
 
     public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<BackendDevice>>(Devices);
@@ -47,6 +51,42 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
     public Task<BackendDiagnostics> DiagnoseAsync(CancellationToken ct) =>
         Task.FromResult<BackendDiagnostics>(
             new BackendDiagnostics(DiagnoseTransportReachable, DiagnoseTransportError, DiagnoseProbes));
+
+    public Task<DeviceTrustProbe> ProbeTrustAsync(string udid, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        ProbeTrustCalls++;
+        return Task.FromResult(
+            TrustByUdid.TryGetValue(udid, out DeviceTrustProbe? probe)
+                ? probe
+                : new DeviceTrustProbe(
+                    udid,
+                    DeviceConnection.Usb,
+                    "unknown",
+                    "No scripted trust observation is available.",
+                    DateTimeOffset.UtcNow,
+                    UsableForInstall: false));
+    }
+
+    public Task<DevicePairingResult> PairAsync(
+        string udid,
+        IProgress<DevicePairingProgress>? progress,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        PairCalls++;
+        if (PairHandler is not null)
+            return PairHandler(udid, progress, ct);
+
+        progress?.Report(new DevicePairingProgress("paired", "Paired."));
+        return Task.FromResult(new DevicePairingResult(
+            udid,
+            DeviceConnection.Usb,
+            "trusted",
+            "Lockdown session verified over USB.",
+            DateTimeOffset.UtcNow,
+            UsableForInstall: true));
+    }
 }
 
 /// <summary>

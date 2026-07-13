@@ -33,6 +33,21 @@ internal interface IDeviceBackend
     /// per enumerated device, whether the lockdown/trust handshake succeeds.
     /// </summary>
     Task<BackendDiagnostics> DiagnoseAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Check existing lockdown trust. This operation must never create or
+    /// modify a pairing record or request Trust on the device.
+    /// </summary>
+    Task<DeviceTrustProbe> ProbeTrustAsync(string udid, CancellationToken ct);
+
+    /// <summary>
+    /// Explicitly request Trust for a USB-connected device. No other backend
+    /// operation is allowed to initiate pairing.
+    /// </summary>
+    Task<DevicePairingResult> PairAsync(
+        string udid,
+        IProgress<DevicePairingProgress>? progress,
+        CancellationToken ct);
 }
 
 /// <summary>A device as seen by the backend, with lockdown-derived metadata.</summary>
@@ -41,7 +56,11 @@ internal sealed record BackendDevice(
     string Name,
     string ProductType,
     string OsVersion,
-    DeviceConnection Connection);
+    DeviceConnection Connection,
+    string TrustState = "unknown",
+    string? TrustReason = null,
+    DateTimeOffset? LockdownCheckedAt = null,
+    bool UsableForInstall = false);
 
 /// <summary>An installed app as reported by <c>installation_proxy</c>.</summary>
 internal sealed record BackendApp(
@@ -62,4 +81,8 @@ internal sealed record BackendDeviceProbe(
     DeviceConnection Connection,
     bool LockdownOk,
     string? Name,
-    string? LockdownError);
+    string? LockdownError,
+    string TrustState = "unknown",
+    string? TrustReason = null,
+    DateTimeOffset? LockdownCheckedAt = null,
+    bool UsableForInstall = false);

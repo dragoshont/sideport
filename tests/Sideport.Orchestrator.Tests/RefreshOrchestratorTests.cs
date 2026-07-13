@@ -23,6 +23,8 @@ public class RefreshOrchestratorTests : IDisposable
         _inputIpa = Path.Combine(_dir, "in.ipa");
         File.WriteAllBytes(_inputIpa, [1, 2, 3]);
         _options = new OrchestratorOptions { WorkDirectory = Path.Combine(_dir, "signed") };
+        _identity.Pkcs12Path = Path.Combine(_dir, "prepared", "identity.p12");
+        _identity.ProfilePath = Path.Combine(_dir, "prepared", "profile.mobileprovision");
         _credentials.Add("me@example.com", "pw");
     }
 
@@ -58,6 +60,23 @@ public class RefreshOrchestratorTests : IDisposable
         RefreshState? state = orchestrator.GetState("UDID-1", "com.example.app");
         Assert.NotNull(state);
         Assert.True(state!.LastSucceeded);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RemovesTransientSigningInputsAfterUse()
+    {
+        await RegisterAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(_identity.Pkcs12Path)!);
+        await File.WriteAllBytesAsync(_identity.Pkcs12Path, [1, 2, 3]);
+        await File.WriteAllBytesAsync(_identity.ProfilePath, [4, 5, 6]);
+        RefreshOrchestrator orchestrator = Build();
+
+        RefreshResult result = await orchestrator.RefreshAsync("UDID-1", "com.example.app");
+
+        Assert.True(result.Success, result.Error);
+        Assert.False(File.Exists(_identity.Pkcs12Path));
+        Assert.False(File.Exists(_identity.ProfilePath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(_identity.Pkcs12Path)!));
     }
 
     [Fact]
@@ -148,7 +167,7 @@ public class RefreshOrchestratorTests : IDisposable
         RefreshResult result = await orchestrator.RefreshAsync("UDID-1", "com.example.app");
 
         Assert.False(result.Success);
-        Assert.Contains("could not prepare signing identity", result.Error);
+        Assert.Contains("could not prepare the signing identity", result.Error);
         Assert.Equal(0, _signer.SignCalls);
     }
 
@@ -177,8 +196,58 @@ public class RefreshOrchestratorTests : IDisposable
         RefreshResult result = await orchestrator.RefreshAsync("UDID-1", "com.example.app");
 
         Assert.False(result.Success);
-        Assert.Contains("install failed", result.Error);
+        Assert.Contains("iPhone install failed", result.Error);
         Assert.NotNull(result.NewExpiry); // signing succeeded; install didn't
+    }
+
+    [Fact]
+    public async Task RefreshAsync_HungInstallBecomesUnknownAndKeepsSignerLeaseUntilTransferStops()
+    {
+        await RegisterAsync();
+        _options.InstallTimeout = TimeSpan.FromMilliseconds(20);
+        _options.InstallCancellationGrace = TimeSpan.FromMilliseconds(10);
+        _devices.InstallCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RefreshOrchestrator orchestrator = Build();
+
+        RefreshResult first = await orchestrator.RefreshAsync("UDID-1", "com.example.app");
+
+        Assert.False(first.Success);
+        Assert.Equal("install-outcome-unknown", first.ErrorCode);
+        Assert.True(orchestrator.IsDeviceMutationActive("UDID-1"));
+
+        Task<RefreshResult> queuedBehindUnknown = orchestrator.RefreshAsync("UDID-1", "com.example.app");
+        Task earlyWinner = await Task.WhenAny(queuedBehindUnknown, Task.Delay(50));
+        Assert.NotSame(queuedBehindUnknown, earlyWinner);
+
+        _devices.InstallCompletion.SetResult();
+        RefreshResult second = await queuedBehindUnknown.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(second.Success, second.Error);
+        Assert.False(orchestrator.IsDeviceMutationActive("UDID-1"));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_StalledInstallThatHardAbortsBecomesUnknownAndReleasesLease()
+    {
+        await RegisterAsync();
+        _options.InstallTimeout = TimeSpan.FromMilliseconds(20);
+        _options.InstallCancellationGrace = TimeSpan.FromMilliseconds(100);
+        _devices.InstallCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _devices.CompleteInstallWhenCanceled = true;
+        RefreshOrchestrator orchestrator = Build();
+
+        RefreshResult first = await orchestrator.RefreshAsync("UDID-1", "com.example.app");
+
+        Assert.False(first.Success);
+        Assert.Equal("install-outcome-unknown", first.ErrorCode);
+        Assert.False(orchestrator.IsDeviceMutationActive("UDID-1"));
+
+        _devices.InstallCompletion = null;
+        RefreshResult usbRecovery = await orchestrator.RefreshAsync("UDID-1", "com.example.app")
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(usbRecovery.Success, usbRecovery.Error);
+        Assert.Equal(2, _devices.Installs.Count);
+        Assert.False(orchestrator.IsDeviceMutationActive("UDID-1"));
     }
 
     [Fact]
@@ -193,6 +262,62 @@ public class RefreshOrchestratorTests : IDisposable
 
         // The session is cached after the first login.
         Assert.Equal(1, _portal.AuthenticateCalls);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ExistingAuthorityOnlyWithoutCachedSession_NeverAuthenticatesOrMutates()
+    {
+        await RegisterAsync();
+        RefreshOrchestrator orchestrator = Build();
+
+        RefreshResult result = await orchestrator.RefreshAsync(
+            "UDID-1",
+            "com.example.app",
+            RefreshExecutionPolicy.ExistingAuthorityOnly);
+
+        Assert.False(result.Success);
+        Assert.Equal("owner-action-required", result.ErrorCode);
+        Assert.Equal(0, _portal.AuthenticateCalls);
+        Assert.Equal(0, _identity.PrepareCalls);
+        Assert.Equal(0, _signer.SignCalls);
+        Assert.Empty(_devices.Installs);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ExistingAuthorityOnlyWithCachedSession_DisablesCertificateCreation()
+    {
+        await RegisterAsync();
+        var sessions = new SessionManager(
+            _portal,
+            _credentials,
+            NullLogger<SessionManager>.Instance);
+        sessions.RememberSession(new AppleSession(
+            "me@example.com",
+            "cached-adsid",
+            "Owner",
+            [0x01])
+        {
+            IdmsToken = "cached-idms-token",
+        });
+        var orchestrator = new RefreshOrchestrator(
+            _registry,
+            sessions,
+            _identity,
+            _signer,
+            _devices,
+            _options,
+            NullLogger<RefreshOrchestrator>.Instance);
+
+        RefreshResult result = await orchestrator.RefreshAsync(
+            "UDID-1",
+            "com.example.app",
+            RefreshExecutionPolicy.ExistingAuthorityOnly);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(0, _portal.AuthenticateCalls);
+        Assert.Equal([false], _identity.CertificateCreationPolicies);
+        Assert.Equal(1, _signer.SignCalls);
+        Assert.Single(_devices.Installs);
     }
 
     public void Dispose()

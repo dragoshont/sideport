@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace Sideport.Api.Diagnostics;
 
@@ -39,9 +40,9 @@ public sealed class OperationLogStore
             level.ToString(),
             category,
             eventId.Id,
-            message,
+            OperationLogSanitizer.Sanitize(message),
             exception?.GetType().Name,
-            exception?.Message);
+            exception is null ? null : OperationLogSanitizer.Sanitize(exception.Message));
 
         lock (_gate)
         {
@@ -57,6 +58,78 @@ public sealed class OperationLogStore
         lock (_gate)
             return _entries.Reverse().Take(take).ToArray();
     }
+}
+
+internal static partial class OperationLogSanitizer
+{
+    private const int MaximumLength = 4_096;
+
+    internal static string Sanitize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        string sanitized = value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+        sanitized = LinkAuthority().Replace(sanitized, "[private-link]");
+        sanitized = CommonCredential().Replace(sanitized, "[credential]");
+        sanitized = Authorization().Replace(sanitized, "$1[redacted]");
+        sanitized = NamedSecret().Replace(sanitized, "$1[redacted]");
+        sanitized = Email().Replace(sanitized, "[email]");
+        sanitized = OidcActor().Replace(sanitized, "[identity]");
+        sanitized = GitHubRepository().Replace(sanitized, "$1[private-repository]");
+        sanitized = DeviceUdid().Replace(sanitized, "[device]");
+        sanitized = LegacyDeviceUdid().Replace(sanitized, "[device]");
+        sanitized = AppleIdentifier().Replace(sanitized, "$1[apple-identifier]");
+        sanitized = ProseCertificateSerial().Replace(sanitized, "$1[apple-identifier]");
+        sanitized = WindowsPath().Replace(sanitized, "[host-path]");
+        sanitized = UnixPath().Replace(sanitized, "$1[host-path]");
+        sanitized = RepeatedWhitespace().Replace(sanitized, " ").Trim();
+        return sanitized.Length <= MaximumLength
+            ? sanitized
+            : sanitized[..MaximumLength] + "…";
+    }
+
+    [GeneratedRegex(@"\b(?:spinv1|spown1|sphnd1)_[A-Za-z0-9_-]+\b", RegexOptions.CultureInvariant)]
+    private static partial Regex LinkAuthority();
+
+    [GeneratedRegex(@"(?i)\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}|[a-z]{4}(?:-[a-z]{4}){3})\b", RegexOptions.CultureInvariant)]
+    private static partial Regex CommonCredential();
+
+    [GeneratedRegex(@"(?i)\b(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+", RegexOptions.CultureInvariant)]
+    private static partial Regex Authorization();
+
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9_])((?:\""?(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key)\""?)\s*[:=]\s*[\""']?)[^\s,;\]\}\""']+", RegexOptions.CultureInvariant)]
+    private static partial Regex NamedSecret();
+
+    [GeneratedRegex(@"(?i)\b[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b", RegexOptions.CultureInvariant)]
+    private static partial Regex Email();
+
+    [GeneratedRegex(@"(?i)\boidc:[^\s,;]+", RegexOptions.CultureInvariant)]
+    private static partial Regex OidcActor();
+
+    [GeneratedRegex(@"(?i)(\b(?:github(?:\.com)?|repository|repo)\s*[:=/]\s*)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", RegexOptions.CultureInvariant)]
+    private static partial Regex GitHubRepository();
+
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])[0-9A-F]{8,}-[0-9A-F-]{16,}(?![A-Za-z0-9])", RegexOptions.CultureInvariant)]
+    private static partial Regex DeviceUdid();
+
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])[0-9A-F]{40}(?![A-Za-z0-9])", RegexOptions.CultureInvariant)]
+    private static partial Regex LegacyDeviceUdid();
+
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9_])((?:\""?(?:apple[_ -]?id|team[_ -]?id|certificate(?:[_ -]?(?:id|serial))?|profile[_ -]?id|key[_ -]?id|issuer[_ -]?id)\""?)\s*[:=]\s*[\""']?)[^\s,;\]\}\""']+", RegexOptions.CultureInvariant)]
+    private static partial Regex AppleIdentifier();
+
+    [GeneratedRegex(@"(?i)(\bcertificate\s+serial\s+)[0-9A-F]{8,64}\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ProseCertificateSerial();
+
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])[A-Z]:\\(?:[^\s\\]+\\)*[^\s,;]+", RegexOptions.CultureInvariant)]
+    private static partial Regex WindowsPath();
+
+    [GeneratedRegex(@"(^|[\s=:])/(?:var|tmp|home|Users|opt|srv|mnt|data|run|etc)(?:/[^\s,;]+)+", RegexOptions.CultureInvariant)]
+    private static partial Regex UnixPath();
+
+    [GeneratedRegex(@"\s{2,}", RegexOptions.CultureInvariant)]
+    private static partial Regex RepeatedWhitespace();
 }
 
 public sealed class OperationLogProvider(OperationLogStore store) : ILoggerProvider

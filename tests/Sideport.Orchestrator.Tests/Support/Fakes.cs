@@ -26,14 +26,31 @@ internal sealed class FakeSigningIdentityProvider : ISigningIdentityProvider
     public DateTimeOffset Expiry { get; set; } = DateTimeOffset.UtcNow.AddDays(7);
     public Exception? Throw { get; set; }
     public int PrepareCalls { get; private set; }
+    public List<bool> CertificateCreationPolicies { get; } = [];
 
     public string Pkcs12Path { get; set; } = "/tmp/identity.p12";
     public string ProfilePath { get; set; } = "/tmp/profile.mobileprovision";
 
     public Task<PreparedSigningInputs> PrepareAsync(
         AppleSession session, string teamId, string bundleId, string deviceUdid, CancellationToken ct = default)
+        => PrepareAsync(
+            session,
+            teamId,
+            bundleId,
+            deviceUdid,
+            allowCertificateCreation: true,
+            ct);
+
+    public Task<PreparedSigningInputs> PrepareAsync(
+        AppleSession session,
+        string teamId,
+        string bundleId,
+        string deviceUdid,
+        bool allowCertificateCreation,
+        CancellationToken ct = default)
     {
         PrepareCalls++;
+        CertificateCreationPolicies.Add(allowCertificateCreation);
         if (Throw is not null)
             throw Throw;
         return Task.FromResult(new PreparedSigningInputs(Pkcs12Path, "pw", ProfilePath, Expiry));
@@ -83,6 +100,8 @@ internal sealed class FakeDeviceController : IDeviceController
 {
     public List<(string Udid, string IpaPath)> Installs { get; } = [];
     public Exception? ThrowOnInstall { get; set; }
+    public TaskCompletionSource? InstallCompletion { get; set; }
+    public bool CompleteInstallWhenCanceled { get; set; }
 
     public Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<DeviceInfo>>([]);
@@ -95,7 +114,14 @@ internal sealed class FakeDeviceController : IDeviceController
         if (ThrowOnInstall is not null)
             throw ThrowOnInstall;
         Installs.Add((udid, ipaPath));
-        return Task.CompletedTask;
+        if (CompleteInstallWhenCanceled && InstallCompletion is not null)
+        {
+            ct.Register(static state =>
+            {
+                ((TaskCompletionSource)state!).TrySetCanceled();
+            }, InstallCompletion);
+        }
+        return InstallCompletion?.Task ?? Task.CompletedTask;
     }
 
     public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>

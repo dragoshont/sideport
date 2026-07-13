@@ -67,6 +67,58 @@ public sealed class FileAppRegistry : IAppRegistry
         }
     }
 
+    public async Task<int> RebindAppleAuthorityAsync(
+        string currentAppleId,
+        string currentTeamId,
+        string replacementAppleId,
+        string replacementTeamId,
+        CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppRegistration[] affected = _apps.Values.Where(app =>
+                string.Equals(app.AppleId, currentAppleId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(app.TeamId, currentTeamId, StringComparison.Ordinal)).ToArray();
+            if (affected.Length == 0) return 0;
+            var previous = affected.ToDictionary(app => app.Key, app => app, StringComparer.OrdinalIgnoreCase);
+            foreach (AppRegistration app in affected)
+                _apps[app.Key] = app with { AppleId = replacementAppleId, TeamId = replacementTeamId };
+            try { await SaveAsync(ct).ConfigureAwait(false); }
+            catch
+            {
+                foreach ((string key, AppRegistration app) in previous) _apps[key] = app;
+                throw;
+            }
+            return affected.Length;
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<int> RebindAppleAuthorityByProfileAsync(string currentAccountProfileId, string currentTeamId, string replacementAppleId, string replacementTeamId, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            AppRegistration[] affected = _apps.Values.Where(app =>
+                string.Equals(AppleAccountProfileId(app.AppleId), currentAccountProfileId, StringComparison.Ordinal) &&
+                string.Equals(app.TeamId, currentTeamId, StringComparison.Ordinal)).ToArray();
+            if (affected.Length == 0) return 0;
+            var previous = affected.ToDictionary(app => app.Key, app => app, StringComparer.OrdinalIgnoreCase);
+            foreach (AppRegistration app in affected) _apps[app.Key] = app with { AppleId = replacementAppleId, TeamId = replacementTeamId };
+            try { await SaveAsync(ct).ConfigureAwait(false); }
+            catch { foreach ((string key, AppRegistration app) in previous) _apps[key] = app; throw; }
+            return affected.Length;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private static string AppleAccountProfileId(string appleId)
+    {
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(appleId.Trim().ToLowerInvariant()));
+        return $"acct_{Convert.ToHexStringLower(hash)[..20]}";
+    }
+
     private void LoadFromDisk()
     {
         if (!File.Exists(_path))

@@ -13,6 +13,8 @@
 tests/
 *.user
 .DS_Store
+._*
+**/._*
 signer/
 
 # Internal dev harness, docs, and samples — never copied into the runtime image

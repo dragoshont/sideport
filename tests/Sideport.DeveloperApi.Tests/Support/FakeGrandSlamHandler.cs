@@ -32,6 +32,12 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
     /// <summary>The app token the apptokens <c>et</c> blob will carry.</summary>
     public string AppToken { get; init; } = "fake-app-token";
 
+    /// <summary>
+    /// Optional decrypted SPD bytes used to exercise malformed-secret handling.
+    /// The bytes are still encrypted over the fake wire before the client sees them.
+    /// </summary>
+    public byte[]? SpdPlaintextOverride { get; init; }
+
     /// <summary>How the server should respond to the first <c>complete</c> round.</summary>
     public enum TwoFactorMode
     {
@@ -171,7 +177,8 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         // no DOCTYPE, no <plist> envelope) — verified live. Strip the envelope so
         // the replay oracle exercises the same fragment-parse path the client must
         // handle against Apple.
-        byte[] spdPlain = System.Text.Encoding.UTF8.GetBytes(ExtractBareDict(spd.ToXmlPropertyList()));
+        byte[] spdPlain = SpdPlaintextOverride
+            ?? System.Text.Encoding.UTF8.GetBytes(ExtractBareDict(spd.ToXmlPropertyList()));
         byte[] spdCipher = _server.EncryptSpd(spdPlain);
 
         var response = new NSDictionary();

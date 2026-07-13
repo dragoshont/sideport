@@ -18,4 +18,21 @@ public interface IAppRegistry
 
     /// <summary>Remove a registration; returns whether it existed.</summary>
     Task<bool> RemoveAsync(string udid, string bundleId, CancellationToken ct = default);
+
+    /// <summary>Atomically rebind registrations from one Apple authority to another.</summary>
+    Task<int> RebindAppleAuthorityAsync(
+        string currentAppleId,
+        string currentTeamId,
+        string replacementAppleId,
+        string replacementTeamId,
+        CancellationToken ct = default) =>
+        Task.FromException<int>(new NotSupportedException("Apple authority rebinding is unavailable."));
+
+    Task<int> RebindAppleAuthorityByProfileAsync(
+        string currentAccountProfileId,
+        string currentTeamId,
+        string replacementAppleId,
+        string replacementTeamId,
+        CancellationToken ct = default) =>
+        Task.FromException<int>(new NotSupportedException("Apple authority rebinding is unavailable."));
 }
