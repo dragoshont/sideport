@@ -1003,6 +1003,37 @@ internal sealed class WorkspaceAccessStore
         }
     }
 
+    internal async Task<WorkspaceOwnerClaimRecord> ResolvePendingOwnerClaimForEnrollmentAsync(
+        string handoffToken,
+        CancellationToken ct = default)
+    {
+        ParsedAuthorityToken parsed = ParseAuthorityToken(
+            handoffToken,
+            "sphnd1",
+            "handoff_",
+            "owner-claim-unavailable");
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            DateTimeOffset now = _time.GetUtcNow();
+            WorkspaceAccessDocument current = PruneRetention(await ReadRequiredUnsafeAsync(ct).ConfigureAwait(false), now);
+            int handoffIndex = FindHandoffIndex(current.Handoffs, parsed, WorkspaceHandoffKind.OwnerClaim);
+            if (handoffIndex < 0)
+                throw Domain("owner-claim-unavailable", "The Owner claim is unavailable.");
+            WorkspaceHandoffRecord handoff = current.Handoffs[handoffIndex];
+            EnsurePendingHandoff(handoff, now, "owner-claim-unavailable");
+            WorkspaceOwnerClaimRecord claim = current.OwnerClaims.FirstOrDefault(item =>
+                item.ClaimId == handoff.AuthorityId) ?? throw StoreUnavailable();
+            if (claim.Status != WorkspaceAuthorityStatus.Pending || claim.ExpiresAt <= now)
+                throw Domain("owner-claim-unavailable", "The Owner claim is unavailable.");
+            return claim;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async Task<WorkspaceMutationResult<WorkspaceMemberRecord>> SetFamilyMemberStatusAsync(
         string memberId,
         WorkspaceMemberStatusRequest request,

@@ -528,6 +528,11 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `Sideport__Oidc__Authority` | when OIDC on | — | OIDC issuer URL, e.g. `https://auth.example.com/application/o/sideport/`. |
 | `Sideport__Oidc__ClientId` | when OIDC on | — | OIDC client ID for the Sideport application. |
 | `Sideport__Oidc__ClientSecret` | when OIDC on | — | OIDC client secret (keep in your secret store, never in the image). |
+| `Sideport__Identity__ProviderId` | — | `oidc` | Provider-neutral identity adapter ID exposed by authentication options. |
+| `Sideport__Identity__ProviderLabel` | — | `Your account` | User-facing account label; it need not name the underlying IdP. |
+| `Sideport__Identity__PreferredMethod` | — | `passkey` when enrollment is configured | Preferred UI method: `passkey` or `login`. |
+| `Sideport__Identity__EnrollmentLabel` | — | `Create passkey` | Primary enrollment action label. |
+| `Sideport__Identity__LoginLabel` | — | `Continue to sign in` | Existing-account fallback label. |
 | `Sideport__Oidc__ProviderId` | — | `oidc` | Stable deployment-local identifier exposed by the public authentication-options endpoint. |
 | `Sideport__Oidc__ProviderLabel` | — | `Identity provider` | Plain-language provider name shown during invitation and account confirmation. |
 | `Sideport__Oidc__LoginLabel` | — | `Continue to sign in` | Existing-account button label, for example `Continue with Microsoft`. |

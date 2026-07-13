@@ -140,6 +140,14 @@ public sealed class WorkspaceAccessHttpTests
         Assert.DoesNotContain(ownerToken, await insecureExchange.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
         using HttpClient browser = app.CreateClient();
+        HttpResponseMessage missingOwnerHandoff = await SendJsonAsync(
+            browser,
+            HttpMethod.Post,
+            "/api/workspace/owner-claims/enrollment",
+            new { idempotencyKey = "owner-passkey-no-handoff-0001" }, // gitleaks:allow test fixture
+            origin: WorkspaceTestApp.Origin);
+        await AssertErrorAsync(missingOwnerHandoff, HttpStatusCode.NotFound, "owner-claim-unavailable");
+
         HttpResponseMessage exchanged = await SendJsonAsync(
             browser,
             HttpMethod.Post,
@@ -153,6 +161,18 @@ public sealed class WorkspaceAccessHttpTests
         Assert.DoesNotContain("spown1_", exchangeBody, StringComparison.Ordinal);
         string handoffCookie = AssertHandoffCookie(exchanged, "__Host-sideport.owner-claim-handoff");
         Assert.DoesNotContain(ownerToken, handoffCookie, StringComparison.Ordinal);
+
+        HttpResponseMessage ownerEnrollment = await SendJsonAsync(
+            browser,
+            HttpMethod.Post,
+            "/api/workspace/owner-claims/enrollment",
+            new { idempotencyKey = "owner-passkey-enrollment-0001" }, // gitleaks:allow test fixture
+            origin: WorkspaceTestApp.Origin);
+        Assert.Equal(HttpStatusCode.OK, ownerEnrollment.StatusCode);
+        JsonObject ownerEnrollmentBody = await JsonAsync(ownerEnrollment);
+        Assert.False(Bool(ownerEnrollmentBody, "available"));
+        Assert.Null(ownerEnrollmentBody["enrollmentUrl"]);
+        Assert.Equal("/login?returnUrl=%2Fowner-claim", String(ownerEnrollmentBody, "existingAccountUrl"));
 
         app.SetIdentity(browser, Owner);
         MeResult beforeAcceptance = await GetMeAsync(browser);

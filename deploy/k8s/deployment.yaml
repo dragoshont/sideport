@@ -87,11 +87,15 @@ spec:
               value: "https://auth.example.com/application/o/sideport/"
             - name: Sideport__Oidc__ClientId
               value: "sideport"
-            - name: Sideport__Oidc__ProviderId
+            - name: Sideport__Identity__ProviderId
               value: "authentik"
-            - name: Sideport__Oidc__ProviderLabel
-              value: "Microsoft via Authentik"
-            - name: Sideport__Oidc__LoginLabel
+            - name: Sideport__Identity__ProviderLabel
+              value: "Sideport account"
+            - name: Sideport__Identity__PreferredMethod
+              value: "passkey"
+            - name: Sideport__Identity__EnrollmentLabel
+              value: "Create passkey"
+            - name: Sideport__Identity__LoginLabel
               value: "Continue with Microsoft"
             - name: Sideport__Oidc__ClientSecret
               valueFrom:

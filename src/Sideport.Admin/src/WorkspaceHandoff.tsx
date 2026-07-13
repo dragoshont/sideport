@@ -14,11 +14,17 @@ interface Preview {
 interface AuthenticationOptions {
   providerLabel?: string
   loginLabel?: string
+  enrollmentLabel?: string
+  preferredMethod?: string
   enrollmentEnabled?: boolean
 }
 
 function apiPath(kind: FlowKind, action: 'handoff' | 'accept' | 'enrollment'): string {
-  if (kind === 'owner-claim') return action === 'accept' ? '/api/workspace/owner-claims/accept' : '/api/workspace/owner-claims/handoff'
+  if (kind === 'owner-claim') {
+    if (action === 'accept') return '/api/workspace/owner-claims/accept'
+    if (action === 'enrollment') return '/api/workspace/owner-claims/enrollment'
+    return '/api/workspace/owner-claims/handoff'
+  }
   if (action === 'accept') return '/api/workspace/invitations/accept'
   if (action === 'enrollment') return '/api/workspace/invitations/enrollment'
   return '/api/workspace/invitations/handoff'
@@ -81,7 +87,7 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
       const token = me.response.headers.get('X-Sideport-CSRF') ?? ''
       setCsrf(token)
       if (me.body?.authenticated !== true || me.body?.via !== 'oidc') {
-        if (!isOwner && authenticationResult.body?.enrollmentEnabled === true) {
+        if (authenticationResult.body?.enrollmentEnabled === true) {
           const enrollment = await jsonRequest(apiPath(kind, 'enrollment'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -137,7 +143,7 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
       {phase === 'exchanging' || phase === 'accepting' ? <div role="status"><Loader2 aria-hidden="true" className="spin" size={22} /> {phase === 'accepting' ? 'Saving access…' : message}</div> : null}
       {phase === 'sign-in' ? <>
         <p className="spc-lead">{message} The private token has already been removed from the address bar and replaced with an opaque handoff cookie.</p>
-        {enrollmentUrl ? <button className="spc-button primary large" onClick={() => window.location.assign(enrollmentUrl)} type="button">Create passkey</button> : null}
+        {enrollmentUrl ? <button className="spc-button primary large" onClick={() => window.location.assign(enrollmentUrl)} type="button">{authentication.enrollmentLabel || 'Create passkey'}</button> : null}
         <button className={enrollmentUrl ? 'spc-button secondary large' : 'spc-button primary large'} onClick={() => window.location.assign(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`)} type="button">{authentication.loginLabel || `Continue with ${authentication.providerLabel || 'your account'}`}</button>
       </> : null}
       {phase === 'preview' ? <>

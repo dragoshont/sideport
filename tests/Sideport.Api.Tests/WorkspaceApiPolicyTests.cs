@@ -11,6 +11,7 @@ public sealed class WorkspaceApiPolicyTests
         yield return Case("GET", "/api/authentication/options", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/invitations/handoff", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/invitations/enrollment", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/workspace/owner-claims/enrollment", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/owner-claims/handoff", WorkspaceApiAccess.Public);
 
         yield return Case("GET", "/api/me", WorkspaceApiAccess.Identity);
