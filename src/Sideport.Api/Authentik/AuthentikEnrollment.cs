@@ -103,14 +103,16 @@ internal sealed class AuthentikEnrollmentAdapter(
                 fixedData["email"] = request.ContactEmail;
                 fixedData["username"] = request.ContactEmail;
             }
-            var payload = new AuthentikInvitationCreate(
-            Name: name,
-            Expires: expiresAt.UtcDateTime.ToString(
-                "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                System.Globalization.CultureInfo.InvariantCulture),
-            FixedData: fixedData,
-            SingleUse: true,
-            Flow: options.EnrollmentFlowId!.Value);
+            var payload = new Dictionary<string, object?>
+            {
+                ["name"] = name,
+                ["expires"] = expiresAt.UtcDateTime.ToString(
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                    System.Globalization.CultureInfo.InvariantCulture),
+                ["fixed_data"] = fixedData,
+                ["single_use"] = true,
+                ["flow"] = options.EnrollmentFlowId!.Value,
+            };
 
             using var message = Request(HttpMethod.Post, "/api/v3/stages/invitation/invitations/");
             message.Content = JsonContent.Create(payload);
@@ -169,13 +171,6 @@ internal sealed class AuthentikEnrollmentAdapter(
     private static AuthentikEnrollmentException Unavailable() => new(
         "authentik-enrollment-unavailable",
         "Authentik could not create a passkey enrollment link.");
-
-    private sealed record AuthentikInvitationCreate(
-        [property: JsonPropertyName("name")] string Name,
-        [property: JsonPropertyName("expires")] string Expires,
-        [property: JsonPropertyName("fixed_data")] IReadOnlyDictionary<string, object?> FixedData,
-        [property: JsonPropertyName("single_use")] bool SingleUse,
-        [property: JsonPropertyName("flow")] Guid Flow);
 
     private sealed record AuthentikInvitationCreated(
         [property: JsonPropertyName("pk")] Guid Pk,
