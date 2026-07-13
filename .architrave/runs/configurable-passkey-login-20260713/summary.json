@@ -1,7 +1,7 @@
 {
   "schema": "architrave.run.v1",
   "runId": "configurable-passkey-login-20260713",
-  "status": "release-in-progress",
+  "status": "complete",
   "startedAt": "2026-07-13T18:30:00Z",
   "artifacts": {
     "intake": ".architrave/runs/configurable-passkey-login-20260713/intake.md",
@@ -23,8 +23,8 @@
     {
       "phase": 2,
       "name": "Release and production verification",
-      "status": "in-progress",
-      "result": "pending"
+      "status": "completed",
+      "result": "v0.2.3 CI PASS; immutable GitOps deployment healthy; Owner claim accepted"
     }
   ]
 }

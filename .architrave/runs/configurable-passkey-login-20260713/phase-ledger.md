@@ -3,7 +3,7 @@
 | Phase | Name | Status | Scope | Gate | Result |
 |---:|---|---|---|---|---|
 | 1 | Configurable sign-in and passkey invitation | completed | Contract, API, invitation UI, docs, tests | deterministic + semantic | PASS |
-| 2 | Release and production verification | in-progress | commit, merge, image, GitOps, runtime invitation | CI + runtime evidence | pending |
+| 2 | Release and production verification | completed | commit, merge, image, GitOps, runtime invitation | CI + runtime evidence | PASS |
 
 ## Phase 1 — Configurable sign-in and passkey invitation
 
@@ -32,7 +32,7 @@ Adversarial Judge returned PASS with no blockers or concerns.
 
 ## Phase 2 — Release and production verification
 
-Status: in-progress
+Status: completed
 
 Scope:
 
@@ -43,3 +43,11 @@ Gate:
 
 - production authentication options are correct and a fresh invitation reaches
   passkey enrollment, returns to `/invite`, and requires explicit acceptance.
+
+Result: PASS for the deployable boundary. Release `v0.2.3` passed Linux, macOS,
+admin UI, screenshot, and image publication jobs; Flux applied the immutable
+digest; health/readiness are green; public authentication options advertise the
+configured OIDC labels and Authentik enrollment truthfully. A fresh Owner claim
+was exchanged, explicitly accepted, and left the owner on the real managed
+Apple credential step. Creating a disposable external Authentik user was not
+performed; provider passkey ceremony remains a deliberate physical user test.
