@@ -104,7 +104,9 @@ internal sealed class AuthentikEnrollmentAdapter(
             }
             var payload = new AuthentikInvitationCreate(
             Name: name,
-            Expires: expiresAt,
+            Expires: expiresAt.UtcDateTime.ToString(
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                System.Globalization.CultureInfo.InvariantCulture),
             FixedData: fixedData,
             SingleUse: true,
             Flow: options.EnrollmentFlowId!.Value);
@@ -162,7 +164,7 @@ internal sealed class AuthentikEnrollmentAdapter(
 
     private sealed record AuthentikInvitationCreate(
         [property: JsonPropertyName("name")] string Name,
-        [property: JsonPropertyName("expires")] DateTimeOffset Expires,
+        [property: JsonPropertyName("expires")] string Expires,
         [property: JsonPropertyName("fixed_data")] IReadOnlyDictionary<string, object?> FixedData,
         [property: JsonPropertyName("single_use")] bool SingleUse,
         [property: JsonPropertyName("flow")] Guid Flow);
