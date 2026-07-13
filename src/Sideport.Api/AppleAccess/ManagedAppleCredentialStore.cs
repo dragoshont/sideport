@@ -631,12 +631,25 @@ internal static class PrivateAppleStoreFiles
 {
     public static void EnsureDirectory(string path)
     {
+        bool existed = Directory.Exists(path);
         Directory.CreateDirectory(path);
         if (!OperatingSystem.IsWindows())
         {
-            File.SetUnixFileMode(
-                path,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            try
+            {
+                File.SetUnixFileMode(
+                    path,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            catch (Exception ex) when (
+                existed && ex is IOException or UnauthorizedAccessException)
+            {
+                // Kubernetes and some NAS/container volume drivers manage the
+                // mounted root's mode outside the container. Existing roots may
+                // reject chmod even though Sideport can safely create and
+                // restrict its owned child directories/files. A newly created
+                // directory must still be hardenable or startup fails closed.
+            }
         }
     }
 
