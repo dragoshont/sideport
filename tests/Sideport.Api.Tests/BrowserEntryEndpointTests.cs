@@ -57,7 +57,6 @@ public sealed class BrowserEntryEndpointTests
     }
 
     [Theory]
-    [InlineData("/")]
     [InlineData("/apps")]
     [InlineData("/index.html")]
     [InlineData("/private.html")]
@@ -69,6 +68,35 @@ public sealed class BrowserEntryEndpointTests
         using HttpClient client = app.CreateClient();
 
         HttpResponseMessage response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("identity.example", response.Headers.Location?.Host);
+        Assert.Equal("/authorize", response.Headers.Location?.AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RootWithoutOwner_RedirectsToOwnerClaimBeforeOidc(bool authenticated)
+    {
+        using var app = new BrowserTestApp();
+        using HttpClient client = app.CreateClient(authenticated);
+
+        HttpResponseMessage response = await client.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/owner-claim", response.Headers.Location?.OriginalString);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        Assert.False(response.Headers.Contains("X-Test-Return-Uri"));
+    }
+
+    [Fact]
+    public async Task RootWithActiveOwner_UsesNormalOidcChallenge()
+    {
+        using var app = new BrowserTestApp(activeWorkspace: true);
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/");
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Equal("identity.example", response.Headers.Location?.Host);
@@ -215,7 +243,7 @@ public sealed class BrowserEntryEndpointTests
         private readonly string _root;
         private readonly WebApplicationFactory<Program> _factory;
 
-        public BrowserTestApp()
+        public BrowserTestApp(bool activeWorkspace = false)
         {
             _root = Path.Combine(Path.GetTempPath(), "sideport-browser-entry-tests", Guid.NewGuid().ToString("N"));
             string webRoot = Path.Combine(_root, "wwwroot");
@@ -229,13 +257,17 @@ public sealed class BrowserEntryEndpointTests
             File.WriteAllText(Path.Combine(assets, "app.css"), ":root { color: black; }");
             File.WriteAllText(Path.Combine(webRoot, "favicon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
 
+            string stateDirectory = Path.Combine(_root, "state");
+            if (activeWorkspace)
+                BootstrapWorkspace(stateDirectory);
+
             _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             {
                 builder.UseWebRoot(webRoot);
                 builder.UseSetting("Sideport:Apple:DeviceId", "TEST-BROWSER-ENTRY-DEVICE");
                 builder.UseSetting("Sideport:Scheduler:Enabled", "false");
                 builder.UseSetting("Sideport:Signer:BinaryPath", typeof(BrowserEntryEndpointTests).Assembly.Location);
-                builder.UseSetting("Sideport:State:Directory", Path.Combine(_root, "state"));
+                builder.UseSetting("Sideport:State:Directory", stateDirectory);
                 builder.UseSetting("Sideport:Oidc:Enabled", "true");
                 builder.UseSetting("Sideport:Oidc:Authority", "https://identity.example");
                 builder.UseSetting("Sideport:Oidc:ClientId", "sideport-browser-tests");
@@ -276,6 +308,28 @@ public sealed class BrowserEntryEndpointTests
                         });
                 });
             });
+        }
+
+        private static void BootstrapWorkspace(string stateDirectory)
+        {
+            var store = new WorkspaceAccessStore(stateDirectory);
+            WorkspaceOwnerClaimCreateResult claim = store.CreateOwnerClaimAsync(new(
+                ExpectedOwnerMemberId: null,
+                ImpactVersion: null,
+                Lifetime: TimeSpan.FromMinutes(15),
+                IdempotencyKey: "browser-active-owner-claim",
+                RequestId: "req-browser-active-owner-claim")).GetAwaiter().GetResult();
+            WorkspaceHandoffCreateResult handoff = store.ExchangeOwnerClaimAsync(
+                claim.Token!,
+                "req-browser-active-handoff").GetAwaiter().GetResult();
+            store.AcceptOwnerClaimAsync(
+                handoff.Token,
+                new WorkspaceAcceptanceRequest(
+                    new WorkspaceIdentityKey("https://identity.example", "owner-subject"),
+                    "Sideport Owner",
+                    "owner@example.test",
+                    "browser-active-owner-accept",
+                    "req-browser-active-owner-accept")).GetAwaiter().GetResult();
         }
 
         public HttpClient CreateClient(bool authenticated = false)

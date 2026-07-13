@@ -564,6 +564,34 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// A deployment without an active Owner has no product shell to enter yet.
+// Route only the root document to the public Owner-claim handoff before the
+// OIDC challenge so first-run setup never flashes a degraded dashboard or
+// sends an unclaimed deployment through ordinary sign-in. Keep the redirect
+// temporary/no-store because accepting the claim changes the answer.
+app.Use(async (context, next) =>
+{
+    bool rootNavigation = (HttpMethods.IsGet(context.Request.Method) ||
+            HttpMethods.IsHead(context.Request.Method)) &&
+        context.Request.Path.Equals("/", StringComparison.Ordinal);
+    if (rootNavigation)
+    {
+        WorkspaceAccessDocument? workspace = await context.RequestServices
+            .GetRequiredService<WorkspaceAccessStore>()
+            .ReadAsync(context.RequestAborted)
+            .ConfigureAwait(false);
+        if (workspace?.Workspace.State != WorkspaceLifecycleState.Active ||
+            string.IsNullOrWhiteSpace(workspace.Workspace.OwnerMemberId))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Redirect("/owner-claim", permanent: false);
+            return;
+        }
+    }
+
+    await next();
+});
+
 // OIDC pipeline (when enabled): forwarded headers -> auth -> gate the UI shell so
 // the SPA is only served to an authenticated session; everything else 302s to
 // Authentik. Must run before the static-file middleware below.

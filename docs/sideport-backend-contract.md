@@ -474,6 +474,14 @@ handoff cookie. It returns only a safe pre-login workspace and claim-kind
 preview. The raw claim is never written to local/session storage, another
 cookie, the login return URL, or OIDC state.
 
+While the workspace is missing or remains `bootstrap-required`, safe navigation
+to `/` returns a temporary, no-store redirect to `/owner-claim` before the OIDC
+challenge middleware runs. This redirect does not mint a claim or grant access;
+the recovery bearer still creates the fragment-only Owner link. Once the
+workspace has an active Owner, `/` resumes the normal OIDC-gated product-shell
+behavior. Other routes, APIs, probes, assets, and callbacks retain their
+documented access rules.
+
 After OIDC login, `/owner-claim` calls authenticated, no-store
 `GET /api/workspace/owner-claims/handoff`. The endpoint resolves only the opaque
 cookie, revalidates either the pending claim or an accepted claim bound to that

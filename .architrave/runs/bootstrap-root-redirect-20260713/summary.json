@@ -1,0 +1,20 @@
+{
+  "schema": "architrave.run.v1",
+  "runId": "bootstrap-root-redirect-20260713",
+  "status": "release-in-progress",
+  "startedAt": "2026-07-13T20:10:00Z",
+  "artifacts": {
+    "intake": ".architrave/runs/bootstrap-root-redirect-20260713/intake.md",
+    "tournament": ".architrave/runs/bootstrap-root-redirect-20260713/tournament.md",
+    "recommendedPlan": ".architrave/runs/bootstrap-root-redirect-20260713/recommended-plan.md",
+    "phaseLedger": ".architrave/runs/bootstrap-root-redirect-20260713/phase-ledger.md",
+    "deterministicGates": ".architrave/runs/bootstrap-root-redirect-20260713/deterministic-gates.md",
+    "judgePre": ".architrave/runs/bootstrap-root-redirect-20260713/judge-pre.md",
+    "judgePost": ".architrave/runs/bootstrap-root-redirect-20260713/judge-post.md",
+    "runtimeObserver": ".architrave/runs/bootstrap-root-redirect-20260713/runtime-observer.md"
+  },
+  "phases": [
+    {"phase": 1, "name": "Root bootstrap redirect", "status": "completed", "result": "deterministic and semantic PASS"},
+    {"phase": 2, "name": "Release and production verification", "status": "in-progress", "result": "pending"}
+  ]
+}
