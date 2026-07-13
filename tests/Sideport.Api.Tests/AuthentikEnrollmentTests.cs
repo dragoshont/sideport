@@ -10,10 +10,11 @@ public sealed class AuthentikEnrollmentTests
     [Fact]
     public async Task DisabledAdapter_ReturnsExistingAccountFallbackWithoutNetwork()
     {
-        AuthentikEnrollmentResult result = await DisabledAuthentikEnrollmentAdapter.Instance.CreateAsync(new(
+        IdentityEnrollmentResult result = await DisabledIdentityEnrollmentAdapter.Instance.CreateAsync(new(
             "Mara",
             "mara@example.test",
-            "authentik-disabled-0001"));
+            "authentik-disabled-0001",
+            new Uri("https://sideport.example/login?returnUrl=%2Finvite")));
 
         Assert.False(result.Available);
         Assert.Null(result.EnrollmentUrl);
@@ -48,14 +49,14 @@ public sealed class AuthentikEnrollmentTests
                 token,
                 "sideport-enrollment",
                 Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-                TimeSpan.FromMinutes(15),
-                new Uri("https://sideport.example/login?returnUrl=%2Finvite")),
+                TimeSpan.FromMinutes(15)),
             time);
 
-        AuthentikEnrollmentResult result = await adapter.CreateAsync(new(
+        IdentityEnrollmentResult result = await adapter.CreateAsync(new(
             "Mara",
             "mara@example.test",
-            "authentik-create-0001"));
+            "authentik-create-0001",
+            new Uri("https://sideport.example/login?returnUrl=%2Finvite")));
 
         Assert.True(result.Available);
         Assert.Equal(
@@ -86,7 +87,11 @@ public sealed class AuthentikEnrollmentTests
                 TimeSpan.FromMinutes(15)));
 
         AuthentikEnrollmentException error = await Assert.ThrowsAsync<AuthentikEnrollmentException>(() =>
-            adapter.CreateAsync(new("Mara", "mara@example.test", "authentik-error-0001")));
+            adapter.CreateAsync(new(
+                "Mara",
+                "mara@example.test",
+                "authentik-error-0001",
+                new Uri("https://sideport.example/login?returnUrl=%2Finvite"))));
 
         Assert.Equal("authentik-enrollment-unavailable", error.Code);
         Assert.DoesNotContain("secret provider detail", error.Message, StringComparison.Ordinal);
@@ -123,10 +128,11 @@ public sealed class AuthentikEnrollmentTests
                 TimeSpan.FromMinutes(15)),
             new FixedTimeProvider(DateTimeOffset.Parse("2026-07-13T00:30:00Z")));
 
-        AuthentikEnrollmentResult result = await adapter.CreateAsync(new(
+        IdentityEnrollmentResult result = await adapter.CreateAsync(new(
             "Mara",
             "mara@example.test",
-            "authentik-create-0001"));
+            "authentik-create-0001",
+            new Uri("https://sideport.example/login?returnUrl=%2Finvite")));
 
         Assert.True(result.Available);
         Assert.Equal(0, posts);

@@ -10,12 +10,14 @@ function mockInvitationFetch(enrollmentEnabled: boolean): typeof window.fetch {
         provider: 'authentik',
         providerLabel: 'Microsoft via Authentik',
         loginLabel: 'Continue with Microsoft',
+        enrollmentLabel: 'Create passkey',
+        preferredMethod: 'passkey',
         enrollmentEnabled,
       })
     }
     if (path === '/api/me')
       return Response.json({ authenticated: false, via: 'none' })
-    if (path === '/api/workspace/invitations/enrollment') {
+    if (path === '/api/workspace/invitations/enrollment' || path === '/api/workspace/owner-claims/enrollment') {
       return Response.json({
         available: true,
         enrollmentUrl: 'https://auth.example/if/flow/sideport-enrollment/?itoken=fixture',
@@ -57,5 +59,15 @@ export const ExistingAccountOnlyWhenEnrollmentIsUnavailable: Story = {
     const canvas = within(canvasElement)
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Continue with Microsoft' })).toBeVisible())
     await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
+  },
+}
+
+export const OwnerCanCreatePasskey: Story = {
+  args: { kind: 'owner-claim' },
+  beforeEach: () => installMock(true),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Create passkey' })).toBeVisible())
+    await expect(canvas.getByRole('button', { name: 'Continue with Microsoft' })).toBeVisible()
   },
 }

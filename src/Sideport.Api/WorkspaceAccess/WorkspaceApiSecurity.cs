@@ -220,7 +220,8 @@ internal static class WorkspaceApiSecurity
             return false;
         }
 
-        if (context.Request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase) &&
+        if ((context.Request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase) ||
+             context.Request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase)) &&
             !context.Request.Headers.ContainsKey("Origin"))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -234,7 +235,8 @@ internal static class WorkspaceApiSecurity
         HttpMethods.IsPost(request.Method) &&
         (request.Path.Equals("/api/workspace/invitations/handoff", StringComparison.OrdinalIgnoreCase) ||
          request.Path.Equals("/api/workspace/owner-claims/handoff", StringComparison.OrdinalIgnoreCase) ||
-         request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase));
+         request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase) ||
+         request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsLinkMint(HttpRequest request) =>
         HttpMethods.IsPost(request.Method) &&

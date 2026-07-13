@@ -1,0 +1,2 @@
+# Deterministic Gates
+`gates/checks.sh`: PASS (89 Storybook tests). `gates/backend-checks.sh`: PASS (757 backend tests, IaC and secret scan). Focused identity tests: 102 PASS; adversarial missing-handoff suite: 98 PASS. `gates/reconcile.sh`: PASS/SKIP because tokenBuild is not configured. Existing-account fallback is covered by passkey-first and enrollment-disabled Storybook stories. Diff check: PASS.

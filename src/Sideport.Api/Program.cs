@@ -165,11 +165,17 @@ var authentikEnrollmentOptions = new AuthentikEnrollmentOptions(
     authentikApiToken,
     authentikEnrollmentFlowSlug,
     authentikEnrollmentFlowId,
-    TimeSpan.FromMinutes(authentikInvitationMinutes),
-    new Uri(publicOrigin, "/login?returnUrl=%2Finvite"));
-string oidcProviderId = builder.Configuration["Sideport:Oidc:ProviderId"] ?? "oidc";
-string oidcProviderLabel = builder.Configuration["Sideport:Oidc:ProviderLabel"] ?? "Identity provider";
-string oidcLoginLabel = builder.Configuration["Sideport:Oidc:LoginLabel"] ?? "Continue to sign in";
+    TimeSpan.FromMinutes(authentikInvitationMinutes));
+string identityProviderId = builder.Configuration["Sideport:Identity:ProviderId"]
+    ?? builder.Configuration["Sideport:Oidc:ProviderId"] ?? "oidc";
+string identityProviderLabel = builder.Configuration["Sideport:Identity:ProviderLabel"]
+    ?? builder.Configuration["Sideport:Oidc:ProviderLabel"] ?? "Your account";
+string identityLoginLabel = builder.Configuration["Sideport:Identity:LoginLabel"]
+    ?? builder.Configuration["Sideport:Oidc:LoginLabel"] ?? "Continue to sign in";
+string identityEnrollmentLabel = builder.Configuration["Sideport:Identity:EnrollmentLabel"] ?? "Create passkey";
+string identityPreferredMethod = builder.Configuration["Sideport:Identity:PreferredMethod"] ??
+    (authentikEnrollmentOptions.Enabled ? "passkey" : "login");
+string? identityEnrollmentProviderId = authentikEnrollmentOptions.Enabled ? "authentik" : null;
 IPAddress[] trustedProxies = ReadConfigurationList(builder.Configuration, "Sideport:ReverseProxy:KnownProxies")
     .Select(ParseTrustedProxy)
     .ToArray();
@@ -364,10 +370,10 @@ builder.Services.AddHttpClient<AuthentikEnrollmentAdapter>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(10);
 });
-builder.Services.AddSingleton<IAuthentikEnrollmentAdapter>(sp =>
+builder.Services.AddSingleton<IIdentityEnrollmentAdapter>(sp =>
     authentikEnrollmentOptions.Enabled
         ? sp.GetRequiredService<AuthentikEnrollmentAdapter>()
-        : DisabledAuthentikEnrollmentAdapter.Instance);
+        : DisabledIdentityEnrollmentAdapter.Instance);
 builder.Services.AddSingleton(sp => new WorkspaceRequestPrincipalResolver(
     sp.GetRequiredService<WorkspaceAccessStore>(),
     apiToken,
@@ -843,14 +849,17 @@ app.MapWorkspaceAccessEndpoints(
     new WorkspaceHttpOptions(
         publicOrigin,
         RecoveryProofConfigured: !string.IsNullOrWhiteSpace(apiToken)),
-    new AuthentikAuthenticationOptions(
+    new IdentityAuthenticationOptions(
         oidcEnabled,
         authentikEnrollmentOptions.Enabled,
         new Uri(publicOrigin, "/login?returnUrl=%2F"),
         authentikRecoveryUrl,
-        oidcProviderId,
-        oidcProviderLabel,
-        oidcLoginLabel));
+        identityProviderId,
+        identityProviderLabel,
+        identityLoginLabel,
+        identityEnrollmentLabel,
+        identityPreferredMethod,
+        identityEnrollmentProviderId));
 
 // Interactive login/logout (only meaningful when OIDC is enabled).
 if (oidcEnabled)

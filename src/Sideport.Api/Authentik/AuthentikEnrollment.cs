@@ -9,68 +9,71 @@ internal sealed record AuthentikEnrollmentOptions(
     string? ApiToken,
     string EnrollmentFlowSlug,
     Guid? EnrollmentFlowId,
-    TimeSpan InvitationLifetime,
-    Uri? ReturnUrl = null)
+    TimeSpan InvitationLifetime)
 {
     internal bool Enabled => BaseUrl is not null && !string.IsNullOrWhiteSpace(ApiToken) && EnrollmentFlowId is not null;
 }
 
-internal sealed record AuthentikAuthenticationOptions(
+internal sealed record IdentityAuthenticationOptions(
     bool OidcEnabled,
     bool EnrollmentEnabled,
     Uri ExistingAccountUrl,
     Uri? RecoveryUrl,
     string ProviderId = "oidc",
     string ProviderLabel = "Identity provider",
-    string LoginLabel = "Continue to sign in");
+    string LoginLabel = "Continue to sign in",
+    string EnrollmentLabel = "Create passkey",
+    string PreferredMethod = "login",
+    string? EnrollmentProviderId = null);
 
-internal sealed record AuthentikEnrollmentRequest(
-    string DisplayName,
-    string ContactEmail,
-    string IdempotencyKey);
+internal sealed record IdentityEnrollmentRequest(
+    string? DisplayName,
+    string? ContactEmail,
+    string IdempotencyKey,
+    Uri ReturnUrl);
 
-internal sealed record AuthentikEnrollmentResult(
+internal sealed record IdentityEnrollmentResult(
     bool Available,
     Uri? EnrollmentUrl,
     DateTimeOffset? ExpiresAt,
     string? Reason);
 
-internal interface IAuthentikEnrollmentAdapter
+internal interface IIdentityEnrollmentAdapter
 {
-    Task<AuthentikEnrollmentResult> CreateAsync(
-        AuthentikEnrollmentRequest request,
+    Task<IdentityEnrollmentResult> CreateAsync(
+        IdentityEnrollmentRequest request,
         CancellationToken ct = default);
 }
 
-internal sealed class DisabledAuthentikEnrollmentAdapter : IAuthentikEnrollmentAdapter
+internal sealed class DisabledIdentityEnrollmentAdapter : IIdentityEnrollmentAdapter
 {
-    internal static DisabledAuthentikEnrollmentAdapter Instance { get; } = new();
+    internal static DisabledIdentityEnrollmentAdapter Instance { get; } = new();
 
-    public Task<AuthentikEnrollmentResult> CreateAsync(
-        AuthentikEnrollmentRequest request,
+    public Task<IdentityEnrollmentResult> CreateAsync(
+        IdentityEnrollmentRequest request,
         CancellationToken ct = default) =>
-        Task.FromResult(new AuthentikEnrollmentResult(
+        Task.FromResult(new IdentityEnrollmentResult(
             Available: false,
             EnrollmentUrl: null,
             ExpiresAt: null,
-            Reason: "Sign in with an existing Authentik account. New-account enrollment is not configured."));
+            Reason: "Passkey enrollment is not configured. Use the existing-account sign-in option."));
 }
 
 internal sealed class AuthentikEnrollmentAdapter(
     HttpClient http,
     AuthentikEnrollmentOptions options,
-    TimeProvider? timeProvider = null) : IAuthentikEnrollmentAdapter
+    TimeProvider? timeProvider = null) : IIdentityEnrollmentAdapter
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public async Task<AuthentikEnrollmentResult> CreateAsync(
-        AuthentikEnrollmentRequest request,
+    public async Task<IdentityEnrollmentResult> CreateAsync(
+        IdentityEnrollmentRequest request,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!options.Enabled || options.BaseUrl is null || string.IsNullOrWhiteSpace(options.ApiToken))
-            return await DisabledAuthentikEnrollmentAdapter.Instance.CreateAsync(request, ct).ConfigureAwait(false);
+            return await DisabledIdentityEnrollmentAdapter.Instance.CreateAsync(request, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Length > 128)
             throw new ArgumentException("A bounded enrollment request key is required.", nameof(request));
 
@@ -87,19 +90,22 @@ internal sealed class AuthentikEnrollmentAdapter(
                 existing.SingleUse &&
                 existing.Flow == options.EnrollmentFlowId)
             {
-                return Result(existing.Pk, existing.Expires);
+                return Result(existing.Pk, existing.Expires, request.ReturnUrl);
             }
 
             DateTimeOffset expiresAt = _time.GetUtcNow().Add(options.InvitationLifetime);
+            var fixedData = new Dictionary<string, object?>();
+            if (!string.IsNullOrWhiteSpace(request.DisplayName))
+                fixedData["name"] = request.DisplayName;
+            if (!string.IsNullOrWhiteSpace(request.ContactEmail))
+            {
+                fixedData["email"] = request.ContactEmail;
+                fixedData["username"] = request.ContactEmail;
+            }
             var payload = new AuthentikInvitationCreate(
             Name: name,
             Expires: expiresAt,
-            FixedData: new Dictionary<string, object?>
-            {
-                ["name"] = request.DisplayName,
-                ["email"] = request.ContactEmail,
-                ["username"] = request.ContactEmail,
-            },
+            FixedData: fixedData,
             SingleUse: true,
             Flow: options.EnrollmentFlowId!.Value);
 
@@ -114,7 +120,7 @@ internal sealed class AuthentikEnrollmentAdapter(
                 .ConfigureAwait(false);
             if (created?.Pk == Guid.Empty)
                 throw Unavailable();
-            return Result(created!.Pk, created.Expires == default ? expiresAt : created.Expires);
+            return Result(created!.Pk, created.Expires == default ? expiresAt : created.Expires, request.ReturnUrl);
         }
         finally
         {
@@ -141,11 +147,11 @@ internal sealed class AuthentikEnrollmentAdapter(
         return message;
     }
 
-    private AuthentikEnrollmentResult Result(Guid pk, DateTimeOffset expiresAt)
+    private IdentityEnrollmentResult Result(Guid pk, DateTimeOffset expiresAt, Uri? returnUrl = null)
     {
         string path = $"/if/flow/{Uri.EscapeDataString(options.EnrollmentFlowSlug)}/?itoken={pk:D}";
-        if (options.ReturnUrl is not null)
-            path += $"&next={Uri.EscapeDataString(options.ReturnUrl.ToString())}";
+        if (returnUrl is not null)
+            path += $"&next={Uri.EscapeDataString(returnUrl.ToString())}";
         Uri enrollmentUrl = new(options.BaseUrl!, path);
         return new(true, enrollmentUrl, expiresAt, Reason: null);
     }

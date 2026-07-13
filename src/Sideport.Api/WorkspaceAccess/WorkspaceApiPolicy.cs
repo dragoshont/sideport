@@ -38,7 +38,8 @@ internal static class WorkspaceApiPolicy
             return WorkspaceApiAccess.Public;
         }
 
-        if (HttpMethods.IsPost(method) && path == "/api/workspace/invitations/enrollment")
+        if (HttpMethods.IsPost(method) &&
+            path is "/api/workspace/invitations/enrollment" or "/api/workspace/owner-claims/enrollment")
             return WorkspaceApiAccess.Public;
 
         if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) &&

@@ -20,7 +20,7 @@ internal static class WorkspaceAccessEndpoints
     internal static void MapWorkspaceAccessEndpoints(
         this WebApplication app,
         WorkspaceHttpOptions options,
-        AuthentikAuthenticationOptions authentication)
+        IdentityAuthenticationOptions authentication)
     {
         app.MapGet("/api/authentication/options", () => Results.Json(new
         {
@@ -30,8 +30,11 @@ internal static class WorkspaceAccessEndpoints
             oidcEnabled = authentication.OidcEnabled,
             existingAccountUrl = authentication.ExistingAccountUrl,
             enrollmentEnabled = authentication.EnrollmentEnabled,
+            enrollmentLabel = authentication.EnrollmentLabel,
+            preferredMethod = authentication.PreferredMethod,
+            enrollmentProvider = authentication.EnrollmentProviderId,
             recoveryUrl = authentication.RecoveryUrl,
-            passkeyOwner = authentication.EnrollmentEnabled ? "authentik" : null,
+            passkeyOwner = authentication.EnrollmentProviderId,
             officialSignInWithApple = false,
         }));
 
@@ -209,6 +212,34 @@ internal static class WorkspaceAccessEndpoints
                 return Results.Json(ProjectOwnerClaimHandoff(resolution, principal, impact));
             }).ConfigureAwait(false));
 
+        app.MapPost("/api/workspace/owner-claims/enrollment", async (
+            IdentityEnrollmentHttpRequest request,
+            WorkspaceAccessStore store,
+            IIdentityEnrollmentAdapter enrollment,
+            WorkspaceLinkRateLimiter rateLimiter,
+            HttpContext context,
+            CancellationToken ct) =>
+            await ExecuteAsync(async () =>
+            {
+                string handoff = RequireCookie(context, OwnerClaimHandoffCookie, "owner-claim-unavailable");
+                WorkspaceLinkRateLimitDecision limit = rateLimiter.Acquire(
+                    "owner-claim-enrollment",
+                    context.Connection.RemoteIpAddress?.ToString(),
+                    handoff);
+                if (!limit.Allowed)
+                    return LinkRateLimited(context, "owner-claim-rate-limited", limit.RetryAfter);
+                await store.ResolvePendingOwnerClaimForEnrollmentAsync(handoff, ct).ConfigureAwait(false);
+                IdentityEnrollmentResult result = await CreateEnrollmentAsync(
+                    enrollment,
+                    new IdentityEnrollmentRequest(
+                        DisplayName: null,
+                        ContactEmail: null,
+                        request.IdempotencyKey,
+                        new Uri(options.PublicOrigin, "/login?returnUrl=%2Fowner-claim")),
+                    ct).ConfigureAwait(false);
+                return EnrollmentResponse(result, "/login?returnUrl=%2Fowner-claim");
+            }).ConfigureAwait(false));
+
         app.MapPost("/api/workspace/owner-claims/accept", async (
             AuthorityAcceptHttpRequest request,
             WorkspaceAccessStore store,
@@ -333,9 +364,9 @@ internal static class WorkspaceAccessEndpoints
             }).ConfigureAwait(false));
 
         app.MapPost("/api/workspace/invitations/enrollment", async (
-            AuthentikEnrollmentHttpRequest request,
+            IdentityEnrollmentHttpRequest request,
             WorkspaceAccessStore store,
-            IAuthentikEnrollmentAdapter enrollment,
+            IIdentityEnrollmentAdapter enrollment,
             WorkspaceLinkRateLimiter rateLimiter,
             HttpContext context,
             CancellationToken ct) =>
@@ -352,30 +383,17 @@ internal static class WorkspaceAccessEndpoints
                 WorkspaceInvitationRecord invitation = await store.ResolvePendingInvitationForEnrollmentAsync(
                     handoff,
                     ct).ConfigureAwait(false);
-                AuthentikEnrollmentResult result;
-                try
-                {
-                    result = await enrollment.CreateAsync(
-                        new AuthentikEnrollmentRequest(
+                IdentityEnrollmentResult result = await CreateEnrollmentAsync(
+                    enrollment,
+                        new IdentityEnrollmentRequest(
                             invitation.DisplayName ?? "Sideport member",
                             invitation.ContactEmail ?? throw new WorkspaceAccessException(
                                 "invitation-unavailable",
                                 "The invitation is unavailable."),
-                            request.IdempotencyKey),
+                            request.IdempotencyKey,
+                            new Uri(options.PublicOrigin, "/login?returnUrl=%2Finvite")),
                         ct).ConfigureAwait(false);
-                }
-                catch (AuthentikEnrollmentException error)
-                {
-                    throw new WorkspaceAccessException(error.Code, error.Message, error);
-                }
-                return Results.Json(new
-                {
-                    available = result.Available,
-                    enrollmentUrl = result.EnrollmentUrl,
-                    expiresAt = result.ExpiresAt,
-                    reason = result.Reason,
-                    existingAccountUrl = "/login?returnUrl=%2Finvite",
-                });
+                return EnrollmentResponse(result, "/login?returnUrl=%2Finvite");
             }).ConfigureAwait(false));
 
         app.MapGet("/api/workspace/invitations/handoff", async (
@@ -933,6 +951,31 @@ internal static class WorkspaceAccessEndpoints
         return result.ToString();
     }
 
+    private static async Task<IdentityEnrollmentResult> CreateEnrollmentAsync(
+        IIdentityEnrollmentAdapter enrollment,
+        IdentityEnrollmentRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await enrollment.CreateAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (AuthentikEnrollmentException error)
+        {
+            throw new WorkspaceAccessException(error.Code, error.Message, error);
+        }
+    }
+
+    private static IResult EnrollmentResponse(IdentityEnrollmentResult result, string existingAccountUrl) =>
+        Results.Json(new
+        {
+            available = result.Available,
+            enrollmentUrl = result.EnrollmentUrl,
+            expiresAt = result.ExpiresAt,
+            reason = result.Reason,
+            existingAccountUrl,
+        });
+
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
     {
         try
@@ -995,7 +1038,7 @@ internal static class WorkspaceAccessEndpoints
     internal sealed record AuthorityRevokeHttpRequest(long ExpectedVersion, string IdempotencyKey);
     internal sealed record OwnerClaimHandoffHttpRequest(string ClaimToken);
     internal sealed record InvitationHandoffHttpRequest(string InvitationToken);
-    internal sealed record AuthentikEnrollmentHttpRequest(string IdempotencyKey);
+    internal sealed record IdentityEnrollmentHttpRequest(string IdempotencyKey);
     internal sealed record AuthorityAcceptHttpRequest(string IdempotencyKey);
     internal sealed record MemberStatusHttpRequest(
         string Status,
