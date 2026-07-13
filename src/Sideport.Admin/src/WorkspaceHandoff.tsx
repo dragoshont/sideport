@@ -11,6 +11,12 @@ interface Preview {
   invitation?: { role?: string; permissions?: string[] }
 }
 
+interface AuthenticationOptions {
+  providerLabel?: string
+  loginLabel?: string
+  enrollmentEnabled?: boolean
+}
+
 function apiPath(kind: FlowKind, action: 'handoff' | 'accept' | 'enrollment'): string {
   if (kind === 'owner-claim') return action === 'accept' ? '/api/workspace/owner-claims/accept' : '/api/workspace/owner-claims/handoff'
   if (action === 'accept') return '/api/workspace/invitations/accept'
@@ -40,6 +46,8 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [csrf, setCsrf] = useState('')
   const [message, setMessage] = useState('Checking this private link…')
+  const [authentication, setAuthentication] = useState<AuthenticationOptions>({})
+  const [enrollmentUrl, setEnrollmentUrl] = useState('')
   const started = useRef(false)
   const isOwner = kind === 'owner-claim'
 
@@ -49,6 +57,10 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
     void begin()
 
     async function begin() {
+      const authenticationResult = await jsonRequest('/api/authentication/options')
+      if (authenticationResult.response.ok)
+        setAuthentication((authenticationResult.body ?? {}) as AuthenticationOptions)
+
       const fragment = window.location.hash.slice(1)
       window.history.replaceState(window.history.state, '', window.location.pathname)
       if (fragment) {
@@ -69,8 +81,17 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
       const token = me.response.headers.get('X-Sideport-CSRF') ?? ''
       setCsrf(token)
       if (me.body?.authenticated !== true || me.body?.via !== 'oidc') {
+        if (!isOwner && authenticationResult.body?.enrollmentEnabled === true) {
+          const enrollment = await jsonRequest(apiPath(kind, 'enrollment'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idempotencyKey: newKey('invitation') }),
+          })
+          if (enrollment.response.ok && typeof enrollment.body?.enrollmentUrl === 'string')
+            setEnrollmentUrl(enrollment.body.enrollmentUrl)
+        }
         setPhase('sign-in')
-        setMessage('Sign in through Authentik to continue.')
+        setMessage(`Sign in through ${authenticationResult.body?.providerLabel ?? 'your identity provider'} to continue.`)
         return
       }
 
@@ -116,11 +137,12 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
       {phase === 'exchanging' || phase === 'accepting' ? <div role="status"><Loader2 aria-hidden="true" className="spin" size={22} /> {phase === 'accepting' ? 'Saving access…' : message}</div> : null}
       {phase === 'sign-in' ? <>
         <p className="spc-lead">{message} The private token has already been removed from the address bar and replaced with an opaque handoff cookie.</p>
-        <button className="spc-button primary large" onClick={() => window.location.assign(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`)} type="button">Continue to sign in</button>
+        {enrollmentUrl ? <button className="spc-button primary large" onClick={() => window.location.assign(enrollmentUrl)} type="button">Create passkey</button> : null}
+        <button className={enrollmentUrl ? 'spc-button secondary large' : 'spc-button primary large'} onClick={() => window.location.assign(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`)} type="button">{authentication.loginLabel || `Continue with ${authentication.providerLabel || 'your account'}`}</button>
       </> : null}
       {phase === 'preview' ? <>
         <p className="spc-lead">Confirm the signed-in account before Sideport changes access.</p>
-        <div className="spc-passkey-card"><CircleUserRound aria-hidden="true" size={24} /><div><strong>{account?.displayName || 'Signed-in account'}</strong><span>{account?.email || 'Authenticated through Authentik'}</span></div></div>
+        <div className="spc-passkey-card"><CircleUserRound aria-hidden="true" size={24} /><div><strong>{account?.displayName || 'Signed-in account'}</strong><span>{account?.email || `Authenticated through ${authentication.providerLabel || 'your identity provider'}`}</span></div></div>
         <div className="spc-passkey-card"><ShieldCheck aria-hidden="true" size={24} /><div><strong>{isOwner ? 'Owner access' : 'Member access'}</strong><span>{isOwner ? 'Manage people, Apple signing, apps, iPhones, and settings.' : (preview?.invitation?.permissions ?? ['Choose approved apps', 'Use your own iPhone', 'Receive home Wi-Fi refreshes']).join(' · ')}</span></div></div>
         <button className="spc-button primary large" onClick={() => void accept()} type="button">{isOwner ? recovering ? 'Recover owner access' : 'Finish owner setup' : 'Join Sideport'}</button>
       </> : null}

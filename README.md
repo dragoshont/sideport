@@ -527,6 +527,13 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `Sideport__Oidc__Authority` | when OIDC on | — | OIDC issuer URL, e.g. `https://auth.example.com/application/o/sideport/`. |
 | `Sideport__Oidc__ClientId` | when OIDC on | — | OIDC client ID for the Sideport application. |
 | `Sideport__Oidc__ClientSecret` | when OIDC on | — | OIDC client secret (keep in your secret store, never in the image). |
+| `Sideport__Oidc__ProviderId` | — | `oidc` | Stable deployment-local identifier exposed by the public authentication-options endpoint. |
+| `Sideport__Oidc__ProviderLabel` | — | `Identity provider` | Plain-language provider name shown during invitation and account confirmation. |
+| `Sideport__Oidc__LoginLabel` | — | `Continue to sign in` | Existing-account button label, for example `Continue with Microsoft`. |
+| `Sideport__Authentik__BaseUrl` | passkey enrollment only | — | Authentik origin used by the optional invited-user enrollment adapter. |
+| `Sideport__Authentik__ApiToken` | passkey enrollment only | — | Least-privilege Authentik invitation API token; keep only in the secret store. |
+| `Sideport__Authentik__EnrollmentFlowSlug` | — | `sideport-enrollment` | Authentik flow slug for invitation-only passkey enrollment. |
+| `Sideport__Authentik__EnrollmentFlowId` | passkey enrollment only | — | Exact Authentik flow UUID to bind newly created invitations. |
 
 When OIDC is enabled the browser UI requires an interactive login and the
 authenticated session cookie also authorizes `/api/*`, so the bearer token stays
@@ -534,6 +541,9 @@ valid for scripts/automation. The app expects the reverse proxy to forward
 `X-Forwarded-Proto`/`Host` (it honours them so the `redirect_uri` is `https`).
 Register `https://<host>/signin-oidc` as the redirect URI (and
 `https://<host>/signout-callback-oidc` for logout) on the provider.
+OIDC login is provider-neutral. The optional passkey enrollment action currently
+uses Authentik; without that adapter, invitations show only the configured
+existing-account login.
 
 | Method & path | Auth | Purpose |
 |---|---|---|

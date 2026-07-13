@@ -72,6 +72,7 @@ non-live until its Phase 9 implementation passes.
 | `GET` | `/readyz` | Anisette + signer readiness | live | Open probe. |
 | `GET` | `/api/about` | Service metadata | live | Protected like other `/api/*`. |
 | `GET` | `/api/me` | Current API identity mode | live | OIDC user or bearer-token client. |
+| `GET` | `/api/authentication/options` | Public sign-in presentation and enrollment capability | live | Provider ID/labels are deployment-configurable; passkey enrollment is advertised only when the Authentik adapter is configured. |
 | `GET` | `/api/anisette/info` | Anisette client info probe | live | No raw anisette secrets. |
 | `GET` | `/api/logs?limit=` | In-process API log tail | live | Ring buffer, not durable operation history. |
 | `GET` | `/api/apple-access/status` | App Store Connect read-only probe | live | Optional paid-team path. |
@@ -121,6 +122,24 @@ and reconciliation boundary. Operationally, USB remains the reliable fallback.
 The planned V2 contract below preserves paired-Wi-Fi refresh while adding the
 bounded transfer, unknown-state quarantine, verification, and fallback rules
 required before it is called production-ready.
+
+### Identity provider and passkey ownership
+
+Sideport is an OIDC relying party, not an account or WebAuthn authority. A
+deployment may configure `Sideport:Oidc:ProviderId`, `ProviderLabel`, and
+`LoginLabel` to describe its standards-compliant OIDC provider without changing
+the immutable workspace identity key: the validated OIDC issuer plus subject.
+
+The currently implemented invited-user provisioning adapter is Authentik. When
+its base URL, least-privilege API token, and enrollment flow are configured,
+`GET /api/authentication/options` reports `enrollmentEnabled=true` and the
+invitation handoff offers **Create passkey** before the existing-account OIDC
+login. Authentik owns the discoverable credential, user verification, recovery,
+and cross-platform passkey ceremony. Sideport creates only the short-lived
+provider invitation and returns the browser to `/invite`; membership is still
+granted only after the resulting validated OIDC session explicitly accepts the
+Sideport invitation. A different OIDC provider works for existing-account login
+without claiming generic account provisioning or passkey enrollment.
 
 ## Onboarding V2 Runtime and Explicitly Planned Contract
 

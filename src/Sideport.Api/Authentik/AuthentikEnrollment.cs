@@ -9,7 +9,8 @@ internal sealed record AuthentikEnrollmentOptions(
     string? ApiToken,
     string EnrollmentFlowSlug,
     Guid? EnrollmentFlowId,
-    TimeSpan InvitationLifetime)
+    TimeSpan InvitationLifetime,
+    Uri? ReturnUrl = null)
 {
     internal bool Enabled => BaseUrl is not null && !string.IsNullOrWhiteSpace(ApiToken) && EnrollmentFlowId is not null;
 }
@@ -18,7 +19,10 @@ internal sealed record AuthentikAuthenticationOptions(
     bool OidcEnabled,
     bool EnrollmentEnabled,
     Uri ExistingAccountUrl,
-    Uri? RecoveryUrl);
+    Uri? RecoveryUrl,
+    string ProviderId = "oidc",
+    string ProviderLabel = "Identity provider",
+    string LoginLabel = "Continue to sign in");
 
 internal sealed record AuthentikEnrollmentRequest(
     string DisplayName,
@@ -139,9 +143,10 @@ internal sealed class AuthentikEnrollmentAdapter(
 
     private AuthentikEnrollmentResult Result(Guid pk, DateTimeOffset expiresAt)
     {
-        Uri enrollmentUrl = new(
-            options.BaseUrl!,
-            $"/if/flow/{Uri.EscapeDataString(options.EnrollmentFlowSlug)}/?itoken={pk:D}");
+        string path = $"/if/flow/{Uri.EscapeDataString(options.EnrollmentFlowSlug)}/?itoken={pk:D}";
+        if (options.ReturnUrl is not null)
+            path += $"&next={Uri.EscapeDataString(options.ReturnUrl.ToString())}";
+        Uri enrollmentUrl = new(options.BaseUrl!, path);
         return new(true, enrollmentUrl, expiresAt, Reason: null);
     }
 

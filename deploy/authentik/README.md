@@ -13,6 +13,9 @@ Deployment inputs that must remain in the secret/configuration systems:
 - `Sideport__Oidc__Authority`
 - `Sideport__Oidc__ClientId`
 - `Sideport__Oidc__ClientSecret`
+- `Sideport__Oidc__ProviderId=authentik`
+- `Sideport__Oidc__ProviderLabel=<plain-language provider name>`
+- `Sideport__Oidc__LoginLabel=<existing-account button label>`
 - `Sideport__Authentik__BaseUrl`
 - `Sideport__Authentik__ApiToken`
 - `Sideport__Authentik__EnrollmentFlowSlug=sideport-enrollment`
@@ -25,6 +28,7 @@ The Authentik OAuth2/OIDC provider redirect URI must be exactly
 The Sideport service should receive traffic only through the configured Traefik
 proxy/network; direct forwarded headers are ignored.
 
-The API token should be scoped to creating and deleting invitations for the one
-Sideport enrollment flow. It is never added to the blueprint, Kubernetes
-example secret, browser bundle, workspace store, or logs.
+The API token should be scoped only to adding and viewing invitations. Sideport
+binds each invitation to the configured enrollment flow and does not need user,
+group, flow-edit, or invitation-delete permission. It is never added to the
+blueprint, Kubernetes example secret, browser bundle, workspace store, or logs.

@@ -87,6 +87,12 @@ spec:
               value: "https://auth.example.com/application/o/sideport/"
             - name: Sideport__Oidc__ClientId
               value: "sideport"
+            - name: Sideport__Oidc__ProviderId
+              value: "authentik"
+            - name: Sideport__Oidc__ProviderLabel
+              value: "Microsoft via Authentik"
+            - name: Sideport__Oidc__LoginLabel
+              value: "Continue with Microsoft"
             - name: Sideport__Oidc__ClientSecret
               valueFrom:
                 secretKeyRef:
