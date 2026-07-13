@@ -10,6 +10,8 @@ namespace Netimobiledevice.Lockdown
     {
         private readonly string _usbmuxAddress;
 
+        protected override string UsbmuxAddress => _usbmuxAddress;
+
         public UsbmuxLockdownClient(ServiceConnection service, string hostId, string identifier = "", string label = DEFAULT_CLIENT_NAME, string systemBuid = SYSTEM_BUID,
             DictionaryNode? pairRecord = null, DirectoryInfo? pairingRecordsCacheDirectory = null, ushort port = SERVICE_PORT, string usbmuxAddress = "", ILogger? logger = null)
             : base(service, hostId, identifier, label, systemBuid, pairRecord, pairingRecordsCacheDirectory, port, logger)

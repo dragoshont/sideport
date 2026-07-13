@@ -43,6 +43,20 @@ public sealed class OrchestratorOptions
     public TimeSpan RetryBackoff { get; set; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
+    /// Maximum time allowed for the physical IPA upload/install leg. Authentication,
+    /// signing, queue wait, and device verification are deliberately outside this
+    /// watchdog because only the bulk usbmux transfer has an ambiguous hang mode.
+    /// </summary>
+    public TimeSpan InstallTimeout { get; set; } = TimeSpan.FromSeconds(180);
+
+    /// <summary>
+    /// Brief hard-abort window after Sideport cancels and closes the active device
+    /// transport. A timed-out install is always outcome-unknown; the process-wide
+    /// lease is released only when the managed transfer task has actually ended.
+    /// </summary>
+    public TimeSpan InstallCancellationGrace { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// Optional fixed re-sign cadence. When set, an app is re-signed once its
     /// last SUCCESSFUL sign is older than this — even if the signature isn't near
     /// expiry — to keep a fresh safety margin (e.g. daily). Null = expiry-driven

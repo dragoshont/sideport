@@ -32,6 +32,7 @@
 	
 	<ItemGroup>
 		<InternalsVisibleTo Include="NetimobiledeviceTest" />
+		<InternalsVisibleTo Include="Sideport.Devices.Tests" />
 	</ItemGroup>
 	
 	<ItemGroup>

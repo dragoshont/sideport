@@ -69,7 +69,7 @@ public sealed class DiagnosticIssueService(OperationStore operations, Diagnostic
     private static string IssueId(OperationRecordDto record)
     {
         string errorCode = record.Error?.Code ?? "operation-failed";
-        return $"issue-{Slug(errorCode)}-{Slug(record.Target.DeviceUdid)}-{Slug(record.Target.BundleId)}";
+        return $"issue-{Slug(errorCode)}-{Slug(record.Target.DeviceUdid ?? record.Target.Kind ?? "unknown-target")}-{Slug(record.Target.BundleId ?? record.Type)}";
     }
 
     private static string NormalizeStatus(string status)

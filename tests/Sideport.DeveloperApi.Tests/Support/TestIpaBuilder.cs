@@ -21,6 +21,7 @@ internal sealed class TestIpaBuilder
     public bool BinaryInfoPlist { get; init; }
     public byte[]? EmbeddedProfile { get; init; }
     public bool IncludeNestedPlugin { get; init; }
+    public byte[]? AppIconPng { get; init; }
 
     public byte[] Build()
     {
@@ -31,6 +32,8 @@ internal sealed class TestIpaBuilder
 
             WriteEntry(zip, prefix + "Info.plist", BuildInfoPlist());
             WriteEntry(zip, prefix + ExecutableName, "MZ-fake-macho"u8.ToArray());
+            if (AppIconPng is not null)
+                WriteEntry(zip, prefix + "AppIcon60x60@2x.png", AppIconPng);
 
             if (EmbeddedProfile is not null)
                 WriteEntry(zip, prefix + "embedded.mobileprovision", EmbeddedProfile);

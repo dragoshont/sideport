@@ -3,12 +3,17 @@ using Microsoft.Extensions.Logging;
 
 namespace Sideport.Api.Operations;
 
-public sealed class OperationWorker(OperationQueue queue, OperationService operations, ILogger<OperationWorker> logger) : BackgroundService
+public sealed class OperationWorker(
+    OperationQueue queue,
+    OperationService operations,
+    OperationStore store,
+    ILogger<OperationWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
+            await store.ReconcileStaleRunningOperationsAsync(stoppingToken).ConfigureAwait(false);
             await operations.RequeuePendingAsync(stoppingToken).ConfigureAwait(false);
         }
         catch (OperationStoreException ex)
@@ -20,7 +25,7 @@ public sealed class OperationWorker(OperationQueue queue, OperationService opera
         {
             try
             {
-                await operations.ProcessQueuedRefreshAsync(operationId, stoppingToken).ConfigureAwait(false);
+                await operations.ProcessQueuedOperationAsync(operationId, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

@@ -78,4 +78,25 @@ public class AppleDeveloperPortalTests
 
         Assert.NotEmpty(teams);
     }
+
+    [Fact]
+    public async Task RevokeDevelopmentCertificate_DeletesOnlyExactResource()
+    {
+        byte[] passwordKey = GrandSlamCrypto.DerivePasswordKey(Password, Salt, Iterations);
+        var login = new FakeGrandSlamHandler(Username, passwordKey, Salt, Iterations, FakeGrandSlamHandler.TwoFactorMode.None);
+        var developer = new FakeDeveloperServicesHandler("ABCDE12345");
+        developer.SeedDevelopmentCertificate("CERT-ONE");
+        developer.SeedDevelopmentCertificate("CERT-TWO");
+        var anisette = new StubAnisetteProvider();
+        var options = new GrandSlamClientOptions { DeviceId = "portal-device-uuid" };
+        var portal = new AppleDeveloperPortal(
+            new GrandSlamClient(new HttpClient(login), anisette, options, NullLogger<GrandSlamClient>.Instance),
+            new DeveloperServicesClient(new HttpClient(developer), anisette, options, NullLogger<DeveloperServicesClient>.Instance));
+        var session = new AppleSession(Username, "adsid", "name", new byte[32]) { IdmsToken = "idms" };
+
+        await portal.RevokeDevelopmentCertificateAsync(session, "ABCDE12345", "CERT-ONE");
+
+        Assert.Equal(["CERT-TWO"], developer.CertificateIds);
+        Assert.Contains(("DELETE", "certificates/CERT-ONE"), developer.ServiceRequests);
+    }
 }

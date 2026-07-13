@@ -57,10 +57,84 @@ public sealed class NetimobiledeviceController : IDeviceController
         return
         [
             .. byUdid.Values
-                .Select(d => new DeviceInfo(d.Udid, d.Name, d.ProductType, d.OsVersion, d.Connection))
+                .Select(d => new DeviceInfo(
+                    d.Udid,
+                    d.Name,
+                    d.ProductType,
+                    d.OsVersion,
+                    d.Connection,
+                    d.TrustState,
+                    d.TrustReason,
+                    d.LockdownCheckedAt,
+                    d.UsableForInstall))
                 .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(d => d.Udid, StringComparer.OrdinalIgnoreCase),
         ];
+    }
+
+    public Task<DeviceTrustProbe> ProbeTrustAsync(string udid, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(udid);
+        return _backend.ProbeTrustAsync(udid, ct);
+    }
+
+    public async Task<DevicePairingResult> PairAsync(
+        string udid,
+        IProgress<DevicePairingProgress>? progress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(udid);
+
+        // Pair only from a definite passive observation. An ambiguous/error
+        // probe must never be converted into a new Trust request.
+        DeviceTrustProbe current = await _backend.ProbeTrustAsync(udid, ct).ConfigureAwait(false);
+        if (current.Connection != DeviceConnection.Usb)
+        {
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                "error",
+                "Connect this iPhone to the Sideport host with USB before pairing.",
+                current.LockdownCheckedAt,
+                UsableForInstall: false);
+        }
+
+        if (string.Equals(current.TrustState, "trusted", StringComparison.Ordinal))
+        {
+            progress?.Report(new DevicePairingProgress("paired", "This iPhone already trusts Sideport."));
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                current.TrustState,
+                current.TrustReason,
+                current.LockdownCheckedAt,
+                current.UsableForInstall);
+        }
+
+        if (string.Equals(current.TrustState, "locked", StringComparison.Ordinal))
+        {
+            progress?.Report(new DevicePairingProgress("locked", "Unlock the iPhone, then try again."));
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                current.TrustState,
+                current.TrustReason,
+                current.LockdownCheckedAt,
+                UsableForInstall: false);
+        }
+
+        if (!string.Equals(current.TrustState, "untrusted", StringComparison.Ordinal))
+        {
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                "error",
+                current.TrustReason ?? "Sideport could not verify the iPhone before pairing.",
+                current.LockdownCheckedAt,
+                UsableForInstall: false);
+        }
+
+        return await _backend.PairAsync(udid, progress, ct).ConfigureAwait(false);
     }
 
     public async Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default)
@@ -98,18 +172,35 @@ public sealed class NetimobiledeviceController : IDeviceController
         foreach (BackendDeviceProbe d in probe.Devices)
         {
             string tag = d.Udid.Length > 8 ? d.Udid[^8..] : d.Udid;
-            if (d.LockdownOk)
+            string trustState = string.Equals(d.TrustState, "unknown", StringComparison.Ordinal)
+                ? d.LockdownOk ? "trusted" : "error"
+                : d.TrustState;
+            if (string.Equals(trustState, "trusted", StringComparison.Ordinal))
             {
                 checks.Add(new DeviceCheck(
                     $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "ok",
                     $"{d.Name} is paired and reachable over {d.Connection}.", null));
             }
+            else if (string.Equals(trustState, "locked", StringComparison.Ordinal))
+            {
+                checks.Add(new DeviceCheck(
+                    $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "blocked",
+                    d.TrustReason ?? "The iPhone is locked, so Sideport could not verify trust.",
+                    "Unlock the iPhone, keep this screen open, and try again."));
+            }
+            else if (string.Equals(trustState, "untrusted", StringComparison.Ordinal))
+            {
+                checks.Add(new DeviceCheck(
+                    $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "blocked",
+                    d.TrustReason ?? $"The iPhone is visible over {d.Connection}, but it does not trust this Sideport host yet.",
+                    "Connect the iPhone over USB and start Add iPhone; Sideport will then ask you to unlock it and tap “Trust This Computer”."));
+            }
             else
             {
                 checks.Add(new DeviceCheck(
                     $"trust:{d.Udid}", $"Trust / pairing (…{tag})", "blocked",
-                    $"Discovered over {d.Connection}, but the lockdown/trust handshake failed: {d.LockdownError}",
-                    "Unlock the iPhone and tap “Trust This Computer”. If it persists, Sideport cannot read the device's pairing record — pair the device from the host and make sure the lockdown pairing records are reachable by Sideport."));
+                    d.TrustReason ?? $"Sideport could not complete the lockdown check over {d.Connection}.",
+                    "Check the cable or Wi-Fi connection, unlock the iPhone, and retry the diagnostic."));
             }
         }
 
@@ -118,7 +209,20 @@ public sealed class NetimobiledeviceController : IDeviceController
         return new DeviceDiagnostics(status, checks);
     }
 
-    public async Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default)
+    public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(
+        string udid,
+        CancellationToken ct = default) =>
+        ListInstalledAppsCoreAsync(udid, forceFresh: false, ct);
+
+    public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsFreshAsync(
+        string udid,
+        CancellationToken ct = default) =>
+        ListInstalledAppsCoreAsync(udid, forceFresh: true, ct);
+
+    private async Task<IReadOnlyList<InstalledApp>> ListInstalledAppsCoreAsync(
+        string udid,
+        bool forceFresh,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(udid);
 
@@ -126,7 +230,7 @@ public sealed class NetimobiledeviceController : IDeviceController
         try
         {
             DateTimeOffset now = _timeProvider.GetUtcNow();
-            if (TryGetInstalledAppsCache(udid, now, out IReadOnlyList<InstalledApp>? cached))
+            if (!forceFresh && TryGetInstalledAppsCache(udid, now, out IReadOnlyList<InstalledApp>? cached))
             {
                 _metrics.RecordInstalledAppsCacheEvent("hit");
                 metric.Succeed(cached!.Count);
@@ -138,14 +242,14 @@ public sealed class NetimobiledeviceController : IDeviceController
             try
             {
                 now = _timeProvider.GetUtcNow();
-                if (TryGetInstalledAppsCache(udid, now, out cached))
+                if (!forceFresh && TryGetInstalledAppsCache(udid, now, out cached))
                 {
                     _metrics.RecordInstalledAppsCacheEvent("hit_after_wait");
                     metric.Succeed(cached!.Count);
                     return cached;
                 }
 
-                _metrics.RecordInstalledAppsCacheEvent(CacheEnabled ? "miss" : "disabled");
+                _metrics.RecordInstalledAppsCacheEvent(forceFresh ? "bypass" : CacheEnabled ? "miss" : "disabled");
 
                 IReadOnlyList<BackendApp> apps = await _backend.ListInstalledAppsAsync(udid, ct);
                 IReadOnlyList<ProvisioningProfileInfo> profiles =
@@ -195,10 +299,12 @@ public sealed class NetimobiledeviceController : IDeviceController
             throw new InvalidOperationException($"not a valid IPA: {ex.Message}", ex);
         }
 
-        _logger.LogInformation("installing {Bundle} onto {Udid}", info.BundleIdentifier, udid);
+        _logger.LogInformation("installing {Bundle} onto iPhone {DeviceTag}", info.BundleIdentifier, DeviceTag(udid));
         await _backend.InstallAsync(udid, ipaPath, progress: null, ct);
         InvalidateInstalledAppsCache(udid);
     }
+
+    private static string DeviceTag(string udid) => udid.Length > 8 ? $"…{udid[^8..]}" : udid;
 
     private bool CacheEnabled => _installedAppsCacheTtl > TimeSpan.Zero;
 
@@ -295,4 +401,3 @@ public sealed class NetimobiledeviceController : IDeviceController
         return parsed;
     }
 }
-

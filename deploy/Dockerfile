@@ -12,7 +12,7 @@
 
 ARG DOTNET_VERSION=10.0
 ARG NODE_VERSION=24-alpine
-ARG ALTSERVER_IMAGE=ghcr.io/dragoshont/altserver-linux:latest-main
+ARG ALTSERVER_IMAGE=ghcr.io/dragoshont/altserver-linux@sha256:1baeb7baa524e7f70502791df141f790997e20a125dd3ba0ad00af8f30150ac7
 ARG SIDEPORT_PLATFORM=linux/amd64
 
 # --- Stage 1: the proven zsign signer (just a source for the COPY) -----------

@@ -30,7 +30,7 @@ const running: PipelineStage[] = [
   { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'done' },
   { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'active' },
   { id: 'install', label: 'Install', detail: 'Push to device', state: 'pending' },
-  { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+  { id: 'verify', label: 'Verify', detail: 'Bundle + profile evidence', state: 'pending' },
 ]
 
 const failed: PipelineStage[] = [
@@ -38,7 +38,7 @@ const failed: PipelineStage[] = [
   { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'done' },
   { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'done' },
   { id: 'install', label: 'Install', detail: 'Device unreachable', state: 'failed' },
-  { id: 'verify', label: 'Verify', detail: 'Launch check', state: 'pending' },
+  { id: 'verify', label: 'Verify', detail: 'Bundle + profile evidence', state: 'pending' },
 ]
 
 const complete: PipelineStage[] = [
@@ -46,7 +46,7 @@ const complete: PipelineStage[] = [
   { id: 'provision', label: 'Provision', detail: 'App ID + profile', state: 'done' },
   { id: 'sign', label: 'Sign', detail: 'zsign re-sign', state: 'done' },
   { id: 'install', label: 'Install', detail: 'Push to device', state: 'done' },
-  { id: 'verify', label: 'Verify', detail: 'Launch OK', state: 'done' },
+  { id: 'verify', label: 'Verify', detail: 'Device evidence matched', state: 'done' },
 ]
 
 export const Running: Story = {

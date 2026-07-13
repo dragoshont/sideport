@@ -47,6 +47,13 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
     /// <summary>When set, the next matching action returns this Apple resultCode.</summary>
     public (string Action, long Code, string Message)? NextError { get; set; }
 
+    /// <summary>
+    /// Simulate the ambiguous real-world failure where Apple commits a
+    /// certificate but the connection drops before Sideport receives the
+    /// response. The issued certificate remains visible in the inventory.
+    /// </summary>
+    public bool DropNextCertificateResponseAfterIssuing { get; set; }
+
     public FakeDeveloperServicesHandler(string teamId = "ABCDE12345")
     {
         _teamId = teamId;
@@ -94,6 +101,13 @@ internal sealed class FakeDeveloperServicesHandler : HttpMessageHandler
             "ios/downloadTeamProvisioningProfile.action" => DownloadProfile(requestDict),
             _ => ErrorResponse(9999, $"unknown action {action}"),
         };
+
+        if (action == "ios/submitDevelopmentCSR.action" &&
+            DropNextCertificateResponseAfterIssuing)
+        {
+            DropNextCertificateResponseAfterIssuing = false;
+            throw new HttpRequestException("connection lost after Apple issued the certificate");
+        }
 
         return Ok(PlistContent(response));
     }

@@ -1,36 +1,61 @@
-# Sideport deployment (design §4): the .NET brain + exactly two non-managed
-# sidecars. anisette is irreducible (Apple's closed per-arch Android .so);
-# the signer is a cross-platform, license-clean binary behind ISigner.
+# Fresh Sideport installation for an x86-64 Docker host.
 #
-# IMPORTANT (design §5): the anisette ADI volume is effectively an Apple
-# trusted-device registration. Losing it burns a slot and forces re-2FA.
-# Keep `anisette-data` backed up and never re-provision casually. Pin the
-# anisette image by digest in production (replace the floating tag below).
+# 1. Copy deploy/sideport.env.example to deploy/sideport.env and replace the
+#    non-secret placeholders. Never commit the resulting env file.
+# 2. Install/start usbmuxd on the host and trust the iPhone once over USB.
+# 3. Run: docker compose --env-file deploy/sideport.env -f deploy/compose.yaml up -d
+#
+# Sideport owns one persistent state volume. Anisette owns a separate persistent
+# Apple machine-identity volume. Back up both before upgrades.
+
+name: sideport
 
 services:
   sideport:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: ghcr.io/dragoshont/sideport:dev
+    image: ${SIDEPORT_IMAGE:-ghcr.io/dragoshont/sideport:0.1.12}
+    platform: linux/amd64
     depends_on:
-      - anisette
+      anisette:
+        condition: service_started
     environment:
-      Sideport__Anisette__BaseUrl: "http://anisette:6969/"
-      Sideport__Signer__BinaryPath: "/opt/sideport/zsign"
-    volumes:
-      # Signer binary sidecar (zsign now → rcodesign later), mounted read-only.
-      - ./signer:/opt/sideport:ro
+      Sideport__Anisette__Url: "http://anisette:6969/"
+      Sideport__Api__AuthToken: "${SIDEPORT_API_TOKEN:?set SIDEPORT_API_TOKEN in deploy/sideport.env}"
+      Sideport__Apple__DeviceId: "${SIDEPORT_DEVICE_ID:?set SIDEPORT_DEVICE_ID in deploy/sideport.env}"
+      Sideport__Apple__CredentialSource: "managed"
+      Sideport__Apple__AllowInsecureCredentialEntryOnLoopback: "true"
+      Sideport__PublicOrigin: "${SIDEPORT_PUBLIC_ORIGIN:-http://127.0.0.1:8080/}"
+      Sideport__Scheduler__Enabled: "true"
+      Sideport__State__Directory: "/var/lib/sideport"
+      Sideport__Orchestrator__WorkDirectory: "/var/lib/sideport/signed"
+      Sideport__Orchestrator__InstallTimeout: "${SIDEPORT_INSTALL_TIMEOUT:-00:03:00}"
+      Sideport__Orchestrator__InstallCancellationGrace: "${SIDEPORT_INSTALL_CANCELLATION_GRACE:-00:00:02}"
+      Sideport__Devices__PairingRecordsDir: "/var/lib/lockdown"
+      USBMUXD_SOCKET_ADDRESS: "unix:/var/run/usbmuxd"
     ports:
-      - "8080:8080"
+      - "${SIDEPORT_PORT:-8080}:8080"
+    volumes:
+      - sideport-state:/var/lib/sideport
+      - /var/run/usbmuxd:/var/run/usbmuxd
+      - /var/lib/lockdown:/var/lib/lockdown:ro
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   anisette:
-    # Pin by digest in production: dadoum/anisette-v3-server@sha256:...
-    image: dadoum/anisette-v3-server:latest
+    image: ${ANISETTE_IMAGE:-dadoum/anisette-v3-server:latest}
     volumes:
-      - anisette-data:/home/Alcoholic/.config/anisette-v3/lib/
+      - anisette-data:/home/Alcoholic/.config/anisette-v3
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
+  sideport-state:
   anisette-data:

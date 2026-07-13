@@ -104,4 +104,52 @@ public class SessionManagerTests
         await manager.GetSessionAsync("me@example.com");
         Assert.Equal(1, _portal.AuthenticateCalls);
     }
+
+    [Fact]
+    public async Task RememberSession_SameAccountWithDifferentCasing_ReplacesCachedSession()
+    {
+        SessionManager manager = Build();
+        var original = new AppleSession("Owner@Example.com", "old-adsid", "Owner", [1])
+        {
+            IdmsToken = "old-token",
+        };
+        var rotated = new AppleSession("owner@example.com", "new-adsid", "Owner", [2])
+        {
+            IdmsToken = "new-token",
+        };
+
+        manager.RememberSession(original);
+        manager.RememberSession(rotated);
+
+        AppleSession cached = await manager.GetSessionAsync("OWNER@example.com");
+        Assert.Same(rotated, cached);
+        Assert.Equal(0, _portal.AuthenticateCalls);
+    }
+
+    [Fact]
+    public void AppleAuthenticationRecords_ToString_RedactsSecretMaterial()
+    {
+        const string adsid = "sensitive-adsid";
+        const string loginToken = "sensitive-login-token";
+        const string appleId = "private-owner@example.com";
+        const string accountName = "Private Owner";
+        const string sessionToken = "sensitive-session-token";
+        var challenge = new AppleLoginChallenge(adsid, loginToken, TwoFactorKind.TrustedDevice);
+        var session = new AppleSession(appleId, adsid, accountName, [0xDE, 0xAD, 0xBE, 0xEF])
+        {
+            IdmsToken = sessionToken,
+        };
+
+        string challengeText = challenge.ToString();
+        string sessionText = session.ToString();
+
+        Assert.Contains("[REDACTED]", challengeText, StringComparison.Ordinal);
+        Assert.DoesNotContain(adsid, challengeText, StringComparison.Ordinal);
+        Assert.DoesNotContain(loginToken, challengeText, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", sessionText, StringComparison.Ordinal);
+        Assert.DoesNotContain(appleId, sessionText, StringComparison.Ordinal);
+        Assert.DoesNotContain(adsid, sessionText, StringComparison.Ordinal);
+        Assert.DoesNotContain(accountName, sessionText, StringComparison.Ordinal);
+        Assert.DoesNotContain(sessionToken, sessionText, StringComparison.Ordinal);
+    }
 }

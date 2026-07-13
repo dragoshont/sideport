@@ -32,6 +32,19 @@ public interface IAppleDeveloperPortal
     Task<IReadOnlyList<AppleTeam>> ListTeamsAsync(
         AppleSession session, CancellationToken ct = default);
 
+    /// <summary>
+    /// Read the current iOS development-certificate inventory without creating,
+    /// revoking, or otherwise changing certificates.
+    /// </summary>
+    Task<IReadOnlyList<AppleDevelopmentCertificate>> ListDevelopmentCertificatesAsync(
+        AppleSession session, string teamId, CancellationToken ct = default) =>
+        throw new NotSupportedException("This Apple portal does not expose read-only certificate inventory.");
+
+    /// <summary>Revoke one exact development certificate selected by its Apple resource ID.</summary>
+    Task RevokeDevelopmentCertificateAsync(
+        AppleSession session, string teamId, string certificateId, CancellationToken ct = default) =>
+        throw new NotSupportedException("This Apple portal does not expose certificate revocation.");
+
     /// <summary>Register a device UDID with a team (idempotent).</summary>
     Task RegisterDeviceAsync(
         AppleSession session, string teamId, string udid, string name,
@@ -68,7 +81,11 @@ public abstract record AppleLoginResult
 /// A resumable 2FA challenge. Carries only the identifiers needed to request and
 /// validate the code (never the password), so it is safe to hold and pass around.
 /// </summary>
-public sealed record AppleLoginChallenge(string Adsid, string IdmsToken, TwoFactorKind Kind);
+public sealed record AppleLoginChallenge(string Adsid, string IdmsToken, TwoFactorKind Kind)
+{
+    public override string ToString() =>
+        $"AppleLoginChallenge {{ Kind = {Kind}, Credentials = [REDACTED] }}";
+}
 
 /// <summary>The second-factor delivery channel Apple asked for.</summary>
 public enum TwoFactorKind
@@ -94,10 +111,18 @@ public sealed record AppleSession(
     /// developer-services rejects the latter ("session expired").
     /// </summary>
     public string IdmsToken { get; init; } = "";
+
+    public override string ToString() => "AppleSession { Credentials = [REDACTED] }";
 }
 
 /// <summary>An Apple Developer team.</summary>
 public sealed record AppleTeam(string TeamId, string Name, string Type);
+
+/// <summary>A non-secret summary from Apple's development-certificate inventory.</summary>
+public sealed record AppleDevelopmentCertificate(
+    string Id,
+    string SerialNumber,
+    DateTimeOffset? ExpiresAt);
 
 /// <summary>A minted signing certificate.</summary>
 public sealed record SigningCertificate(

@@ -9,6 +9,12 @@ namespace Sideport.Orchestrator;
 public interface ISessionManager
 {
     /// <summary>
+    /// Return only an already-cached Apple session. This read never loads a
+    /// stored credential and never authenticates with Apple.
+    /// </summary>
+    AppleSession? TryGetCachedSession(string appleId) => null;
+
+    /// <summary>
     /// Get a usable session for <paramref name="appleId"/>: the cached one if
     /// present, otherwise a fresh unattended re-authentication using the stored
     /// credential. Throws <see cref="InteractiveLoginRequiredException"/> if a
@@ -30,6 +36,13 @@ public interface ISessionManager
     /// </summary>
     Task<AppleSession> CompleteTwoFactorAsync(
         string appleId, AppleLoginChallenge challenge, string code, CancellationToken ct = default);
+
+    /// <summary>
+    /// Cache a session that was established by another authenticated flow, such
+    /// as managed credential establishment. The caller must only provide a
+    /// session returned by the Apple portal after successful authentication.
+    /// </summary>
+    void RememberSession(AppleSession session);
 
     /// <summary>Drop any cached session for an Apple ID (e.g. after a 401).</summary>
     void Invalidate(string appleId);

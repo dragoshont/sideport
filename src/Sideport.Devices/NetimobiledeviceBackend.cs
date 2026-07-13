@@ -2,8 +2,10 @@ using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Netimobiledevice;
+using Netimobiledevice.Exceptions;
 using Netimobiledevice.InstallationProxy;
 using Netimobiledevice.Lockdown;
+using Netimobiledevice.Lockdown.Pairing;
 using Netimobiledevice.Misagent;
 using Netimobiledevice.Plist;
 using Netimobiledevice.Usbmuxd;
@@ -30,21 +32,30 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     // already-established trust without re-pairing. Overridable via
     // Sideport:Devices:PairingRecordsDir for non-standard hosts.
     private const string DefaultPairingRecordsDir = "/var/lib/lockdown";
+    private static readonly TimeSpan DefaultPairingTimeout = TimeSpan.FromMinutes(2);
 
     private readonly ILogger<NetimobiledeviceBackend> _logger;
     private readonly DeviceMetrics _metrics;
     private readonly string _pairingRecordsDir;
+    private readonly TimeSpan _pairingTimeout;
+    private readonly TimeProvider _timeProvider;
 
     public NetimobiledeviceBackend(
         ILogger<NetimobiledeviceBackend>? logger = null,
         DeviceMetrics? metrics = null,
-        string? pairingRecordsDir = null)
+        string? pairingRecordsDir = null,
+        TimeSpan? pairingTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         _logger = logger ?? NullLogger<NetimobiledeviceBackend>.Instance;
         _metrics = metrics ?? new DeviceMetrics();
         _pairingRecordsDir = string.IsNullOrWhiteSpace(pairingRecordsDir)
             ? DefaultPairingRecordsDir
             : pairingRecordsDir;
+        _pairingTimeout = pairingTimeout is { } timeout && timeout > TimeSpan.Zero
+            ? timeout
+            : DefaultPairingTimeout;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct)
@@ -52,26 +63,18 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         var result = new List<BackendDevice>();
         foreach (UsbmuxdDevice muxDevice in Usbmux.GetDeviceList())
         {
-            DeviceConnection connection = muxDevice.ConnectionType == UsbmuxdConnectionType.Network
-                ? DeviceConnection.Wifi
-                : DeviceConnection.Usb;
-
-            // Best-effort lockdown enrichment; a discovered-but-unpaired/asleep
-            // device is still listed (with blank metadata) rather than dropped.
-            string name = "", productType = "", osVersion = "";
-            try
-            {
-                using LockdownClient lockdown = CreateLockdown(muxDevice);
-                name = lockdown.DeviceName;
-                productType = lockdown.ProductType;
-                osVersion = lockdown.OsVersion.ToString();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("could not read lockdown info for {Udid}: {Error}", muxDevice.Serial, ex.Message);
-            }
-
-            result.Add(new BackendDevice(muxDevice.Serial, name, productType, osVersion, connection));
+            ct.ThrowIfCancellationRequested();
+            TrustObservation observation = ObserveTrust(muxDevice, ct);
+            result.Add(new BackendDevice(
+                muxDevice.Serial,
+                observation.Name,
+                observation.ProductType,
+                observation.OsVersion,
+                observation.Connection,
+                observation.TrustState,
+                observation.TrustReason,
+                observation.CheckedAt,
+                observation.UsableForInstall));
         }
         return Task.FromResult<IReadOnlyList<BackendDevice>>(result);
     }
@@ -169,29 +172,260 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("usbmux transport probe failed: {Error}", ex.Message);
-            return Task.FromResult<BackendDiagnostics>(new BackendDiagnostics(false, ex.Message, []));
+            _logger.LogWarning("usbmux transport probe failed ({ErrorType})", ex.GetType().Name);
+            return Task.FromResult<BackendDiagnostics>(new BackendDiagnostics(
+                false,
+                "Sideport could not reach the usbmux transport.",
+                []));
         }
 
         var probes = new List<BackendDeviceProbe>(muxDevices.Count);
         foreach (UsbmuxdDevice muxDevice in muxDevices)
         {
-            DeviceConnection connection = muxDevice.ConnectionType == UsbmuxdConnectionType.Network
-                ? DeviceConnection.Wifi
-                : DeviceConnection.Usb;
-            try
-            {
-                using LockdownClient lockdown = CreateLockdown(muxDevice);
-                probes.Add(new BackendDeviceProbe(muxDevice.Serial, connection, true, lockdown.DeviceName, null));
-            }
-            catch (Exception ex)
-            {
-                probes.Add(new BackendDeviceProbe(muxDevice.Serial, connection, false, null, ex.Message));
-            }
+            ct.ThrowIfCancellationRequested();
+            TrustObservation observation = ObserveTrust(muxDevice, ct);
+            probes.Add(new BackendDeviceProbe(
+                muxDevice.Serial,
+                observation.Connection,
+                string.Equals(observation.TrustState, "trusted", StringComparison.Ordinal),
+                observation.Name,
+                observation.TrustReason,
+                observation.TrustState,
+                observation.TrustReason,
+                observation.CheckedAt,
+                observation.UsableForInstall));
         }
 
         return Task.FromResult<BackendDiagnostics>(new BackendDiagnostics(true, null, probes));
     }
+
+    public Task<DeviceTrustProbe> ProbeTrustAsync(string udid, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(udid);
+        ct.ThrowIfCancellationRequested();
+
+        UsbmuxdDevice mux = FindPreferredMuxDevice(udid);
+        TrustObservation observation = ObserveTrust(mux, ct);
+        return Task.FromResult(new DeviceTrustProbe(
+            udid,
+            observation.Connection,
+            observation.TrustState,
+            observation.TrustReason,
+            observation.CheckedAt,
+            observation.UsableForInstall));
+    }
+
+    public async Task<DevicePairingResult> PairAsync(
+        string udid,
+        IProgress<DevicePairingProgress>? progress,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(udid);
+        ct.ThrowIfCancellationRequested();
+
+        UsbmuxdDevice mux = FindPreferredMuxDevice(udid);
+        if (mux.ConnectionType == UsbmuxdConnectionType.Network)
+        {
+            return WifiPairingNotSupported(udid, _timeProvider.GetUtcNow());
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(_pairingTimeout);
+        var adapter = new PairingProgressAdapter(progress);
+
+        try
+        {
+            // Opening the session is passive. The explicit PairAsync call below
+            // is the sole point where Sideport is allowed to request Trust.
+            using LockdownClient lockdown = CreatePairingLockdown(mux);
+            if (lockdown.IsPaired)
+            {
+                progress?.Report(new DevicePairingProgress("paired", "This iPhone already trusts Sideport."));
+                return TrustedPairingResult(udid, _timeProvider.GetUtcNow());
+            }
+
+            bool paired = await lockdown.PairAsync(adapter, deadline.Token).ConfigureAwait(false);
+            if (!paired)
+            {
+                return adapter.LastState switch
+                {
+                    PairingState.PasswordProtected => LockedPairingResult(udid, _timeProvider.GetUtcNow()),
+                    PairingState.UserDeniedPairing => DeniedPairingResult(udid, _timeProvider.GetUtcNow()),
+                    _ => new DevicePairingResult(
+                        udid,
+                        DeviceConnection.Usb,
+                        "untrusted",
+                        "The iPhone did not accept the Trust request.",
+                        _timeProvider.GetUtcNow(),
+                        UsableForInstall: false),
+                };
+            }
+
+            // The vendored PairAsync persists the accepted record through
+            // usbmux. Prove that saved record in a fresh passive lockdown
+            // session before claiming trust.
+            DeviceTrustProbe verified = await ProbeTrustAsync(udid, ct).ConfigureAwait(false);
+            return new DevicePairingResult(
+                verified.Udid,
+                verified.Connection,
+                verified.TrustState,
+                verified.TrustReason,
+                verified.LockdownCheckedAt,
+                verified.UsableForInstall);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            if (adapter.LastState == PairingState.PasswordProtected)
+                return LockedPairingResult(udid, _timeProvider.GetUtcNow());
+
+            return new DevicePairingResult(
+                udid,
+                DeviceConnection.Usb,
+                "error",
+                "The Trust request timed out. Reconnect the iPhone and try again.",
+                _timeProvider.GetUtcNow(),
+                UsableForInstall: false);
+        }
+        catch (Exception ex)
+        {
+            (string state, string reason) = ClassifyTrustFailure(ex);
+            _logger.LogWarning(
+                "USB pairing failed for iPhone {DeviceTag} ({ErrorType})",
+                DeviceTag(udid),
+                ex.GetType().Name);
+            return new DevicePairingResult(
+                udid,
+                DeviceConnection.Usb,
+                state,
+                reason,
+                _timeProvider.GetUtcNow(),
+                UsableForInstall: false);
+        }
+    }
+
+    private TrustObservation ObserveTrust(UsbmuxdDevice mux, CancellationToken ct)
+    {
+        DeviceConnection connection = mux.ConnectionType == UsbmuxdConnectionType.Network
+            ? DeviceConnection.Wifi
+            : DeviceConnection.Usb;
+
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            // CreateLockdown always uses autopair:false. A successful open with
+            // IsPaired=false is an observation, never an invitation to pair.
+            using LockdownClient lockdown = CreateLockdown(mux);
+            ct.ThrowIfCancellationRequested();
+
+            bool trusted = lockdown.IsPaired;
+            return new TrustObservation(
+                connection,
+                trusted ? "trusted" : "untrusted",
+                trusted
+                    ? $"Lockdown session verified over {ConnectionLabel(mux).ToUpperInvariant()}."
+                    : "No valid pairing record is available for this iPhone.",
+                _timeProvider.GetUtcNow(),
+                UsableForInstall: trusted,
+                lockdown.DeviceName,
+                lockdown.ProductType,
+                lockdown.OsVersion.ToString());
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            (string state, string reason) = ClassifyTrustFailure(ex);
+            _logger.LogWarning(
+                "lockdown trust check failed for iPhone {DeviceTag} over {Connection} ({ErrorType})",
+                DeviceTag(mux.Serial),
+                ConnectionLabel(mux),
+                ex.GetType().Name);
+            return new TrustObservation(
+                connection,
+                state,
+                reason,
+                _timeProvider.GetUtcNow(),
+                UsableForInstall: false,
+                Name: "",
+                ProductType: "",
+                OsVersion: "");
+        }
+    }
+
+    internal static (string TrustState, string TrustReason) ClassifyTrustFailure(Exception ex) => ex switch
+    {
+        PasswordRequiredException =>
+            ("locked", "The iPhone is locked. Unlock it and try again."),
+        LockdownException
+        {
+            LockdownError: LockdownError.PasswordProtected or LockdownError.EscrowLocked,
+        } => ("locked", "The iPhone is locked. Unlock it and try again."),
+        NotPairedException or FatalPairingException =>
+            ("untrusted", "No valid pairing record is available for this iPhone."),
+        LockdownException
+        {
+            LockdownError: LockdownError.PairingFailed
+                or LockdownError.UserDeniedPairing
+                or LockdownError.MissingHostId
+                or LockdownError.InvalidHostID
+                or LockdownError.MissingPairRecord
+                or LockdownError.InvalidPairRecord,
+        } => ("untrusted", "No valid pairing record is available for this iPhone."),
+        _ => ("error", "Sideport could not complete the lockdown trust check."),
+    };
+
+    internal static DevicePairingProgress MapPairingProgress(PairingState state) => state switch
+    {
+        PairingState.Paired => new DevicePairingProgress("paired", "This iPhone now trusts Sideport."),
+        PairingState.PasswordProtected => new DevicePairingProgress("locked", "Unlock the iPhone, then try again."),
+        PairingState.UserDeniedPairing => new DevicePairingProgress("denied", "Trust was declined on the iPhone."),
+        PairingState.PairingDialogResponsePending => new DevicePairingProgress(
+            "waiting-for-trust",
+            "Unlock the iPhone and tap Trust when asked."),
+        _ => new DevicePairingProgress("denied", "Sideport could not establish trust."),
+    };
+
+    internal static DevicePairingResult WifiPairingNotSupported(string udid, DateTimeOffset checkedAt) =>
+        new(
+            udid,
+            DeviceConnection.Wifi,
+            "error",
+            "Connect this iPhone to the Sideport host with USB before pairing.",
+            checkedAt,
+            UsableForInstall: false);
+
+    private static DevicePairingResult TrustedPairingResult(string udid, DateTimeOffset checkedAt) =>
+        new(
+            udid,
+            DeviceConnection.Usb,
+            "trusted",
+            "Lockdown session verified over USB.",
+            checkedAt,
+            UsableForInstall: true);
+
+    private static DevicePairingResult DeniedPairingResult(string udid, DateTimeOffset checkedAt) =>
+        new(
+            udid,
+            DeviceConnection.Usb,
+            "untrusted",
+            "Trust was declined on the iPhone.",
+            checkedAt,
+            UsableForInstall: false);
+
+    private static DevicePairingResult LockedPairingResult(string udid, DateTimeOffset checkedAt) =>
+        new(
+            udid,
+            DeviceConnection.Usb,
+            "locked",
+            "The iPhone is locked. Unlock it and try again.",
+            checkedAt,
+            UsableForInstall: false);
 
     private static string ReadString(DictionaryNode dict, string key) =>
         dict.TryGetValue(key, out PropertyNode? node) ? node.AsStringNode().Value : "";
@@ -219,7 +453,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         UsbmuxdDevice? mux = matches.FirstOrDefault(d => d.ConnectionType != UsbmuxdConnectionType.Network)
                              ?? matches.FirstOrDefault();
         if (mux is null)
-            throw new InvalidOperationException($"device {udid} is not currently reachable over usbmux");
+            throw new InvalidOperationException("The requested iPhone is not currently reachable over usbmux.");
         return mux;
     }
 
@@ -232,16 +466,24 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     private LockdownClient CreateLockdown(UsbmuxdDevice mux)
     {
         if (mux.ConnectionType != UsbmuxdConnectionType.Network)
-            return MobileDevice.CreateUsingUsbmux(mux.Serial, logger: _logger);
+        {
+            // Every ordinary USB open is explicitly passive. PairAsync is the
+            // only method that may invoke LockdownClient.PairAsync afterwards.
+            return MobileDevice.CreateUsingUsbmux(
+                mux.Serial,
+                autopair: false,
+                connectionType: mux.ConnectionType,
+                pairingRecordsCacheDir: _pairingRecordsDir,
+                logger: _logger);
+        }
 
         string? host = DecodeNetworkAddress(mux.NetworkAddress);
         if (host is null)
-            throw new InvalidOperationException(
-                $"Wi-Fi device {mux.Serial} reported no usable (routable) network address");
+            throw new InvalidOperationException("The Wi-Fi iPhone has no usable routable address.");
 
         _logger.LogDebug(
-            "connecting to Wi-Fi device {Udid} directly over TCP at {Host}:{Port} (netmuxd does not proxy usbmux Connect)",
-            mux.Serial, host, LockdownPort);
+            "connecting to Wi-Fi iPhone {DeviceTag} directly over TCP at {Host}:{Port} (netmuxd does not proxy usbmux Connect)",
+            DeviceTag(mux.Serial), host, LockdownPort);
 
         // autopair:false — the device is already trusted host-side, so only USE
         // the existing pairing record; never write one (the mount is read-only).
@@ -251,6 +493,45 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             autopair: false,
             pairingRecordsCacheDir: _pairingRecordsDir,
             logger: _logger);
+    }
+
+    private LockdownClient CreatePairingLockdown(UsbmuxdDevice mux)
+    {
+        if (mux.ConnectionType == UsbmuxdConnectionType.Network)
+            throw new InvalidOperationException("Pairing requires a USB connection.");
+
+        // Opening remains passive. The caller must explicitly invoke PairAsync.
+        // Do not point the pairing client at a potentially read-only host cache;
+        // SavePairRecord persists through the usbmux daemon after acceptance.
+        return MobileDevice.CreateUsingUsbmux(
+            mux.Serial,
+            autopair: false,
+            connectionType: mux.ConnectionType,
+            pairingRecordsCacheDir: "",
+            logger: _logger);
+    }
+
+    private static string DeviceTag(string udid) => udid.Length > 8 ? $"…{udid[^8..]}" : udid;
+
+    private sealed record TrustObservation(
+        DeviceConnection Connection,
+        string TrustState,
+        string TrustReason,
+        DateTimeOffset CheckedAt,
+        bool UsableForInstall,
+        string Name,
+        string ProductType,
+        string OsVersion);
+
+    private sealed class PairingProgressAdapter(IProgress<DevicePairingProgress>? progress) : IProgress<PairingState>
+    {
+        public PairingState? LastState { get; private set; }
+
+        public void Report(PairingState value)
+        {
+            LastState = value;
+            progress?.Report(MapPairingProgress(value));
+        }
     }
 
     /// <summary>

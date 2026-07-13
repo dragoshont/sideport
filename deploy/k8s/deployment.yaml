@@ -30,8 +30,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       volumes:
-        # Durable Sideport state: app registrations, stored IPAs, identities, and
-        # operation history. Production cutover requires this to be persistent.
+        # Durable Sideport state: registrations, protected credential storage,
+        # scheduler/operation evidence, and stored IPAs.
         - name: sideport-state
           persistentVolumeClaim:
             claimName: sideport-state
@@ -50,6 +50,8 @@ spec:
         #   hostPath:
         #     path: /var/lib/lockdown
         #     type: Directory
+        # Durable anisette ADI (Apple machine identity). Seed this PVC from an
+        # already-trusted ADI only when intentionally migrating an identity.
         - name: anisette-data
           persistentVolumeClaim:
             claimName: sideport-anisette
@@ -63,11 +65,55 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             # ── SINGLE-SIGNER GUARD ──────────────────────────────────────────
-            # Keep the scheduler OFF until you've confirmed no other signer
-            # (AltStore/AltServer or a second Sideport) is active for this Apple
-            # ID. Flip to "true" to let Sideport keep your apps signed.
+            # Confirm no AltStore/AltServer or second Sideport uses the same
+            # Apple ID before completing setup; onboarding explains this guard.
             - name: Sideport__Scheduler__Enabled
-              value: "false"
+              # Bootstrap request only. Durable scheduling stays off until
+              # onboarding proves a verified app, signer, and paired phone.
+              value: "true"
+            - name: Sideport__State__Directory
+              value: "/var/lib/sideport"
+            - name: Sideport__Orchestrator__InstallTimeout
+              value: "00:03:00"
+            - name: Sideport__Orchestrator__InstallCancellationGrace
+              value: "00:00:02"
+            # Authentik owns browser identity and passkeys. Replace these
+            # example values in a reviewed environment overlay.
+            - name: Sideport__PublicOrigin
+              value: "https://sideport.example.com/"
+            - name: Sideport__Oidc__Enabled
+              value: "true"
+            - name: Sideport__Oidc__Authority
+              value: "https://auth.example.com/application/o/sideport/"
+            - name: Sideport__Oidc__ClientId
+              value: "sideport"
+            - name: Sideport__Oidc__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: SIDEPORT_OIDC_CLIENT_SECRET
+            # Trust only the actual Traefik address or narrow cluster network.
+            - name: Sideport__ReverseProxy__KnownNetworks__0
+              value: "10.42.0.0/16"
+            # Optional new-account passkey enrollment adapter. Remove these
+            # values to allow existing Authentik accounts only.
+            - name: Sideport__Authentik__BaseUrl
+              value: "https://auth.example.com/"
+            - name: Sideport__Authentik__EnrollmentFlowSlug
+              value: "sideport-enrollment"
+            - name: Sideport__Authentik__EnrollmentFlowId
+              value: "00000000-0000-0000-0000-000000000001"
+            - name: Sideport__Authentik__RecoveryUrl
+              value: "https://auth.example.com/if/flow/default-recovery-flow/"
+            - name: Sideport__Authentik__ApiToken
+              valueFrom:
+                secretKeyRef:
+                  name: sideport-secrets
+                  key: SIDEPORT_AUTHENTIK_API_TOKEN
+            # Accept Apple credentials in the authenticated HTTPS UI and keep
+            # only their protected envelope on the Sideport state volume.
+            - name: Sideport__Apple__CredentialSource
+              value: "managed"
             # anisette sidecar (same pod, localhost).
             - name: Sideport__Anisette__Url
               value: "http://127.0.0.1:6969"
@@ -85,20 +131,6 @@ spec:
                 secretKeyRef:
                   name: sideport-secrets
                   key: SIDEPORT_DEVICE_ID
-            - name: Sideport__Apple__AppleId
-              valueFrom:
-                secretKeyRef:
-                  name: sideport-secrets
-                  key: APPLE_ID
-            # The orchestrator reads the Apple password from an env var whose
-            # name ENCODES the Apple ID: SIDEPORT_APPLE_PW_<APPLE_ID>, uppercased
-            # with every non-alphanumeric character replaced by '_'. RENAME this
-            # to match YOUR Apple ID — e.g. you@example.com -> _YOU_EXAMPLE_COM.
-            - name: SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM
-              valueFrom:
-                secretKeyRef:
-                  name: sideport-secrets
-                  key: SIDEPORT_APPLE_PW
             # Matches the host usbmuxd socket mounted above.
             - name: USBMUXD_SOCKET_ADDRESS
               value: "unix:/var/run/usbmuxd"

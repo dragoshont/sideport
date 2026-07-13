@@ -1,4 +1,8 @@
 export type SourceKind = 'live' | 'derived' | 'demo' | 'planned'
+export type EvidenceOrigin = 'operator' | 'device' | 'apple' | 'artifact' | 'system' | 'operation'
+export type OnboardingSetupState = 'in-progress' | 'complete'
+export type OnboardingWorkflowStepId = 'server' | 'apple-signer' | 'device' | 'app' | 'install' | 'ready'
+export type OnboardingWorkflowStepState = 'not-started' | 'action-required' | 'in-progress' | 'complete' | 'blocked'
 export type HealthState = 'healthy' | 'warning' | 'blocked' | 'failed' | 'offline'
 export type ConnectionState = 'usb' | 'wifi' | 'offline'
 export type RenewalRisk = 'blocked' | 'due-now' | 'upcoming' | 'healthy' | 'unknown'
@@ -14,7 +18,110 @@ export interface SourceTagged<T> {
   source: SourceKind
 }
 
+export interface OnboardingWorkflowAction {
+  action: string
+  label: string
+}
+
+export interface OnboardingWorkflowEvidence {
+  id: string
+  label: string
+  detail: string
+  source: SourceKind
+  evidenceOrigin: EvidenceOrigin
+  checkedAt: string
+}
+
+export interface OnboardingWorkflowStep {
+  id: OnboardingWorkflowStepId
+  state: OnboardingWorkflowStepState
+  required: boolean
+  source: SourceKind
+  evidenceOrigin?: EvidenceOrigin
+  checkedAt?: string
+  activeOperationId?: string | null
+  reason?: string
+  nextAction?: OnboardingWorkflowAction
+  evidence: OnboardingWorkflowEvidence[]
+}
+
+export interface OnboardingCompletionReceipt {
+  schemaVersion: 2
+  completedAt: string
+  actor: {
+    kind: string
+    displayName: string
+  }
+  accountProfileId: string
+  teamId: string
+  deviceUdid: string
+  registrationKey: {
+    deviceUdid: string
+    bundleId: string
+  }
+  verifiedOperationId: string
+  schedulerSettingsVersion: string
+  operationalCheckedAt: string
+}
+
+export interface OnboardingWorkflowV2 {
+  schemaVersion: 2
+  setupState: OnboardingSetupState
+  readyNow: boolean
+  completedAt?: string | null
+  verifiedOperationId?: string | null
+  nextAction?: (OnboardingWorkflowAction & { stepId: OnboardingWorkflowStepId }) | null
+  steps: OnboardingWorkflowStep[]
+}
+
+export interface SystemOperationalCheck {
+  id: string
+  status: 'pass' | 'fail'
+  source: SourceKind
+  checkedAt: string
+  scope: string
+  affectedResources: string[]
+  reason: string
+  nextAction?: string | null
+}
+
+export interface SchedulerStatusSummary {
+  enabled: boolean
+  checkedAt?: string
+  policy?: {
+    mode: string
+    evaluationInterval: string
+    refreshLeadTime: string
+    resignInterval?: string | null
+    catchUp: string
+    missedIntervals: string
+  }
+  nextEvaluationAt?: string | null
+  lastEvaluation?: {
+    evaluationId: string
+    startedAt: string
+    completedAt: string
+    outcome: string
+    dueCount: number
+    queuedCount: number
+    blockedCount: number
+    skippedCount: number
+  } | null
+  dueCount?: number
+  queuedCount?: number
+  concurrency?: {
+    maxRunning: number
+    lockState: string
+    operationId?: string | null
+  }
+  historyRetention?: { maxEvaluations: number }
+  source: SourceKind
+}
+
 export interface SystemStatus {
+  operational: boolean
+  checkedAt?: string
+  checks: SystemOperationalCheck[]
   api: { ok: boolean; source: SourceKind }
   ready: {
     ready: boolean
@@ -25,7 +132,7 @@ export interface SystemStatus {
     }
   }
   apiAuth: { configured: boolean; source: SourceKind }
-  scheduler: { enabled: boolean; source: SourceKind }
+  scheduler: SchedulerStatusSummary
   observability: { exporter: string; connected: boolean; source: SourceKind }
 }
 
@@ -39,6 +146,15 @@ export interface DeviceSummary {
   hasDurableLastSeen?: boolean
   currentPollAt?: SourceTagged<string>
   lastSeenSource?: string
+  inventoryState?: string
+  acceptedAt?: SourceTagged<string>
+  acceptedBy?: string
+  enrollmentOperationId?: string
+  trustState?: string
+  trustReason?: string
+  lockdownCheckedAt?: SourceTagged<string>
+  usableForInstall?: boolean
+  supportedForFirstInstall?: boolean
   health: HealthState
   teamId: string
   appSlotsUsed: number
@@ -67,6 +183,8 @@ export interface RegisteredAppSummary {
   timeUntilExpiry?: SourceTagged<string>
   lastSucceeded?: boolean | null
   lastError?: string | null
+  lifecycle?: 'pending-install' | 'active'
+  lastVerifiedOperationId?: string | null
   displayName: SourceTagged<string>
   version: SourceTagged<string>
   iconTone: 'blue' | 'green' | 'amber' | 'red' | 'slate'
@@ -77,7 +195,15 @@ export interface CatalogAppSummary {
   name: string
   purpose: string
   expectedBundleId: string
-  suggestedIpaPath: string
+  suggestedIpaPath?: string
+  catalogVersion?: number
+  artifactSources?: Array<{
+    kind: string
+    label: string
+    repository?: string
+    releaseTag?: string
+    assetName?: string
+  }>
   versionLabel: string
   status: CatalogAppStatus
   statusLabel: string
@@ -89,6 +215,7 @@ export interface CatalogAppSummary {
   hasEmbeddedProfile: boolean
   signatureExpiresAt?: string
   lastInspectedAt?: string
+  icon?: string
 }
 
 export interface WorkspaceRoleSummary {
@@ -174,6 +301,7 @@ export interface OperationSummary {
   retryable: boolean
   rerunnable: boolean
   parentOperationId?: string | null
+  finishOnboarding?: boolean
   source: SourceKind
 }
 
@@ -209,16 +337,28 @@ export interface PersonalAppleSummary {
   connector: string
   state: PersonalAppleState
   secretCustody: string
+  credentialSource?: string
+  accountProfileId?: string | null
+  credentialEntry?: {
+    supported: boolean
+    allowedNow: boolean
+    blockedReason?: { code: string; message: string } | null
+  } | null
   appleIdHint?: string | null
   message: string
   pendingChallengeId?: string | null
   pendingChallengeKind?: string | null
+  pendingChallengeExpiresAt?: string | null
+  selectedTeamId?: string | null
+  teamValidatedAt?: string | null
+  lastAuthenticatedAt?: string | null
+  authValidatedAt?: string | null
   teams: PersonalAppleTeamSummary[]
   source: SourceKind
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'operator' | 'viewer'
-export type MemberStatus = 'active' | 'invited' | 'suspended'
+export type WorkspaceRole = 'owner' | 'family'
+export type MemberStatus = 'active' | 'suspended' | 'offboarded'
 
 export interface WorkspaceMember {
   id: string
@@ -262,6 +402,8 @@ export interface SideportReadModel {
 
 export const runtimeEmptyData: SideportReadModel = {
   system: {
+    operational: false,
+    checks: [],
     api: { ok: false, source: 'live' },
     ready: {
       ready: false,

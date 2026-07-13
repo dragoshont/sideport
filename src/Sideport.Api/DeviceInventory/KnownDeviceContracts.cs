@@ -14,12 +14,21 @@ public sealed record KnownDeviceDto(
     DateTimeOffset? LastSeenAt,
     string LastSeenSource,
     DateTimeOffset? CurrentPollAt,
+    string InventoryState,
+    DateTimeOffset? AcceptedAt,
+    string? AcceptedBy,
+    string? EnrollmentOperationId,
     string TrustState,
+    string? TrustReason,
+    DateTimeOffset? LockdownCheckedAt,
+    bool UsableForInstall,
+    bool SupportedForFirstInstall,
     KnownDeviceHealthDto Health,
     KnownDeviceAppSlotsDto AppSlots,
     string? Owner,
     string? Notes,
-    string Source = "live");
+    string Source = "live",
+    string? OwnerMemberId = null);
 
 public sealed record KnownDeviceUpsertRequest(string Udid, string? DisplayName = null, string? Owner = null, string? Notes = null);
 

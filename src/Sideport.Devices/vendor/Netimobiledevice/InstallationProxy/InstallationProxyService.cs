@@ -75,6 +75,9 @@ namespace Netimobiledevice.InstallationProxy
             }
 
             using (AfcService afc = new AfcService(Lockdown)) {
+                using CancellationTokenRegistration abortUpload = cancellationToken.Register(
+                    static state => CloseQuietly((AfcService) state!),
+                    afc);
                 await afc.SetFileContents(TEMP_REMOTE_IPA_FILE, ipaContents, cancellationToken).ConfigureAwait(false);
             }
             Logger.LogInformation("IPA sent to device");
@@ -85,10 +88,29 @@ namespace Netimobiledevice.InstallationProxy
                 { "ClientOptions", options },
                 { "PackagePath", new StringNode(TEMP_REMOTE_IPA_FILE) }
             };
+            using CancellationTokenRegistration abortInstall = cancellationToken.Register(
+                static state => CloseQuietly((InstallationProxyService) state!),
+                this);
             await Service.SendPlistAsync(cmd, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            await WatchForCompletion(command, cancellationToken, progress);
+            await WatchForCompletion(command, cancellationToken, progress).ConfigureAwait(false);
             Logger?.LogInformation("IPA Installed");
+        }
+
+        private static void CloseQuietly(LockdownService service)
+        {
+            try {
+                // CancellationToken alone cannot interrupt every NetworkStream
+                // read/write on every supported runtime. Closing the owned
+                // service socket is the hard-abort boundary for a stalled AFC
+                // upload or installation_proxy response wait.
+                service.Close();
+            }
+            catch (Exception) {
+                // A normal completion/dispose or a broken transport won the
+                // race. Cancellation callbacks must never surface a secondary
+                // close error instead of the original transfer outcome.
+            }
         }
 
         private async Task WatchForCompletion(string action, CancellationToken cancellationToken, IProgress<int>? progress = null)

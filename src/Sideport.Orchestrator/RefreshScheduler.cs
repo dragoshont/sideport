@@ -59,7 +59,9 @@ public sealed class RefreshScheduler : BackgroundService
     internal async Task RunOnceAsync(CancellationToken ct)
     {
         DateTimeOffset now = _time.GetUtcNow();
-        IReadOnlyList<AppRegistration> apps = await _registry.ListAsync(ct);
+        IReadOnlyList<AppRegistration> apps = (await _registry.ListAsync(ct))
+            .Where(app => !app.IsPendingInstall)
+            .ToArray();
 
         var due = apps
             .Select(app => (app, state: _orchestrator.GetState(app.DeviceUdid, app.BundleId)))

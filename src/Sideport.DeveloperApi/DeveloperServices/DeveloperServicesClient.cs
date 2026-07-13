@@ -82,7 +82,8 @@ internal sealed class DeveloperServicesClient
         byte[] raw = await response.Content.ReadAsByteArrayAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new DeveloperServicesException(
-                $"dev-api {action} HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+                $"dev-api {action} HTTP {(int)response.StatusCode} {response.ReasonPhrase}",
+                statusCode: response.StatusCode);
 
         NSDictionary parsed = PlistCodec.ParseDictionary(Inflate(raw));
         long resultCode = parsed.ContainsKey("resultCode") && parsed["resultCode"] is NSNumber rc
@@ -134,7 +135,8 @@ internal sealed class DeveloperServicesClient
         byte[] raw = await response.Content.ReadAsByteArrayAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new DeveloperServicesException(
-                $"dev-api services {httpMethodOverride} {path} HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+                $"dev-api services {httpMethodOverride} {path} HTTP {(int)response.StatusCode} {response.ReasonPhrase}",
+                statusCode: response.StatusCode);
 
         byte[] body = Inflate(raw);
         if (body.Length == 0)

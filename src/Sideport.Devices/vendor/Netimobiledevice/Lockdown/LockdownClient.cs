@@ -96,6 +96,7 @@ namespace Netimobiledevice.Lockdown
             _sessionId = string.Empty;
             _pairingRecordsCacheDirectory = pairingRecordsCacheDirectory;
             _port = port;
+            _medium = GetConnectionMedium(service.MuxDevice);
 
             if (QueryType() != "com.apple.mobile.lockdown") {
                 throw new IncorrectModeException();
@@ -196,7 +197,7 @@ namespace Netimobiledevice.Lockdown
             }
         }
 
-        private LockdownError Pair()
+        protected virtual LockdownError Pair()
         {
             _devicePublicKey = GetValue(null, "DevicePublicKey")?.AsDataNode().Value ?? [];
             if (_devicePublicKey == null || _devicePublicKey.Length == 0) {
@@ -242,18 +243,7 @@ namespace Netimobiledevice.Lockdown
             }
 
             _pairRecord = newPairRecord;
-            WriteStorageFile($"{Udid}.plist", PropertyList.SaveAsByteArray(_pairRecord, PlistFormat.Xml));
-
-            if (_medium == ConnectionMedium.USBMUX) {
-                byte[] recordData = PropertyList.SaveAsByteArray(_pairRecord, PlistFormat.Xml);
-
-                UsbmuxConnection mux = UsbmuxConnection.Create(logger: Logger);
-                if (mux is PlistMuxConnection plistMuxConnection) {
-                    ulong deviceId = _service?.MuxDevice?.DeviceId ?? 0;
-                    plistMuxConnection.SavePairRecord(Udid, deviceId, recordData);
-                }
-                mux.Close();
-            }
+            SavePairRecord();
 
             IsPaired = true;
             return LockdownError.Success;
@@ -264,7 +254,7 @@ namespace Netimobiledevice.Lockdown
             return Request("QueryType").AsDictionaryNode()["Type"].AsStringNode().Value;
         }
 
-        private bool ValidatePairing()
+        protected virtual bool ValidatePairing()
         {
             if (_pairRecord == null && !string.IsNullOrEmpty(Identifier)) {
                 try {
@@ -497,7 +487,7 @@ namespace Netimobiledevice.Lockdown
             Pair();
 
             // Get sessionId
-            if (ValidatePairing()) {
+            if (!ValidatePairing()) {
                 throw new FatalPairingException();
             }
 
@@ -509,12 +499,37 @@ namespace Netimobiledevice.Lockdown
 
         public virtual void SavePairRecord()
         {
-            if (_pairingRecordsCacheDirectory != null) {
-                string pairRecordFilePath = Path.Combine(_pairingRecordsCacheDirectory.FullName, $"{Identifier}.plist");
-                if (_pairRecord != null) {
-                    File.WriteAllBytes(pairRecordFilePath, PropertyList.SaveAsByteArray(_pairRecord, PlistFormat.Xml));
+            if (_pairRecord == null) {
+                return;
+            }
+
+            byte[] recordData = PropertyList.SaveAsByteArray(_pairRecord, PlistFormat.Xml);
+            WriteStorageFile($"{Identifier}.plist", recordData);
+
+            if (_medium == ConnectionMedium.USBMUX) {
+                SavePairRecordToUsbmux(recordData);
+            }
+        }
+
+        protected virtual string UsbmuxAddress => string.Empty;
+
+        protected virtual void SavePairRecordToUsbmux(byte[] recordData)
+        {
+            ulong? deviceId = _service?.MuxDevice?.DeviceId;
+            if (deviceId == null) {
+                throw new FatalPairingException("Cannot save the pair record without a usbmux device identifier");
+            }
+
+            using (UsbmuxConnection mux = UsbmuxConnection.Create(usbmuxAddress: UsbmuxAddress, logger: Logger)) {
+                if (mux is PlistMuxConnection plistMuxConnection) {
+                    plistMuxConnection.SavePairRecord(Identifier, deviceId.Value, recordData);
                 }
             }
+        }
+
+        internal static ConnectionMedium GetConnectionMedium(UsbmuxdDevice? muxDevice)
+        {
+            return muxDevice == null ? ConnectionMedium.TCP : ConnectionMedium.USBMUX;
         }
 
         public PropertyNode SetValue(string? domain, string? key, PropertyNode value)

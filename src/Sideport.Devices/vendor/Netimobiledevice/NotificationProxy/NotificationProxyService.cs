@@ -23,11 +23,15 @@ namespace Netimobiledevice.NotificationProxy
 
         private readonly BackgroundWorker notificationListener;
 
-        private static string ServiceNameUsed { get; set; } = LOCKDOWN_SERVICE_NAME;
-
         public event EventHandler<ReceivedNotificationEventArgs>? ReceivedNotification;
 
-        public NotificationProxyService(LockdownServiceProvider lockdown, bool useInsecureService = false, ILogger? logger = null) : base(lockdown, ServiceNameUsed, GetNotificationProxyServiceConnection(lockdown, useInsecureService), logger: logger)
+        public NotificationProxyService(LockdownServiceProvider lockdown, bool useInsecureService = false, ILogger? logger = null)
+            : this(lockdown, CreateService(lockdown, useInsecureService), logger)
+        {
+        }
+
+        private NotificationProxyService(LockdownServiceProvider lockdown, (string Name, ServiceConnection Connection) service, ILogger? logger)
+            : base(lockdown, service.Name, service.Connection, logger: logger)
         {
             notificationListener = new BackgroundWorker {
                 WorkerSupportsCancellation = true
@@ -35,25 +39,21 @@ namespace Netimobiledevice.NotificationProxy
             notificationListener.DoWork += NotificationListener_DoWork;
         }
 
-        private static ServiceConnection? GetNotificationProxyServiceConnection(LockdownServiceProvider lockdown, bool useInsecureService)
+        private static (string Name, ServiceConnection Connection) CreateService(LockdownServiceProvider lockdown, bool useInsecureService)
         {
-            if (lockdown is LockdownClient) {
-                if (useInsecureService) {
-                    ServiceNameUsed = INSECURE_LOCKDOWN_SERVICE_NAME;
-                }
-                else {
-                    ServiceNameUsed = LOCKDOWN_SERVICE_NAME;
-                }
+            string serviceName = GetServiceName(lockdown is LockdownClient, useInsecureService);
+            ServiceConnection connection = lockdown.StartLockdownService(
+                serviceName,
+                useTrustedConnection: !useInsecureService);
+            return (serviceName, connection);
+        }
+
+        internal static string GetServiceName(bool isLockdownClient, bool useInsecureService)
+        {
+            if (isLockdownClient) {
+                return useInsecureService ? INSECURE_LOCKDOWN_SERVICE_NAME : LOCKDOWN_SERVICE_NAME;
             }
-            else {
-                if (useInsecureService) {
-                    ServiceNameUsed = RSD_INSECURE_SERVICE_NAME;
-                }
-                else {
-                    ServiceNameUsed = RSD_SERVICE_NAME;
-                }
-            }
-            return lockdown.StartLockdownService(ServiceNameUsed);
+            return useInsecureService ? RSD_INSECURE_SERVICE_NAME : RSD_SERVICE_NAME;
         }
 
         public override void Dispose()

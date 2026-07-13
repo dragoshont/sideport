@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Sideport.DeveloperApi.GrandSlam;
 
 /// <summary>
@@ -11,13 +13,25 @@ public sealed class GrandSlamException : Exception
     /// <summary>The Apple error code (<c>Status.ec</c>), if the server supplied one.</summary>
     public long? ErrorCode { get; }
 
-    public GrandSlamException(string message, long? errorCode = null) : base(message)
+    /// <summary>The HTTP response status, when Apple returned a non-success response.</summary>
+    public HttpStatusCode? StatusCode { get; }
+
+    public GrandSlamException(
+        string message,
+        long? errorCode = null,
+        HttpStatusCode? statusCode = null)
+        : base(message)
     {
         ErrorCode = errorCode;
+        StatusCode = statusCode;
     }
 
-    public GrandSlamException(string message, Exception innerException)
+    public GrandSlamException(
+        string message,
+        Exception innerException,
+        HttpStatusCode? statusCode = null)
         : base(message, innerException)
     {
+        StatusCode = statusCode;
     }
 }

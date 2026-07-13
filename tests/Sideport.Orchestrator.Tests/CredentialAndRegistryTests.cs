@@ -51,6 +51,51 @@ public class CredentialAndRegistryTests
     }
 
     [Fact]
+    public async Task FileAppRegistry_LegacyRecordWithoutLifecycle_RemainsActive()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "sideport-registry-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "apps.json");
+        await File.WriteAllTextAsync(path, """
+            [
+              {
+                "bundleId": "com.example.legacy",
+                "appleId": "me@example.com",
+                "teamId": "TEAM",
+                "deviceUdid": "UDID-1",
+                "inputIpaPath": "/legacy.ipa"
+              }
+            ]
+            """);
+
+        var registry = new FileAppRegistry(path);
+        AppRegistration app = Assert.Single(await registry.ListAsync());
+
+        Assert.Equal("active", app.Lifecycle);
+        Assert.False(app.IsPendingInstall);
+    }
+
+    [Fact]
+    public async Task FileAppRegistry_RebindAppleAuthority_UpdatesOnlyExactLineageAndPersists()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "sideport-registry-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "apps.json");
+        var registry = new FileAppRegistry(path);
+        await registry.UpsertAsync(new AppRegistration("app.one", "old@example.com", "TEAM1", "UDID-1", "/one.ipa"));
+        await registry.UpsertAsync(new AppRegistration("app.two", "old@example.com", "TEAM2", "UDID-2", "/two.ipa"));
+
+        int changed = await registry.RebindAppleAuthorityAsync("old@example.com", "TEAM1", "new@example.com", "TEAM3");
+
+        Assert.Equal(1, changed);
+        var restarted = new FileAppRegistry(path);
+        AppRegistration updated = (await restarted.FindAsync("UDID-1", "app.one"))!;
+        Assert.Equal("new@example.com", updated.AppleId);
+        Assert.Equal("TEAM3", updated.TeamId);
+        Assert.Equal("TEAM2", (await restarted.FindAsync("UDID-2", "app.two"))!.TeamId);
+    }
+
+    [Fact]
     public void RefreshState_IsDue_Logic()
     {
         var now = DateTimeOffset.UtcNow;

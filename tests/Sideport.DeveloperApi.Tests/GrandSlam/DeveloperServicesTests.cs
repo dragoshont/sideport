@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sideport.Core;
 using Sideport.DeveloperApi.DeveloperServices;
@@ -142,7 +143,7 @@ public class DeveloperServicesTests
         // METADATA only (no inline certContent <data>) — the shape seen live that
         // previously threw "plist key 'certContent' is not data". The portal must
         // fall back to GET services/v1/certificates for the DER. The fake models
-        // that real shape, so a SECOND certificates GET (after revoke's first)
+        // that real shape, so a SECOND certificates GET (after the safe inventory check)
         // proves the fallback fetch ran instead of reading an inline blob.
         (AppleDeveloperPortal portal, FakeDeveloperServicesHandler handler, _) = Build();
         using var keyPair = new DevelopmentKeyPair();
@@ -151,7 +152,7 @@ public class DeveloperServicesTests
             Session(), TeamId, keyPair.CreateCsrDer());
 
         int certListGets = handler.ServiceRequests.Count(r => r is ("GET", "certificates"));
-        Assert.Equal(2, certListGets); // 1 = revoke survey, 2 = post-submit DER fetch
+        Assert.Equal(2, certListGets); // 1 = safe inventory check, 2 = post-submit DER fetch
         // The DER fetched from the list assembles with the CSR key into a real p12.
         Assert.NotEmpty(keyPair.ExportPkcs12(cert.CertificateDer, "pw"));
     }
@@ -193,6 +194,38 @@ public class DeveloperServicesTests
             () => portal.EnsureProfileAsync(Session(), TeamId, BundleId));
 
         Assert.Equal(9401, ex.ResultCode);
+    }
+
+    [Fact]
+    public async Task PlistAction_Http429_PreservesHttpStatus()
+    {
+        var client = new DeveloperServicesClient(
+            new HttpClient(new FixedStatusHandler(HttpStatusCode.TooManyRequests)),
+            new StubAnisetteProvider(),
+            new GrandSlamClientOptions { DeviceId = "test" },
+            NullLogger<DeveloperServicesClient>.Instance);
+
+        DeveloperServicesException ex = await Assert.ThrowsAsync<DeveloperServicesException>(() =>
+            client.SendActionAsync("ios/listTeams.action", Session(), null, null));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
+        Assert.Equal(0, ex.ResultCode);
+    }
+
+    [Fact]
+    public async Task JsonService_Http503_PreservesHttpStatus()
+    {
+        var client = new DeveloperServicesClient(
+            new HttpClient(new FixedStatusHandler(HttpStatusCode.ServiceUnavailable)),
+            new StubAnisetteProvider(),
+            new GrandSlamClientOptions { DeviceId = "test" },
+            NullLogger<DeveloperServicesClient>.Instance);
+
+        DeveloperServicesException ex = await Assert.ThrowsAsync<DeveloperServicesException>(() =>
+            client.SendServicesRequestAsync("certificates", "GET", Session(), TeamId));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ex.StatusCode);
+        Assert.Equal(0, ex.ResultCode);
     }
 
     /// <summary>A handler that fails if hit — proves the dev-API path never calls GSA.</summary>

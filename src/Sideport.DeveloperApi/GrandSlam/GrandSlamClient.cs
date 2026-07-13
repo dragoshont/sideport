@@ -107,17 +107,12 @@ internal sealed class GrandSlamClient
         }
         catch (FormatException ex)
         {
-            // Surface enough to diagnose a wire/cipher mismatch without leaking
-            // the SPD contents: lengths + the (non-sensitive) plist framing bytes
-            // at both ends (head shows <?xml/<plist/garbage; tail shows </plist>
-            // vs trailing padding).
-            static string Hex(ReadOnlySpan<byte> b) => Convert.ToHexString(b);
-            int n = spdPlain.Length;
-            string head = Hex(spdPlain.AsSpan(0, Math.Min(24, n)));
-            string tail = n > 24 ? Hex(spdPlain.AsSpan(n - 24)) : "";
+            // The decrypted SPD contains Apple identity and token material. Keep
+            // diagnostics to framing-independent lengths; never include plaintext
+            // byte fragments in an exception that may be logged or returned.
             throw new GrandSlamException(
                 $"SPD did not decrypt to a plist (cipher={spdCipher.Length}B " +
-                $"plain={n}B head={head} tail={tail})", ex);
+                $"plain={spdPlain.Length}B)", ex);
         }
 
         string adsid = PlistCodec.GetString(spd, "adsid");
@@ -170,7 +165,8 @@ internal sealed class GrandSlamClient
         byte[] body = await response.Content.ReadAsByteArrayAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new GrandSlamException(
-                $"2FA validation HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+                $"2FA validation HTTP {(int)response.StatusCode} {response.ReasonPhrase}",
+                statusCode: response.StatusCode);
 
         NSDictionary parsed = PlistCodec.ParseDictionary(body);
         ThrowOnError(parsed);
@@ -276,7 +272,8 @@ internal sealed class GrandSlamClient
         if (!response.IsSuccessStatusCode)
             throw new GrandSlamException(
                 $"GrandSlam HTTP {(int)response.StatusCode} {response.ReasonPhrase} " +
-                $"(content-type {response.Content.Headers.ContentType?.MediaType ?? "none"})");
+                $"(content-type {response.Content.Headers.ContentType?.MediaType ?? "none"})",
+                statusCode: response.StatusCode);
 
         NSDictionary parsed = PlistCodec.ParseDictionary(responseBody);
         return PlistCodec.GetDictionary(parsed, "Response");

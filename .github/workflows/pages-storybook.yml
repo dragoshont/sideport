@@ -29,6 +29,8 @@ jobs:
           cache: npm
           cache-dependency-path: src/Sideport.Admin/package-lock.json
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ci
       - run: npm run build-storybook
       - run: touch storybook-static/.nojekyll
       - uses: peaceiris/actions-gh-pages@v4

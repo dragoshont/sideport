@@ -58,6 +58,40 @@ public class NetimobiledeviceControllerTests
         Assert.Empty(await Build().ListDevicesAsync());
     }
 
+    [Fact]
+    public void DeviceInfo_FiveArgumentConstruction_DefaultsTrustToUnknown()
+    {
+        var device = new DeviceInfo("UDID-1", "Phone", "iPhone15,2", "17.0", DeviceConnection.Usb);
+
+        Assert.Equal("unknown", device.TrustState);
+        Assert.Null(device.TrustReason);
+        Assert.Null(device.LockdownCheckedAt);
+        Assert.False(device.UsableForInstall);
+    }
+
+    [Fact]
+    public async Task ListDevices_MapsPassiveTrustFieldsWithoutPairing()
+    {
+        DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z");
+        _backend.Devices.Add(new BackendDevice(
+            "UDID-1",
+            "Phone",
+            "iPhone15,2",
+            "17.0",
+            DeviceConnection.Usb,
+            "trusted",
+            "Lockdown session verified over USB.",
+            checkedAt,
+            UsableForInstall: true));
+
+        DeviceInfo device = Assert.Single(await Build().ListDevicesAsync());
+
+        Assert.Equal("trusted", device.TrustState);
+        Assert.Equal(checkedAt, device.LockdownCheckedAt);
+        Assert.True(device.UsableForInstall);
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
     // --- device connectivity self-test (DiagnoseAsync) --------------------
 
     [Fact]
@@ -89,7 +123,13 @@ public class NetimobiledeviceControllerTests
     public async Task Diagnose_UnpairedDevice_IsBlockedAtTrust()
     {
         _backend.DiagnoseProbes.Add(new BackendDeviceProbe(
-            "UDID-1", DeviceConnection.Wifi, LockdownOk: false, Name: null, LockdownError: "trust not accepted"));
+            "UDID-1",
+            DeviceConnection.Wifi,
+            LockdownOk: false,
+            Name: null,
+            LockdownError: "trust not accepted",
+            TrustState: "untrusted",
+            TrustReason: "No valid pairing record is available for this iPhone."));
 
         DeviceDiagnostics result = await Build().DiagnoseAsync();
 
@@ -111,6 +151,147 @@ public class NetimobiledeviceControllerTests
         Assert.Equal("ok", result.Status);
         Assert.All(result.Checks, c => Assert.Equal("ok", c.Status));
         Assert.Contains(result.Checks, c => c.Detail.Contains("Test iPhone"));
+    }
+
+    [Fact]
+    public async Task Diagnose_DoesNotRequestPairing()
+    {
+        _backend.DiagnoseProbes.Add(new BackendDeviceProbe(
+            "UDID-1",
+            DeviceConnection.Usb,
+            LockdownOk: false,
+            Name: "Phone",
+            LockdownError: null,
+            TrustState: "untrusted",
+            TrustReason: "No valid pairing record is available for this iPhone."));
+
+        await Build().DiagnoseAsync();
+
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
+    // --- passive trust + explicit USB pairing -----------------------------
+
+    [Fact]
+    public async Task ProbeTrust_AlreadyTrusted_ReturnsObservationWithoutPairing()
+    {
+        DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z");
+        _backend.TrustByUdid["UDID-1"] = new DeviceTrustProbe(
+            "UDID-1",
+            DeviceConnection.Usb,
+            "trusted",
+            "Lockdown session verified over USB.",
+            checkedAt,
+            UsableForInstall: true);
+
+        DeviceTrustProbe result = await Build().ProbeTrustAsync("UDID-1");
+
+        Assert.Equal("trusted", result.TrustState);
+        Assert.True(result.UsableForInstall);
+        Assert.Equal(1, _backend.ProbeTrustCalls);
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_UntrustedUsb_InvokesExplicitPairExactlyOnce()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "untrusted");
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1");
+
+        Assert.Equal("trusted", result.TrustState);
+        Assert.Equal(1, _backend.ProbeTrustCalls);
+        Assert.Equal(1, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_AlreadyTrustedUsb_SkipsPairRequest()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "trusted", usableForInstall: true);
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1");
+
+        Assert.Equal("trusted", result.TrustState);
+        Assert.Equal(1, _backend.ProbeTrustCalls);
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_WifiDevice_ReturnsUsbRequiredWithoutPairRequest()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Wifi, "untrusted");
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1");
+
+        Assert.Equal(DeviceConnection.Wifi, result.Connection);
+        Assert.Equal("error", result.TrustState);
+        Assert.Contains("USB", result.TrustReason!);
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_UserDenial_RemainsUntrustedAndReportsDenied()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "untrusted");
+        var progress = new CollectingProgress<DevicePairingProgress>();
+        _backend.PairHandler = (udid, sink, _) =>
+        {
+            sink?.Report(new DevicePairingProgress("denied", "Trust was declined on the iPhone."));
+            return Task.FromResult(new DevicePairingResult(
+                udid,
+                DeviceConnection.Usb,
+                "untrusted",
+                "Trust was declined on the iPhone.",
+                DateTimeOffset.UtcNow,
+                UsableForInstall: false));
+        };
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1", progress);
+
+        Assert.Equal("untrusted", result.TrustState);
+        Assert.Contains(progress.Values, value => value.State == "denied");
+        Assert.Equal(1, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_LockedDevice_MapsLockedTruthfully()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "untrusted");
+        _backend.PairHandler = (udid, sink, _) =>
+        {
+            sink?.Report(new DevicePairingProgress("locked", "Unlock the iPhone, then try again."));
+            return Task.FromResult(new DevicePairingResult(
+                udid,
+                DeviceConnection.Usb,
+                "locked",
+                "The iPhone is locked. Unlock it and try again.",
+                DateTimeOffset.UtcNow,
+                UsableForInstall: false));
+        };
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1");
+
+        Assert.Equal("locked", result.TrustState);
+        Assert.False(result.UsableForInstall);
+        Assert.Equal(1, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_CallerCancellation_PropagatesAndDoesNotRetry()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "untrusted");
+        _backend.PairHandler = async (_, _, ct) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            throw new InvalidOperationException("unreachable");
+        };
+        using var cts = new CancellationTokenSource();
+
+        Task<DevicePairingResult> pairing = Build().PairAsync("UDID-1", ct: cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pairing);
+        Assert.Equal(1, _backend.PairCalls);
     }
 
     // --- installed apps + expiry join -------------------------------------
@@ -243,6 +424,21 @@ public class NetimobiledeviceControllerTests
     }
 
     [Fact]
+    public async Task ListApps_FreshRead_BypassesAndReplacesCachedSnapshot()
+    {
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.one", "One", "1.0", true)];
+        NetimobiledeviceController controller = Build(installedAppsCacheTtl: TimeSpan.FromMinutes(5));
+
+        Assert.Equal("One", Assert.Single(await controller.ListInstalledAppsAsync("U")).Name);
+        _backend.AppsByUdid["U"] = [new BackendApp("com.example.two", "Two", "2.0", true)];
+
+        Assert.Equal("Two", Assert.Single(await controller.ListInstalledAppsFreshAsync("U")).Name);
+        Assert.Equal("Two", Assert.Single(await controller.ListInstalledAppsAsync("U")).Name);
+        Assert.Equal(2, _backend.ListInstalledAppsCalls["U"]);
+        Assert.Equal(2, _backend.ListProvisioningProfilesCalls["U"]);
+    }
+
+    [Fact]
     public async Task ListApps_AfterCacheTtl_ReloadsDeviceInventory()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-06-24T12:00:00Z"));
@@ -352,5 +548,29 @@ public class NetimobiledeviceControllerTests
         public override DateTimeOffset GetUtcNow() => _utcNow;
 
         public void Advance(TimeSpan value) => _utcNow = _utcNow.Add(value);
+    }
+
+    private void ScriptTrust(
+        string udid,
+        DeviceConnection connection,
+        string trustState,
+        bool usableForInstall = false)
+    {
+        _backend.TrustByUdid[udid] = new DeviceTrustProbe(
+            udid,
+            connection,
+            trustState,
+            trustState == "trusted"
+                ? $"Lockdown session verified over {connection}."
+                : "No valid pairing record is available for this iPhone.",
+            DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+            usableForInstall);
+    }
+
+    private sealed class CollectingProgress<T> : IProgress<T>
+    {
+        public List<T> Values { get; } = [];
+
+        public void Report(T value) => Values.Add(value);
     }
 }

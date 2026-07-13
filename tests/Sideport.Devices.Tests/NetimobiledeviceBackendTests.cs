@@ -1,4 +1,8 @@
 using System.Net;
+using Netimobiledevice.Exceptions;
+using Netimobiledevice.Lockdown;
+using Netimobiledevice.Lockdown.Pairing;
+using Sideport.Core;
 
 namespace Sideport.Devices.Tests;
 
@@ -36,5 +40,60 @@ public class NetimobiledeviceBackendTests
     {
         Assert.Null(NetimobiledeviceBackend.DecodeNetworkAddress([]));        // USB device / unset
         Assert.Null(NetimobiledeviceBackend.DecodeNetworkAddress([1, 2, 3])); // not 4 or 16
+    }
+
+    [Fact]
+    public void ClassifyTrustFailure_NotPaired_IsUntrustedWithoutRawError()
+    {
+        (string state, string reason) =
+            NetimobiledeviceBackend.ClassifyTrustFailure(new NotPairedException());
+
+        Assert.Equal("untrusted", state);
+        Assert.Contains("pairing record", reason);
+    }
+
+    [Fact]
+    public void ClassifyTrustFailure_PasswordProtected_IsLocked()
+    {
+        (string state, string reason) = NetimobiledeviceBackend.ClassifyTrustFailure(
+            new LockdownException(LockdownError.PasswordProtected));
+
+        Assert.Equal("locked", state);
+        Assert.Contains("Unlock", reason);
+    }
+
+    [Fact]
+    public void ClassifyTrustFailure_UnknownFailure_IsErrorWithoutExceptionMessage()
+    {
+        const string sensitive = "00008110-0011223344556677";
+        (string state, string reason) = NetimobiledeviceBackend.ClassifyTrustFailure(
+            new InvalidOperationException($"failed for {sensitive}"));
+
+        Assert.Equal("error", state);
+        Assert.DoesNotContain(sensitive, reason);
+    }
+
+    [Theory]
+    [InlineData(PairingState.PairingDialogResponsePending, "waiting-for-trust")]
+    [InlineData(PairingState.Paired, "paired")]
+    [InlineData(PairingState.UserDeniedPairing, "denied")]
+    [InlineData(PairingState.PasswordProtected, "locked")]
+    public void MapPairingProgress_UsesPublicStateVocabulary(PairingState input, string expected)
+    {
+        Assert.Equal(expected, NetimobiledeviceBackend.MapPairingProgress(input).State);
+    }
+
+    [Fact]
+    public void WifiPairingNotSupported_IsErrorAndNeverClaimsInstallUsability()
+    {
+        const string udid = "00008110-0011223344556677";
+        DevicePairingResult result = NetimobiledeviceBackend.WifiPairingNotSupported(
+            udid,
+            DateTimeOffset.Parse("2026-07-11T12:00:00Z"));
+
+        Assert.Equal(DeviceConnection.Wifi, result.Connection);
+        Assert.Equal("error", result.TrustState);
+        Assert.False(result.UsableForInstall);
+        Assert.DoesNotContain(udid, result.TrustReason!);
     }
 }

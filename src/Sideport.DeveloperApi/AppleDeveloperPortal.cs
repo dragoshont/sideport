@@ -83,14 +83,22 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
     public async Task<SigningCertificate> EnsureCertificateAsync(
         AppleSession session, string teamId, byte[] csrDer, CancellationToken ct = default)
     {
-        // Free-tier discipline (one active development certificate): Apple rejects
-        // a new CSR with resultCode 7460 ("you already have a current iOS
-        // Development certificate or a pending certificate request") while any dev
-        // cert exists. The caller only reaches here when it has no usable persisted
-        // identity, so the existing cert is unusable to us (we lack its private
-        // key) — revoke it first, then mint. This mirrors the established
-        // revoke-then-add behaviour of the reference signer.
-        await RevokeAllDevelopmentCertificatesAsync(session, teamId, ct);
+        // Sideport can reuse only a certificate whose matching private key is in
+        // its persisted identity store. Finding some other development
+        // certificate here is not permission to revoke it: it may belong to Xcode,
+        // AltStore, or another Sideport deployment. Replacement needs a separate,
+        // exact-impact confirmation flow, so this low-level ensure path fails
+        // closed and leaves Apple's inventory untouched.
+        DevelopmentCertificateInventory inventory =
+            await ReadDevelopmentCertificateInventoryAsync(session, teamId, ct);
+        if (inventory.Count > 0)
+        {
+            SigningCertificate? recoverable = FindCertificateForCsr(inventory.Downloadable, csrDer);
+            if (recoverable is not null)
+                return recoverable;
+
+            throw new SigningCertificateReplacementRequiredException(inventory.Count);
+        }
 
         // Apple's endpoint takes the CSR PEM-encoded; the caller keeps the
         // matching private key and assembles the PKCS#12 from the returned cert.
@@ -128,13 +136,39 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
             new DateTimeOffset(certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero));
     }
 
+    public async Task<IReadOnlyList<AppleDevelopmentCertificate>> ListDevelopmentCertificatesAsync(
+        AppleSession session,
+        string teamId,
+        CancellationToken ct = default)
+    {
+        DevelopmentCertificateInventory inventory =
+            await ReadDevelopmentCertificateInventoryAsync(session, teamId, ct);
+        return inventory.Certificates;
+    }
+
+    public async Task RevokeDevelopmentCertificateAsync(
+        AppleSession session,
+        string teamId,
+        string certificateId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(certificateId);
+        await _dev.SendServicesRequestAsync(
+            $"certificates/{Uri.EscapeDataString(certificateId)}",
+            "DELETE",
+            session,
+            teamId,
+            query: null,
+            ct).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Fetch the DER of the just-issued iOS development certificate from the JSON
     /// services list (<c>GET services/v1/certificates</c>). Apple's
     /// submitDevelopmentCSR response can carry only certificate metadata, so the
     /// content is read from <c>data[].attributes.certificateContent</c> (base64),
     /// matched by serial number when known, else the sole development certificate
-    /// (revoke-then-mint leaves exactly one on the team).
+    /// (a fresh mint leaves exactly one content-bearing certificate on the team).
     /// </summary>
     private async Task<byte[]> FetchDevelopmentCertificateDerAsync(
         AppleSession session, string teamId, string? serialNumber, CancellationToken ct)
@@ -153,7 +187,7 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
         }
 
         // Prefer an exact serial match; otherwise keep the sole content-bearing
-        // entry (after revoke-then-mint there is exactly one).
+        // entry created by this fresh mint.
         string? chosen = null;
         foreach (JsonElement cert in data.EnumerateArray())
         {
@@ -182,13 +216,7 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
         return Convert.FromBase64String(chosen);
     }
 
-    /// <summary>
-    /// Revoke every existing iOS development certificate on the team so a fresh
-    /// CSR is accepted (the free tier allows only one). Safe to call when none
-    /// exist (it simply revokes nothing). Uses the JSON services endpoints:
-    /// <c>GET services/v1/certificates</c> then <c>DELETE …/certificates/{id}</c>.
-    /// </summary>
-    private async Task RevokeAllDevelopmentCertificatesAsync(
+    private async Task<DevelopmentCertificateInventory> ReadDevelopmentCertificateInventoryAsync(
         AppleSession session, string teamId, CancellationToken ct)
     {
         JsonElement list = await _dev.SendServicesRequestAsync(
@@ -199,20 +227,90 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
             !list.TryGetProperty("data", out JsonElement data) ||
             data.ValueKind != JsonValueKind.Array)
         {
-            return;
+            throw new DeveloperServicesException(
+                "Apple returned an invalid development-certificate inventory");
         }
 
-        foreach (JsonElement cert in data.EnumerateArray())
+        var certificates = new List<AppleDevelopmentCertificate>();
+        var downloadable = new List<SigningCertificate>();
+        foreach (JsonElement entry in data.EnumerateArray())
         {
-            if (!cert.TryGetProperty("id", out JsonElement idNode))
-                continue;
-            string? id = idNode.GetString();
-            if (string.IsNullOrEmpty(id))
-                continue;
+            if (entry.ValueKind != JsonValueKind.Object ||
+                !entry.TryGetProperty("id", out JsonElement idNode) ||
+                idNode.GetString() is not { Length: > 0 } id ||
+                !entry.TryGetProperty("attributes", out JsonElement attributes) ||
+                attributes.ValueKind != JsonValueKind.Object)
+                throw new DeveloperServicesException(
+                    "Apple returned an invalid development-certificate inventory entry");
 
-            await _dev.SendServicesRequestAsync(
-                $"certificates/{id}", "DELETE", session, teamId, query: null, ct);
+            string serial = attributes.TryGetProperty("serialNumber", out JsonElement serialNode)
+                ? serialNode.GetString() ?? string.Empty
+                : string.Empty;
+            DateTimeOffset? expiresAt = null;
+            if (attributes.TryGetProperty("expirationDate", out JsonElement expiryNode) &&
+                expiryNode.GetString() is { Length: > 0 } expiryText &&
+                DateTimeOffset.TryParse(expiryText, out DateTimeOffset parsedExpiry))
+                expiresAt = parsedExpiry.ToUniversalTime();
+
+            if (attributes.TryGetProperty("certificateContent", out JsonElement content) &&
+                content.GetString() is { Length: > 0 } encoded)
+            {
+                try
+                {
+                    byte[] certificateDer = Convert.FromBase64String(encoded);
+                    using X509Certificate2 certificate =
+                        X509CertificateLoader.LoadCertificate(certificateDer);
+                    serial = certificate.SerialNumber;
+                    expiresAt = new DateTimeOffset(certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero);
+                    downloadable.Add(new SigningCertificate(
+                        serial,
+                        certificateDer,
+                        expiresAt.Value));
+                }
+                catch (Exception error) when (error is FormatException or CryptographicException)
+                {
+                    throw new DeveloperServicesException(
+                        "Apple returned an invalid downloadable development certificate", error);
+                }
+            }
+
+            certificates.Add(new AppleDevelopmentCertificate(id, serial, expiresAt));
         }
+
+        return new DevelopmentCertificateInventory(certificates, downloadable);
+    }
+
+    private static SigningCertificate? FindCertificateForCsr(
+        IReadOnlyList<SigningCertificate> certificates,
+        byte[] csrDer)
+    {
+        string csrPem = PemEncoding.WriteString("CERTIFICATE REQUEST", csrDer);
+        CertificateRequest request = CertificateRequest.LoadSigningRequestPem(
+            csrPem,
+            HashAlgorithmName.SHA256,
+            signerSignaturePadding: RSASignaturePadding.Pkcs1);
+        byte[] requestedPublicKey = request.PublicKey.ExportSubjectPublicKeyInfo();
+
+        foreach (SigningCertificate candidate in certificates)
+        {
+            using X509Certificate2 certificate =
+                X509CertificateLoader.LoadCertificate(candidate.CertificateDer);
+            byte[] candidatePublicKey = certificate.PublicKey.ExportSubjectPublicKeyInfo();
+            if (requestedPublicKey.Length == candidatePublicKey.Length &&
+                CryptographicOperations.FixedTimeEquals(requestedPublicKey, candidatePublicKey))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private sealed record DevelopmentCertificateInventory(
+        IReadOnlyList<AppleDevelopmentCertificate> Certificates,
+        IReadOnlyList<SigningCertificate> Downloadable)
+    {
+        public int Count => Certificates.Count;
     }
 
     public async Task<ProvisioningProfile> EnsureProfileAsync(
@@ -277,4 +375,3 @@ public sealed class AppleDeveloperPortal : IAppleDeveloperPortal
         return string.IsNullOrEmpty(cleaned) ? "Sideport App" : $"Sideport {cleaned}";
     }
 }
-

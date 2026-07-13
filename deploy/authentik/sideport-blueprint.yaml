@@ -1,0 +1,62 @@
+version: 1
+metadata:
+  name: Sideport - Invitation passkey enrollment
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - id: sideport-enrollment-flow
+    model: authentik_flows.flow
+    identifiers: { slug: sideport-enrollment }
+    attrs:
+      name: Sideport enrollment
+      title: Join Sideport
+      designation: enrollment
+      authentication: require_unauthenticated
+  - id: sideport-invitation-stage
+    model: authentik_stages_invitation.invitationstage
+    identifiers: { name: sideport-invitation-only }
+    attrs: { continue_flow_without_invitation: false }
+  - id: sideport-username
+    model: authentik_stages_prompt.prompt
+    identifiers: { name: sideport-enrollment-username }
+    attrs: { field_key: username, label: Email or username, type: username, required: true, placeholder: name@example.com, order: 0 }
+  - id: sideport-name
+    model: authentik_stages_prompt.prompt
+    identifiers: { name: sideport-enrollment-name }
+    attrs: { field_key: name, label: Name, type: text, required: true, placeholder: Your name, order: 1 }
+  - id: sideport-email
+    model: authentik_stages_prompt.prompt
+    identifiers: { name: sideport-enrollment-email }
+    attrs: { field_key: email, label: Email, type: email, required: true, placeholder: name@example.com, order: 2 }
+  - id: sideport-details
+    model: authentik_stages_prompt.promptstage
+    identifiers: { name: sideport-enrollment-details }
+    attrs:
+      fields: [!KeyOf sideport-username, !KeyOf sideport-name, !KeyOf sideport-email]
+  - id: sideport-user-write
+    model: authentik_stages_user_write.userwritestage
+    identifiers: { name: sideport-enrollment-user-write }
+    attrs: { user_creation_mode: always_create, user_type: external, user_path_template: users/external/sideport }
+  - id: sideport-webauthn
+    model: authentik_stages_authenticator_webauthn.authenticatorwebauthnstage
+    identifiers: { name: sideport-passkey-setup }
+    attrs:
+      friendly_name: Sideport passkey
+      user_verification: required
+      resident_key_requirement: required
+      prevent_duplicate_devices: false
+      hints: [client-device, hybrid, security-key]
+  - id: sideport-user-login
+    model: authentik_stages_user_login.userloginstage
+    identifiers: { name: sideport-enrollment-login }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf sideport-enrollment-flow, stage: !KeyOf sideport-invitation-stage, order: 5 }
+    attrs: { evaluate_on_plan: true, re_evaluate_policies: true }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf sideport-enrollment-flow, stage: !KeyOf sideport-details, order: 10 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf sideport-enrollment-flow, stage: !KeyOf sideport-user-write, order: 20 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf sideport-enrollment-flow, stage: !KeyOf sideport-webauthn, order: 30 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf sideport-enrollment-flow, stage: !KeyOf sideport-user-login, order: 100 }
