@@ -1755,6 +1755,18 @@ public class ApiSmokeTests
     }
 
     [Fact]
+    public async Task CatalogApps_WithoutConfiguredSeed_IsEmpty()
+    {
+        using var factory = Factory(apiToken: "s3cr3t-token");
+        using HttpClient client = HttpsTokenClient(factory);
+
+        var catalog = await client.GetFromJsonAsync<IReadOnlyList<CatalogAppDto>>("/api/catalog/apps");
+
+        Assert.NotNull(catalog);
+        Assert.Empty(catalog!);
+    }
+
+    [Fact]
     public async Task CatalogApps_WithSeedIpa_ReturnsInspectedMetadata()
     {
         string dir = TestDir();

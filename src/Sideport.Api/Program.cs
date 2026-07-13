@@ -64,9 +64,8 @@ if (TimeSpan.TryParse(
 // renewed well before the 7-day profile expiry, keeping a fresh safety margin.
 if (TimeSpan.TryParse(builder.Configuration["Sideport:Scheduler:ResignInterval"], out TimeSpan resignInterval))
     orchestratorOptions.ResignInterval = resignInterval;
-var certClockSeedPath = builder.Configuration["Sideport:Catalog:SeedCertClockPath"]
-    ?? Environment.GetEnvironmentVariable("SIDEPORT_CERT_CLOCK_IPA")
-    ?? "/var/lib/altserver/ipa/CertCountdown.ipa";
+string? certClockSeedPath = builder.Configuration["Sideport:Catalog:SeedCertClockPath"]
+    ?? Environment.GetEnvironmentVariable("SIDEPORT_CERT_CLOCK_IPA");
 long catalogMaxUploadBytes = builder.Configuration.GetValue<long?>("Sideport:Catalog:MaxUploadBytes")
     ?? 268_435_456;
 AppCatalogImportRoot[] catalogImportRoots = builder.Configuration
@@ -294,16 +293,19 @@ else
 }
 
 builder.Services.AddRefreshOrchestrator(orchestratorOptions, runScheduler: false);
-builder.Services.AddSingleton(new AppCatalogOptions(
-    Path.Combine(stateDirectory, "catalog.json"),
-    Path.Combine(stateDirectory, "imports"),
-    catalogMaxUploadBytes,
-    [new AppCatalogSeed(
+IReadOnlyList<AppCatalogSeed> catalogSeeds = string.IsNullOrWhiteSpace(certClockSeedPath)
+    ? []
+    : [new AppCatalogSeed(
         "cert-clock",
         "Cert Clock",
         certClockSeedPath,
         "com.example.certcountdown",
-        "First signing and expiry-countdown test app.")],
+        "First signing and expiry-countdown test app.")];
+builder.Services.AddSingleton(new AppCatalogOptions(
+    Path.Combine(stateDirectory, "catalog.json"),
+    Path.Combine(stateDirectory, "imports"),
+    catalogMaxUploadBytes,
+    catalogSeeds,
     catalogImportRoots));
 builder.Services.AddSingleton<IAppCatalog, FileAppCatalog>();
 builder.Services.AddSingleton(githubCatalogOptions);
