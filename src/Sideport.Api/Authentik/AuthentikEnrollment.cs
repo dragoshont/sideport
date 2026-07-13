@@ -62,6 +62,7 @@ internal sealed class DisabledIdentityEnrollmentAdapter : IIdentityEnrollmentAda
 internal sealed class AuthentikEnrollmentAdapter(
     HttpClient http,
     AuthentikEnrollmentOptions options,
+    ILogger<AuthentikEnrollmentAdapter> logger,
     TimeProvider? timeProvider = null) : IIdentityEnrollmentAdapter
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -116,7 +117,14 @@ internal sealed class AuthentikEnrollmentAdapter(
 
             using HttpResponseMessage response = await http.SendAsync(message, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
+            {
+                string detail = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                logger.LogWarning(
+                    "Identity enrollment provider rejected an invitation with HTTP {StatusCode}: {Detail}",
+                    (int)response.StatusCode,
+                    detail.Length <= 512 ? detail : detail[..512]);
                 throw Unavailable();
+            }
             AuthentikInvitationCreated? created = await response.Content
                 .ReadFromJsonAsync<AuthentikInvitationCreated>(cancellationToken: ct)
                 .ConfigureAwait(false);

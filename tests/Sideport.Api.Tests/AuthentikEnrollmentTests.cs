@@ -50,6 +50,7 @@ public sealed class AuthentikEnrollmentTests
                 "sideport-enrollment",
                 Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
                 TimeSpan.FromMinutes(15)),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthentikEnrollmentAdapter>.Instance,
             time);
 
         IdentityEnrollmentResult result = await adapter.CreateAsync(new(
@@ -85,7 +86,8 @@ public sealed class AuthentikEnrollmentTests
                 "server-only-token",
                 "sideport-enrollment",
                 Guid.NewGuid(),
-                TimeSpan.FromMinutes(15)));
+                TimeSpan.FromMinutes(15)),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthentikEnrollmentAdapter>.Instance);
 
         AuthentikEnrollmentException error = await Assert.ThrowsAsync<AuthentikEnrollmentException>(() =>
             adapter.CreateAsync(new(
@@ -127,6 +129,7 @@ public sealed class AuthentikEnrollmentTests
                 "sideport-enrollment",
                 flow,
                 TimeSpan.FromMinutes(15)),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthentikEnrollmentAdapter>.Instance,
             new FixedTimeProvider(DateTimeOffset.Parse("2026-07-13T00:30:00Z")));
 
         IdentityEnrollmentResult result = await adapter.CreateAsync(new(
