@@ -1,7 +1,7 @@
 {
   "schema": "architrave.run.v1",
   "runId": "bootstrap-root-redirect-20260713",
-  "status": "release-in-progress",
+  "status": "complete",
   "startedAt": "2026-07-13T20:10:00Z",
   "artifacts": {
     "intake": ".architrave/runs/bootstrap-root-redirect-20260713/intake.md",
@@ -15,6 +15,6 @@
   },
   "phases": [
     {"phase": 1, "name": "Root bootstrap redirect", "status": "completed", "result": "deterministic and semantic PASS"},
-    {"phase": 2, "name": "Release and production verification", "status": "in-progress", "result": "pending"}
+    {"phase": 2, "name": "Release and production verification", "status": "completed", "result": "v0.2.5 healthy; production root redirect verified"}
   ]
 }
