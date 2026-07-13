@@ -67,6 +67,7 @@ public sealed class AuthentikEnrollmentTests
         Assert.DoesNotContain(token, body, StringComparison.Ordinal);
         using JsonDocument parsed = JsonDocument.Parse(body!);
         Assert.True(parsed.RootElement.GetProperty("single_use").GetBoolean());
+        Assert.Equal("2026-07-13T00:45:00Z", parsed.RootElement.GetProperty("expires").GetString());
         Assert.Equal("mara@example.test", parsed.RootElement.GetProperty("fixed_data").GetProperty("email").GetString());
         Assert.Equal("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", parsed.RootElement.GetProperty("flow").GetString());
     }
