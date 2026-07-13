@@ -98,6 +98,13 @@ const interactiveOnboardingStatus: AdminDataStatus = {
   onboarding: { firstRunComplete: false, schedulerEnabled: false, steps: [], setupState: 'in-progress', completionReceipt: null, workflow: { schemaVersion: 2, setupState: 'in-progress', readyNow: false, completedAt: null, verifiedOperationId: null, nextAction: { stepId: 'app', action: 'choose-app', label: 'Choose app' }, steps: workflowSteps('device') } },
 }
 
+const deviceOnboardingStatus: AdminDataStatus = {
+  ...demoStatus,
+  baseUrl: 'storybook://device-onboarding',
+  canMutate: true,
+  onboarding: { firstRunComplete: false, schedulerEnabled: false, steps: [], setupState: 'in-progress', completionReceipt: null, workflow: { schemaVersion: 2, setupState: 'in-progress', readyNow: false, completedAt: null, verifiedOperationId: null, nextAction: { stepId: 'device', action: 'start-enrollment', label: 'Add iPhone' }, steps: workflowSteps('apple-signer') } },
+}
+
 const completedOnboardingStatus: AdminDataStatus = {
   ...demoStatus,
   baseUrl: 'storybook://completed-onboarding',
@@ -268,6 +275,28 @@ const readyForAppOnboardingData: SideportReadModel = {
     selectedTeamId: 'DEMO123456',
     message: 'Apple accepted the account and returned one Personal Team.',
     teams: [{ teamId: 'DEMO123456', name: 'Example Personal Team', type: 'Personal Team' }],
+  },
+}
+
+const readyForDeviceOnboardingData: SideportReadModel = {
+  ...readyForAppOnboardingData,
+  devices: [],
+  system: {
+    ...readyForAppOnboardingData.system,
+    operational: false,
+    checks: [
+      ...readyForAppOnboardingData.system.checks.filter((check) => check.id !== 'device-transport'),
+      {
+        id: 'device-transport',
+        status: 'fail',
+        source: 'demo',
+        checkedAt: '2026-07-14T01:20:00Z',
+        scope: 'iphone',
+        affectedResources: ['usbmux-transport'],
+        reason: 'Sideport cannot reach the iPhone transport.',
+        nextAction: 'Connect the iPhone over USB.',
+      },
+    ],
   },
 }
 
@@ -456,6 +485,22 @@ export const FirstRunOnboarding: Story = {
     await expect(canvas.getByRole('heading', { name: 'Connect Apple' })).toBeVisible()
     await expect(canvas.getAllByRole('main')).toHaveLength(1)
     await expect(canvas.getByText('1 of 6 complete')).toBeVisible()
+  },
+}
+export const FirstRunConnectIPhoneActionable: Story = {
+  name: 'First Run - missing iPhone is actionable and automatic',
+  args: { data: readyForDeviceOnboardingData, apiStatus: deviceOnboardingStatus, initialRoute: 'home' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const panel = within(canvas.getByTestId('runtime-onboarding-panel-device'))
+    await expect(panel.getByRole('heading', { name: 'Connect iPhone' })).toBeVisible()
+    await expect(panel.getByText('Connect the iPhone now')).toBeVisible()
+    await expect(panel.getByText('Use a data-capable cable and plug the iPhone directly into the computer running Sideport.')).toBeVisible()
+    await expect(panel.getByText('When asked, tap Trust This Computer and enter the iPhone passcode.')).toBeVisible()
+    await expect(panel.getByText(/advance automatically/)).toBeVisible()
+    await expect(panel.getByRole('button', { name: 'Start connecting' })).toBeEnabled()
+    await expect(panel.queryByRole('button', { name: /Pair|I tapped Trust|Add to Sideport/ })).not.toBeInTheDocument()
+    await expect(canvas.getByText('2 of 6 complete')).toBeVisible()
   },
 }
 export const LiveOnboarding: Story = {

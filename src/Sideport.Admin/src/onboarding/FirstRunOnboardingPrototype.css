@@ -1751,6 +1751,12 @@
   background: #f8fafc;
 }
 
+.spo-iphone-guide h4 {
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+}
+
 .spo-iphone-guide ol {
   margin: 0;
   padding-left: 20px;

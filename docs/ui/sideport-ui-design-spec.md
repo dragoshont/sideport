@@ -129,9 +129,12 @@ Truth model:
 Flow steps:
 
 1. **Server:** check mutation protection, readable and writable durable state,
-   writable work storage, provisioned anisette, executable signer, operation
-   storage, and supported device transport. Show deployment-owned remedies but
-   do not imply the UI applied them.
+   writable work storage, provisioned anisette, executable signer, and operation
+   storage. Record device-transport health for technical details, but do not
+   block this step merely because no iPhone is connected and the host starts
+   usbmuxd on demand; cable and Trust guidance belongs to the iPhone step. Show
+   deployment-owned remedies for genuine server failures but do not imply the UI
+   applied them.
 2. **Apple signer:** if the deployment has no credential, collect the Apple
    Account email and password directly in this step and submit them once to the
    authenticated Sideport server over HTTPS or explicitly enabled loopback.

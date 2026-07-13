@@ -66,6 +66,79 @@ public sealed class OnboardingWorkflowTests
     }
 
     [Fact]
+    public void Build_DefersDeviceTransportFailureToTheIPhoneStep()
+    {
+        var transportOnlyFailure = new SystemStatusDto(
+            Operational: false,
+            Now,
+            [
+                PassingSystemCheck("mutation-protection"),
+                PassingSystemCheck("state-readable"),
+                PassingSystemCheck("state-writable"),
+                PassingSystemCheck("work-writable"),
+                PassingSystemCheck("anisette-headers"),
+                PassingSystemCheck("signer-executable"),
+                new SystemStatusCheckDto(
+                    "device-transport",
+                    "fail",
+                    "live",
+                    Now,
+                    "iphone",
+                    ["usbmux-transport"],
+                    "Sideport cannot reach the iPhone transport.",
+                    "Connect the iPhone over USB."),
+                PassingSystemCheck("operation-store"),
+            ]);
+
+        OnboardingWorkflowDto workflow = OnboardingWorkflowBuilder.Build(Context(
+            system: transportOnlyFailure,
+            devices: [],
+            acceptedDeviceCount: 0));
+
+        Assert.Equal("complete", Step(workflow, "server").State);
+        Assert.Contains("Connect iPhone", Step(workflow, "server").Reason, StringComparison.Ordinal);
+        Assert.Equal("action-required", Step(workflow, "device").State);
+        Assert.Equal("start-enrollment", Step(workflow, "device").NextAction?.Action);
+        Assert.Equal("device", workflow.NextAction?.StepId);
+        Assert.False(workflow.ReadyNow);
+    }
+
+    [Fact]
+    public void Build_KeepsNonDeviceSystemFailureBlocking()
+    {
+        var storageFailure = new SystemStatusDto(
+            Operational: false,
+            Now,
+            [
+                new SystemStatusCheckDto(
+                    "state-writable",
+                    "fail",
+                    "live",
+                    Now,
+                    "storage",
+                    ["sideport-state"],
+                    "Sideport cannot save setup state.",
+                    "Repair the Sideport state volume."),
+                new SystemStatusCheckDto(
+                    "device-transport",
+                    "fail",
+                    "live",
+                    Now,
+                    "iphone",
+                    ["usbmux-transport"],
+                    "Sideport cannot reach the iPhone transport.",
+                    "Connect the iPhone over USB."),
+            ]);
+
+        OnboardingWorkflowDto workflow = OnboardingWorkflowBuilder.Build(Context(system: storageFailure));
+
+        Assert.Equal("blocked", Step(workflow, "server").State);
+        Assert.Equal("Sideport cannot save setup state.", Step(workflow, "server").Reason);
+        Assert.Equal("retry-checks", Step(workflow, "server").NextAction?.Action);
+        Assert.Equal("server", workflow.NextAction?.StepId);
+    }
+
+    [Fact]
     public void Build_UsesReceiptAsTheOnlyReadyAndHistoricalCompletionEvidence()
     {
         OnboardingCompletionReceipt receipt = Receipt("op_verified");
@@ -282,6 +355,17 @@ public sealed class OnboardingWorkflowTests
             scheduler ?? Scheduler(),
             Now,
             signingIdentity ?? new SigningIdentityInspection("reusable", Now.AddDays(30), "TEST"));
+
+    private static SystemStatusCheckDto PassingSystemCheck(string id) =>
+        new(
+            id,
+            "pass",
+            "live",
+            Now,
+            "system",
+            [id],
+            $"{id} is ready.",
+            NextAction: null);
 
     private static PersonalAppleStatusDto HealthyApple() =>
         new(
