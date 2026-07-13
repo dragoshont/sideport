@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Sideport.Api.Authentik;
@@ -103,19 +104,22 @@ internal sealed class AuthentikEnrollmentAdapter(
                 fixedData["email"] = request.ContactEmail;
                 fixedData["username"] = request.ContactEmail;
             }
-            var payload = new Dictionary<string, object?>
+            var fixedDataJson = new JsonObject();
+            foreach ((string key, object? value) in fixedData)
+                fixedDataJson[key] = JsonValue.Create(value as string);
+            var payload = new JsonObject
             {
                 ["name"] = name,
                 ["expires"] = expiresAt.UtcDateTime.ToString(
                     "yyyy-MM-dd'T'HH:mm:ss'Z'",
                     System.Globalization.CultureInfo.InvariantCulture),
-                ["fixed_data"] = fixedData,
+                ["fixed_data"] = fixedDataJson,
                 ["single_use"] = true,
-                ["flow"] = options.EnrollmentFlowId!.Value,
+                ["flow"] = options.EnrollmentFlowId!.Value.ToString("D"),
             };
 
             using var message = Request(HttpMethod.Post, "/api/v3/stages/invitation/invitations/");
-            message.Content = JsonContent.Create(payload);
+            message.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
 
             using HttpResponseMessage response = await http.SendAsync(message, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
