@@ -28,6 +28,7 @@ const LIVE_STAGES = [
 
 const SESSION_EVIDENCE_VERSION = 1
 const SESSION_EVIDENCE_PREFIX = 'sideport.onboarding.resume.v1:'
+const INCOMPLETE_SETUP_REFRESH_MS = 5_000
 const ACTIVE_OPERATION_STATUSES = new Set(['queued', 'waiting', 'running'])
 const FINALIZATION_STAGE_IDS = new Set(['activate-registration', 'enable-scheduler', 'compute-next-evaluation', 'write-completion-receipt'])
 
@@ -154,6 +155,41 @@ function StepStatus({ state }: { state: LiveStepState }) {
   return <span className={`spo-workflow-status ${state}`}>{stateLabel(state)}</span>
 }
 
+function ActionSteps({ title, steps }: { title: string; steps: string[] }) {
+  return <div className="spo-iphone-guide"><h4>{title}</h4><ol>{steps.map((step) => <li key={step}>{step}</li>)}</ol></div>
+}
+
+function serverRepairSteps(checkId: string | undefined): { title: string; steps: string[] } {
+  if (checkId === 'mutation-protection') return {
+    title: 'Protect this Sideport before continuing',
+    steps: ['Sign in as the Sideport Owner.', 'If sign-in is not configured, ask the person who installed Sideport to enable OIDC or the API bearer token.', 'Return here; Sideport will check again automatically.'],
+  }
+  if (checkId === 'state-readable' || checkId === 'state-writable') return {
+    title: 'Restore Sideport’s saved-data folder',
+    steps: ['Do not reset or delete the existing Sideport data.', 'Ask the installer to make the Sideport state volume readable, writable, and persistent.', 'Return here after the container is healthy; this page will advance automatically.'],
+  }
+  if (checkId === 'work-writable') return {
+    title: 'Restore Sideport’s app workspace',
+    steps: ['Ask the installer to make the Sideport work volume writable.', 'Restart the Sideport container after correcting the mount.', 'Leave this page open; Sideport will detect the repair.'],
+  }
+  if (checkId === 'anisette-headers') return {
+    title: 'Reconnect the Apple service helper',
+    steps: ['Restart the Sideport and anisette containers.', 'Wait for both containers to report healthy.', 'Leave this page open; Sideport will check again automatically.'],
+  }
+  if (checkId === 'signer-executable') return {
+    title: 'Restore the app-signing helper',
+    steps: ['Ask the installer to restore the supported Sideport signer binary.', 'Confirm it is executable inside the Sideport container.', 'Restart Sideport and return to this page.'],
+  }
+  if (checkId === 'operation-store') return {
+    title: 'Restore Sideport’s activity store',
+    steps: ['Do not delete the operation history file.', 'Ask the installer to repair or restore the Sideport state volume.', 'Restart Sideport; this wizard will resume from saved evidence.'],
+  }
+  return {
+    title: 'Try the safe recovery steps',
+    steps: ['Keep this page open and press Check again once.', 'If the message remains, restart the Sideport container.', 'Open technical details and share the failed check with the person who installed Sideport.'],
+  }
+}
+
 function AppChoice({ app, checked, disabled = false, onSelect }: { app: CatalogAppSummary; checked: boolean; disabled?: boolean; onSelect: () => void }) {
   const source = app.artifactSources?.[0]
   return (
@@ -247,6 +283,19 @@ export function RuntimeFirstRunOnboarding({
   const previousWorkflowRef = useRef<string | null>(workflow ? JSON.stringify(workflow.steps.map((step) => [step.id, step.state, step.activeOperationId])) : null)
   const autoPreparedTargetRef = useRef('')
   const chimedReceiptRef = useRef<string | null>(null)
+  const refreshRef = useRef(onRefresh)
+
+  useEffect(() => {
+    refreshRef.current = onRefresh
+  }, [onRefresh])
+
+  useEffect(() => {
+    if (setupComplete || apiStatus.mode === 'demo') return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshRef.current()
+    }, INCOMPLETE_SETUP_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [apiStatus.mode, setupComplete])
 
   useEffect(() => {
     if (!setupComplete || !completionReceipt?.verifiedOperationId) return
@@ -342,12 +391,15 @@ export function RuntimeFirstRunOnboarding({
   if (activeStage === 'server') {
     const ready = stepState('server') === 'complete'
     const serverStep = workflow?.steps.find((step) => step.id === 'server')
+    const blockingServerCheck = data.system.checks.find((check) => check.status === 'fail' && check.id !== 'device-transport')
+    const repair = serverRepairSteps(blockingServerCheck?.id)
     primaryLabel = ready ? 'Connect Apple account' : 'Check again'
     primaryAction = ready ? moveNext : onRefresh
     body = (
       <div className="spo-live-stage">
         <div className="spo-stage-intro"><span className="spo-stage-icon"><Server size={21} /></span><div><h3>{ready ? 'Sideport is ready' : 'Let’s check Sideport'}</h3><p>Sideport checks saved data, Apple services, app signing, and the iPhone connection before anything changes.</p></div></div>
         <div className={`spo-live-callout ${ready ? 'success' : 'warning'}`}><div>{ready ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}</div><div><strong>{ready ? 'The essentials are available' : workflow ? 'Sideport needs attention' : 'Setup status is unavailable'}</strong><span>{ready ? 'This deployment can continue to Apple setup.' : serverStep?.reason ?? apiStatus.message}</span></div></div>
+        {!ready && <ActionSteps steps={repair.steps} title={repair.title} />}
         {serverStep?.evidence.map((evidence) => <div className="spo-live-callout spo-technical-only" key={evidence.id}><CheckCircle2 size={18} /><div><strong>{evidence.label}</strong><span>{evidence.detail}</span></div></div>)}
         <p className="spo-friendly-note"><Wifi size={17} /> Use USB for pairing and the first install. A saved pairing may support later refreshes on the same Wi-Fi, but USB is the reliable choice if a wireless refresh stalls or is unclear.</p>
         <div className="spo-technical-only spo-system-grid" data-testid="runtime-technical-system-checks">
@@ -374,13 +426,22 @@ export function RuntimeFirstRunOnboarding({
   } else if (activeStage === 'device') {
     const deviceComplete = stepState('device') === 'complete'
     const deviceStep = workflow?.steps.find((step) => step.id === 'device')
-    primaryLabel = deviceComplete ? 'Choose an app' : 'Connect iPhone'
+    const deviceInProgress = deviceStep?.state === 'in-progress'
+    primaryLabel = deviceComplete ? 'Choose an app' : deviceInProgress ? 'Show connection status' : 'Start connecting'
     primaryDisabled = !deviceComplete && !canAddIPhone
     primaryAction = deviceComplete ? moveNext : onAddIPhone
     body = (
       <div className="spo-live-stage">
         <div className="spo-stage-intro"><span className="spo-stage-icon"><Smartphone size={21} /></span><div><h3>{deviceComplete && device ? `${device.name} is added` : 'Connect and trust your iPhone'}</h3><p>Connect it by USB to the Mac or PC running Sideport, unlock it, then tap Trust This Computer. Sideport pairs and adds it automatically.</p></div></div>
         {deviceComplete && device ? <button className="spo-live-device" onClick={() => onOpenDevice(device)} type="button"><span className="add-menu-icon"><Smartphone size={19} /></span><span><strong>{device.name}</strong><small>{device.productType} · iOS {device.osVersion} · {device.connection === 'wifi' ? 'Wi-Fi' : 'USB'}</small></span><ChevronRight size={17} /></button> : <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>{deviceStep?.state === 'in-progress' ? 'Sideport is waiting for the iPhone' : 'No accepted iPhone yet'}</strong><span>{deviceStep?.reason ?? 'Start one five-minute connection session. There is no separate Pair, “I tapped Trust,” or Add button.'}</span></div></div>}
+        {!deviceComplete && <ActionSteps title={deviceInProgress ? 'Finish on the iPhone' : 'Connect the iPhone now'} steps={[
+          'Use a data-capable cable and plug the iPhone directly into the computer running Sideport.',
+          'Unlock the iPhone and keep its screen awake.',
+          'When asked, tap Trust This Computer and enter the iPhone passcode.',
+          'Leave the cable connected. Sideport will add the iPhone and advance automatically.',
+        ]} />}
+        {!deviceComplete && <p className="spo-friendly-note"><RefreshCw size={17} /> Keep this page open. Sideport checks for progress automatically; you do not need to confirm that you tapped Trust.</p>}
+        {!deviceComplete && <details className="spo-inline-details"><summary>If Sideport still cannot see the iPhone</summary><p>Try another data-capable cable or a different USB port, connect directly instead of through a hub, unlock the iPhone, then unplug and reconnect it. If the iPhone never appears on the host, the cable or USB port is not carrying data.</p></details>}
         {deviceComplete && device && !connectedToUsb && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Reconnect USB before Install</strong><span>The iPhone is already accepted, but Sideport requires a direct USB connection for the first install.</span></div></div>}
         <div className="spo-iphone-guide"><strong>Before the first app</strong><ol><li>Open Settings → Privacy &amp; Security → Developer Mode.</li><li>Turn it on and restart the iPhone.</li><li>Unlock, tap Enable, enter the passcode, and reconnect USB if needed.</li></ol></div>
       </div>

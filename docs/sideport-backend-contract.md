@@ -987,6 +987,15 @@ authentication. Checks never log a credential, token, header, or private path
 contents. Stores load lazily or retain a structured load error so corrupt state
 remains diagnosable through the UI.
 
+`SystemStatusDto.Operational` remains strict and fails when `device-transport`
+fails. The onboarding workflow intentionally treats that one check differently
+before an iPhone has been enrolled: the **Check Sideport** step is complete when
+all non-device system checks pass, and **Connect iPhone** owns cable, unlock,
+Trust, and transport recovery. This accommodates hosts that start usbmuxd only
+when an Apple USB device is attached without weakening install, completion, or
+`readyNow`; those paths still require current strict operational status and a
+trusted reachable device.
+
 ### Onboarding Read Model and Completion Mutation
 
 For one compatibility release, `GET /api/onboarding/status` retains the current

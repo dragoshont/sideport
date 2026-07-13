@@ -292,10 +292,17 @@ public static class OnboardingWorkflowBuilder
 
     private static OnboardingWorkflowStepDto ServerStep(SystemStatusDto status, DateTimeOffset checkedAt)
     {
-        string state = status.Operational ? "complete" : "blocked";
-        string reason = status.Operational
-            ? "Sideport can safely continue setup."
-            : status.Checks.FirstOrDefault(check => check.Status == "fail")?.Reason
+        SystemStatusCheckDto[] serverChecks = status.Checks
+            .Where(check => !string.Equals(check.Id, "device-transport", StringComparison.Ordinal))
+            .ToArray();
+        bool serverReady = status.Operational ||
+            serverChecks.Length > 0 && serverChecks.All(check => !string.Equals(check.Status, "fail", StringComparison.Ordinal));
+        string state = serverReady ? "complete" : "blocked";
+        string reason = serverReady
+            ? status.Operational
+                ? "Sideport can safely continue setup."
+                : "Sideport's core services are ready. The iPhone connection will be checked when you reach Connect iPhone."
+            : serverChecks.FirstOrDefault(check => string.Equals(check.Status, "fail", StringComparison.Ordinal))?.Reason
               ?? "A required Sideport check failed.";
         OnboardingWorkflowEvidenceDto[] evidence = status.Checks
             .Select(check => Evidence(
@@ -311,7 +318,7 @@ public static class OnboardingWorkflowBuilder
             "system",
             checkedAt,
             reason,
-            nextAction: status.Operational ? null : new("retry-checks", "Check again"),
+            nextAction: serverReady ? null : new("retry-checks", "Check again"),
             evidence: evidence);
     }
 
