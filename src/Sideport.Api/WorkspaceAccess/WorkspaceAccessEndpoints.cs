@@ -24,12 +24,14 @@ internal static class WorkspaceAccessEndpoints
     {
         app.MapGet("/api/authentication/options", () => Results.Json(new
         {
-            provider = "authentik",
+            provider = authentication.ProviderId,
+            providerLabel = authentication.ProviderLabel,
+            loginLabel = authentication.LoginLabel,
             oidcEnabled = authentication.OidcEnabled,
             existingAccountUrl = authentication.ExistingAccountUrl,
             enrollmentEnabled = authentication.EnrollmentEnabled,
             recoveryUrl = authentication.RecoveryUrl,
-            passkeyOwner = "authentik",
+            passkeyOwner = authentication.EnrollmentEnabled ? "authentik" : null,
             officialSignInWithApple = false,
         }));
 

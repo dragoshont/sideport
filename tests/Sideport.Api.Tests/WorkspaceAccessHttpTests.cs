@@ -45,6 +45,29 @@ public sealed class WorkspaceAccessHttpTests
         "family@example.test");
 
     [Fact]
+    public async Task AuthenticationOptions_ProjectConfiguredOidcPresentationWithoutClaimingGenericEnrollment()
+    {
+        using var app = new WorkspaceTestApp(settings: new Dictionary<string, string?>
+        {
+            ["Sideport:Oidc:ProviderId"] = "company-sso",
+            ["Sideport:Oidc:ProviderLabel"] = "Company account",
+            ["Sideport:Oidc:LoginLabel"] = "Continue with Company SSO",
+        });
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/api/authentication/options");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonObject body = await JsonAsync(response);
+        Assert.Equal("company-sso", String(body, "provider"));
+        Assert.Equal("Company account", String(body, "providerLabel"));
+        Assert.Equal("Continue with Company SSO", String(body, "loginLabel"));
+        Assert.True(Bool(body, "oidcEnabled"));
+        Assert.False(Bool(body, "enrollmentEnabled"));
+        Assert.Null(body["passkeyOwner"]);
+    }
+
+    [Fact]
     public async Task OwnerBootstrap_UsesRecoveryBearer_OneTimeLinkAndExplicitOidcConsent()
     {
         using var app = new WorkspaceTestApp();
@@ -1134,7 +1157,9 @@ public sealed class WorkspaceAccessHttpTests
         private const string RecoveryToken = "test-recovery-token-with-enough-entropy";
         private readonly WebApplicationFactory<Program> _factory;
 
-        internal WorkspaceTestApp(IAppCatalog? catalog = null)
+        internal WorkspaceTestApp(
+            IAppCatalog? catalog = null,
+            IReadOnlyDictionary<string, string?>? settings = null)
         {
             StateDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -1157,6 +1182,11 @@ public sealed class WorkspaceAccessHttpTests
                 builder.UseSetting("Sideport:Oidc:Authority", "https://identity.example/application/o/sideport/");
                 builder.UseSetting("Sideport:Oidc:ClientId", "sideport-workspace-http-tests");
                 builder.UseSetting("Sideport:Oidc:ClientSecret", "test-only-secret");
+                if (settings is not null)
+                {
+                    foreach ((string key, string? value) in settings)
+                        builder.UseSetting(key, value);
+                }
                 builder.ConfigureServices(services =>
                 {
                     services.RemoveAll<IHostedService>();

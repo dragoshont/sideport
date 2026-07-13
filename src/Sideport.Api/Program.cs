@@ -166,7 +166,11 @@ var authentikEnrollmentOptions = new AuthentikEnrollmentOptions(
     authentikApiToken,
     authentikEnrollmentFlowSlug,
     authentikEnrollmentFlowId,
-    TimeSpan.FromMinutes(authentikInvitationMinutes));
+    TimeSpan.FromMinutes(authentikInvitationMinutes),
+    new Uri(publicOrigin, "/login?returnUrl=%2Finvite"));
+string oidcProviderId = builder.Configuration["Sideport:Oidc:ProviderId"] ?? "oidc";
+string oidcProviderLabel = builder.Configuration["Sideport:Oidc:ProviderLabel"] ?? "Identity provider";
+string oidcLoginLabel = builder.Configuration["Sideport:Oidc:LoginLabel"] ?? "Continue to sign in";
 IPAddress[] trustedProxies = ReadConfigurationList(builder.Configuration, "Sideport:ReverseProxy:KnownProxies")
     .Select(ParseTrustedProxy)
     .ToArray();
@@ -813,7 +817,10 @@ app.MapWorkspaceAccessEndpoints(
         oidcEnabled,
         authentikEnrollmentOptions.Enabled,
         new Uri(publicOrigin, "/login?returnUrl=%2F"),
-        authentikRecoveryUrl));
+        authentikRecoveryUrl,
+        oidcProviderId,
+        oidcProviderLabel,
+        oidcLoginLabel));
 
 // Interactive login/logout (only meaningful when OIDC is enabled).
 if (oidcEnabled)

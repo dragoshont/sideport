@@ -1,0 +1,30 @@
+{
+  "schema": "architrave.run.v1",
+  "runId": "configurable-passkey-login-20260713",
+  "status": "release-in-progress",
+  "startedAt": "2026-07-13T18:30:00Z",
+  "artifacts": {
+    "intake": ".architrave/runs/configurable-passkey-login-20260713/intake.md",
+    "tournament": ".architrave/runs/configurable-passkey-login-20260713/tournament.md",
+    "recommendedPlan": ".architrave/runs/configurable-passkey-login-20260713/recommended-plan.md",
+    "phaseLedger": ".architrave/runs/configurable-passkey-login-20260713/phase-ledger.md",
+    "deterministicGates": ".architrave/runs/configurable-passkey-login-20260713/deterministic-gates.md",
+    "judgePre": ".architrave/runs/configurable-passkey-login-20260713/judge-pre.md",
+    "judgePost": ".architrave/runs/configurable-passkey-login-20260713/judge-post.md",
+    "runtimeObserver": ".architrave/runs/configurable-passkey-login-20260713/runtime-observer.md"
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Configurable sign-in and passkey invitation",
+      "status": "completed",
+      "result": "deterministic gates PASS; Copilot Adversarial Judge PASS"
+    },
+    {
+      "phase": 2,
+      "name": "Release and production verification",
+      "status": "in-progress",
+      "result": "pending"
+    }
+  ]
+}

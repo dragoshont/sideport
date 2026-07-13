@@ -48,7 +48,8 @@ public sealed class AuthentikEnrollmentTests
                 token,
                 "sideport-enrollment",
                 Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-                TimeSpan.FromMinutes(15)),
+                TimeSpan.FromMinutes(15),
+                new Uri("https://sideport.example/login?returnUrl=%2Finvite")),
             time);
 
         AuthentikEnrollmentResult result = await adapter.CreateAsync(new(
@@ -58,7 +59,7 @@ public sealed class AuthentikEnrollmentTests
 
         Assert.True(result.Available);
         Assert.Equal(
-            "https://auth.example/if/flow/sideport-enrollment/?itoken=11111111-2222-3333-4444-555555555555",
+            "https://auth.example/if/flow/sideport-enrollment/?itoken=11111111-2222-3333-4444-555555555555&next=https%3A%2F%2Fsideport.example%2Flogin%3FreturnUrl%3D%252Finvite",
             result.EnrollmentUrl!.AbsoluteUri);
         Assert.Equal("Bearer", captured!.Headers.Authorization!.Scheme);
         Assert.Equal(token, captured.Headers.Authorization.Parameter);
