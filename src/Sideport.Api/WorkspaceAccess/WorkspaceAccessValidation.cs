@@ -197,12 +197,17 @@ internal static class WorkspaceAccessValidation
     internal static void ValidateIdentity(WorkspaceIdentityKey identity)
     {
         ArgumentNullException.ThrowIfNull(identity);
+        bool nativePasskey = string.Equals(
+            identity.Issuer,
+            WorkspaceIdentityKey.NativePasskeyIssuer,
+            StringComparison.Ordinal);
+        bool externalIssuer = Uri.TryCreate(identity.Issuer, UriKind.Absolute, out Uri? issuer) &&
+            issuer.Scheme is "https" or "http";
         if (!IsBoundedText(identity.Issuer, 1, 2048) ||
-            !Uri.TryCreate(identity.Issuer, UriKind.Absolute, out Uri? issuer) ||
-            issuer.Scheme is not ("https" or "http") ||
+            (!nativePasskey && !externalIssuer) ||
             !IsBoundedText(identity.Subject, 1, 512))
         {
-            throw new ArgumentException("A validated OIDC issuer and subject are required.", nameof(identity));
+            throw new ArgumentException("A validated identity issuer and subject are required.", nameof(identity));
         }
     }
 

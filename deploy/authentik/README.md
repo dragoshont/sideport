@@ -10,6 +10,7 @@ user verification plus a discoverable credential.
 
 Deployment inputs that must remain in the secret/configuration systems:
 
+- `Sideport__Identity__Mode=oidc`
 - `Sideport__Oidc__Authority`
 - `Sideport__Oidc__ClientId`
 - `Sideport__Oidc__ClientSecret`

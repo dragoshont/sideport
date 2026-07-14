@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Sideport.Api.Identity;
 
 namespace Sideport.Api.WorkspaceAccess;
 
@@ -11,19 +12,19 @@ internal sealed class WorkspaceRequestPrincipalResolver
 
     private readonly WorkspaceAccessStore _store;
     private readonly string? _recoveryBearer;
-    private readonly bool _oidcEnabled;
+    private readonly bool _interactiveIdentityEnabled;
 
     internal WorkspaceRequestPrincipalResolver(
         WorkspaceAccessStore store,
         string? recoveryBearer,
-        bool oidcEnabled)
+        bool interactiveIdentityEnabled)
     {
         _store = store;
         _recoveryBearer = string.IsNullOrWhiteSpace(recoveryBearer) ? null : recoveryBearer;
-        _oidcEnabled = oidcEnabled;
+        _interactiveIdentityEnabled = interactiveIdentityEnabled;
     }
 
-    internal bool AuthenticationConfigured => _recoveryBearer is not null || _oidcEnabled;
+    internal bool AuthenticationConfigured => _recoveryBearer is not null || _interactiveIdentityEnabled;
 
     internal async Task<WorkspaceRequestPrincipal> ResolveAsync(
         HttpContext context,
@@ -40,7 +41,7 @@ internal sealed class WorkspaceRequestPrincipalResolver
                 Presentation: null);
         }
 
-        if (!_oidcEnabled || context.User?.Identity?.IsAuthenticated != true)
+        if (!_interactiveIdentityEnabled || context.User?.Identity?.IsAuthenticated != true)
         {
             return new WorkspaceRequestPrincipal(
                 WorkspaceRequestPrincipalKind.Unverified,
@@ -61,6 +62,22 @@ internal sealed class WorkspaceRequestPrincipalResolver
         }
 
         var identity = new WorkspaceIdentityKey(issuer, subject);
+        string? authenticationMethod = SingleClaimValue(
+            context.User,
+            SideportIdentityConstants.AuthenticationMethodClaimType);
+        if (string.IsNullOrWhiteSpace(authenticationMethod) &&
+            !string.Equals(issuer, SideportIdentityConstants.NativeIssuer, StringComparison.Ordinal))
+        {
+            authenticationMethod = SideportIdentityConstants.OidcMethod;
+        }
+        if (authenticationMethod is not (SideportIdentityConstants.NativeMethod or SideportIdentityConstants.OidcMethod))
+        {
+            return new WorkspaceRequestPrincipal(
+                WorkspaceRequestPrincipalKind.Unverified,
+                Identity: null,
+                Member: null,
+                Presentation: null);
+        }
         try
         {
             WorkspaceAccessValidation.ValidateIdentity(identity);
@@ -89,7 +106,8 @@ internal sealed class WorkspaceRequestPrincipalResolver
                 WorkspaceRequestPrincipalKind.StoreUnavailable,
                 identity,
                 Member: null,
-                presentation);
+                presentation,
+                AuthenticationMethod: authenticationMethod);
         }
 
         if (document is null || document.Workspace.State == WorkspaceLifecycleState.BootstrapRequired)
@@ -99,7 +117,8 @@ internal sealed class WorkspaceRequestPrincipalResolver
                 identity,
                 Member: null,
                 presentation,
-                document?.Workspace);
+                document?.Workspace,
+                authenticationMethod);
         }
 
         string? ticketEpoch = SingleClaimValue(context.User, SecurityEpochClaimType);
@@ -126,7 +145,7 @@ internal sealed class WorkspaceRequestPrincipalResolver
             { Role: WorkspaceMemberRole.Family, Status: WorkspaceMemberStatus.Active } => WorkspaceRequestPrincipalKind.Family,
             _ => WorkspaceRequestPrincipalKind.Unverified,
         };
-        return new WorkspaceRequestPrincipal(kind, identity, member, presentation, document.Workspace);
+        return new WorkspaceRequestPrincipal(kind, identity, member, presentation, document.Workspace, authenticationMethod);
     }
 
     private static string? SingleClaimValue(ClaimsPrincipal principal, string claimType)

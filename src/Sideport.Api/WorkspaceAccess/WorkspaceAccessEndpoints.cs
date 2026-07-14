@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
+using Sideport.Api.Identity;
 using Sideport.Api.DeviceInventory;
 using Sideport.Api.Authentik;
 using Sideport.Api.Operations;
@@ -12,7 +12,7 @@ internal sealed record WorkspaceHttpOptions(
     Uri PublicOrigin,
     bool RecoveryProofConfigured);
 
-internal static class WorkspaceAccessEndpoints
+internal static partial class WorkspaceAccessEndpoints
 {
     private const string InvitationHandoffCookie = "__Host-sideport.invitation-handoff";
     private const string OwnerClaimHandoffCookie = "__Host-sideport.owner-claim-handoff";
@@ -22,12 +22,17 @@ internal static class WorkspaceAccessEndpoints
         WorkspaceHttpOptions options,
         IdentityAuthenticationOptions authentication)
     {
+        if (authentication.NativePasskeyEnabled)
+            MapNativePasskeyEndpoints(app, options);
+
         app.MapGet("/api/authentication/options", () => Results.Json(new
         {
             provider = authentication.ProviderId,
             providerLabel = authentication.ProviderLabel,
             loginLabel = authentication.LoginLabel,
+            mode = authentication.Mode,
             oidcEnabled = authentication.OidcEnabled,
+            nativePasskeyEnabled = authentication.NativePasskeyEnabled,
             existingAccountUrl = authentication.ExistingAccountUrl,
             enrollmentEnabled = authentication.EnrollmentEnabled,
             enrollmentLabel = authentication.EnrollmentLabel,
@@ -44,7 +49,7 @@ internal static class WorkspaceAccessEndpoints
             CancellationToken ct) =>
         {
             WorkspaceRequestPrincipal principal = WorkspaceApiSecurity.PrincipalFrom(context);
-            if (principal.IsOidc)
+            if (principal.IsInteractive)
             {
                 AntiforgeryTokenSet tokens = antiforgery.GetAndStoreTokens(context);
                 if (!string.IsNullOrWhiteSpace(tokens.RequestToken))
@@ -186,6 +191,18 @@ internal static class WorkspaceAccessEndpoints
                     },
                     next = "sign-in",
                 });
+            }).ConfigureAwait(false));
+
+        app.MapGet("/api/workspace/owner-claims/handoff/session", async (
+            WorkspaceAccessStore store,
+            HttpContext context,
+            CancellationToken ct) =>
+            await ExecuteAsync(async () =>
+            {
+                string handoff = RequireCookie(context, OwnerClaimHandoffCookie, "owner-claim-unavailable");
+                await store.ResolvePendingOwnerClaimForEnrollmentAsync(handoff, ct).ConfigureAwait(false);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { available = true });
             }).ConfigureAwait(false));
 
         app.MapGet("/api/workspace/owner-claims/handoff", async (
@@ -361,6 +378,18 @@ internal static class WorkspaceAccessEndpoints
                     },
                     next = "sign-in",
                 });
+            }).ConfigureAwait(false));
+
+        app.MapGet("/api/workspace/invitations/handoff/session", async (
+            WorkspaceAccessStore store,
+            HttpContext context,
+            CancellationToken ct) =>
+            await ExecuteAsync(async () =>
+            {
+                string handoff = RequireCookie(context, InvitationHandoffCookie, "invitation-unavailable");
+                await store.ResolvePendingInvitationForEnrollmentAsync(handoff, ct).ConfigureAwait(false);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { available = true });
             }).ConfigureAwait(false));
 
         app.MapPost("/api/workspace/invitations/enrollment", async (
@@ -585,7 +614,7 @@ internal static class WorkspaceAccessEndpoints
         return new
         {
             authenticated = true,
-            via = "oidc",
+            via = principal.AuthenticationMethod ?? "interactive",
             identity = new
             {
                 displayName = principal.Presentation?.DisplayName ?? IdentityPresentation.FallbackDisplayName,
@@ -860,7 +889,7 @@ internal static class WorkspaceAccessEndpoints
     private static WorkspaceRequestPrincipal RequireOidcPrincipal(HttpContext context)
     {
         WorkspaceRequestPrincipal principal = WorkspaceApiSecurity.PrincipalFrom(context);
-        if (!principal.IsOidc || principal.Identity is null || principal.Presentation is null)
+        if (!principal.IsInteractive || principal.Identity is null || principal.Presentation is null)
             throw new WorkspaceAccessException("capability-denied", "A signed-in person is required.");
         return principal;
     }
@@ -901,7 +930,7 @@ internal static class WorkspaceAccessEndpoints
     private static async Task RefreshSessionEpochAsync(HttpContext context, string securityEpoch)
     {
         IAuthenticationSchemeProvider schemes = context.RequestServices.GetRequiredService<IAuthenticationSchemeProvider>();
-        if (await schemes.GetSchemeAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false) is null)
+        if (await schemes.GetSchemeAsync(SideportIdentityConstants.CookieScheme).ConfigureAwait(false) is null)
             return;
 
         Claim[] claims = context.User.Claims
@@ -911,11 +940,11 @@ internal static class WorkspaceAccessEndpoints
         var currentIdentity = context.User.Identity as ClaimsIdentity;
         var identity = new ClaimsIdentity(
             claims,
-            CookieAuthenticationDefaults.AuthenticationScheme,
+            SideportIdentityConstants.CookieScheme,
             currentIdentity?.NameClaimType ?? ClaimTypes.Name,
             currentIdentity?.RoleClaimType ?? ClaimTypes.Role);
         await context.SignInAsync(
-            CookieAuthenticationDefaults.AuthenticationScheme,
+            SideportIdentityConstants.CookieScheme,
             new ClaimsPrincipal(identity),
             new AuthenticationProperties { IsPersistent = false }).ConfigureAwait(false);
     }
@@ -1008,10 +1037,11 @@ internal static class WorkspaceAccessEndpoints
             "unauthorized" => StatusCodes.Status401Unauthorized,
             "workspace-bootstrap-required" or "workspace-membership-required" or
                 "member-access-disabled" or "capability-denied" or
-                "recovery-proof-invalid" => StatusCodes.Status403Forbidden,
+                "recovery-proof-invalid" or "origin-or-antiforgery" => StatusCodes.Status403Forbidden,
             "resource-not-found" or "invitation-unavailable" or "owner-claim-unavailable" => StatusCodes.Status404NotFound,
             "invitation-expired" or "invitation-revoked" or "invitation-already-used" => StatusCodes.Status410Gone,
-            "invitation-rate-limited" or "owner-claim-rate-limited" => StatusCodes.Status429TooManyRequests,
+            "invitation-rate-limited" or "owner-claim-rate-limited" or
+                "passkey-rate-limited" => StatusCodes.Status429TooManyRequests,
             "workspace-store-unavailable" or "workspace-security-history-full" => StatusCodes.Status503ServiceUnavailable,
             "owner-action-required" => StatusCodes.Status422UnprocessableEntity,
             _ => StatusCodes.Status409Conflict,

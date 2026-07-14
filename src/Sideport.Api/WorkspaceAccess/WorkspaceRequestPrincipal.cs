@@ -18,11 +18,16 @@ internal sealed record WorkspaceRequestPrincipal(
     WorkspaceIdentityKey? Identity,
     WorkspaceMemberRecord? Member,
     IdentityPresentationValue? Presentation,
-    WorkspaceRecord? Workspace = null)
+    WorkspaceRecord? Workspace = null,
+    string? AuthenticationMethod = null)
 {
-    public bool IsOidc => Kind is not WorkspaceRequestPrincipalKind.RecoveryBearer and
+    public bool IsInteractive => Identity is not null &&
+        Kind is not WorkspaceRequestPrincipalKind.RecoveryBearer and
         not WorkspaceRequestPrincipalKind.StoreUnavailable and
         not WorkspaceRequestPrincipalKind.Unverified;
+
+    public bool IsOidc => IsInteractive &&
+        string.Equals(AuthenticationMethod, "oidc", StringComparison.Ordinal);
 
     public bool IsActiveMember => Kind is WorkspaceRequestPrincipalKind.Owner or
         WorkspaceRequestPrincipalKind.Family;

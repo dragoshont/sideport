@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Sideport.Api.Identity;
 using Sideport.Api.WorkspaceAccess;
 
 namespace Sideport.Api.Tests;
@@ -43,7 +44,7 @@ public sealed class CookieStoreFailureTests
         IServiceProvider services = factory.Services;
         CookieAuthenticationOptions cookieOptions = services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
-            .Get(CookieAuthenticationDefaults.AuthenticationScheme);
+            .Get(SideportIdentityConstants.CookieScheme);
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Claim[] claims =
         [
@@ -54,7 +55,7 @@ public sealed class CookieStoreFailureTests
         ];
         var principal = new ClaimsPrincipal(new ClaimsIdentity(
             claims,
-            CookieAuthenticationDefaults.AuthenticationScheme));
+            SideportIdentityConstants.CookieScheme));
         var ticket = new AuthenticationTicket(
             principal,
             new AuthenticationProperties
@@ -62,7 +63,7 @@ public sealed class CookieStoreFailureTests
                 IssuedUtc = now,
                 ExpiresUtc = now.AddHours(1),
             },
-            CookieAuthenticationDefaults.AuthenticationScheme);
+            SideportIdentityConstants.CookieScheme);
         string cookie = cookieOptions.TicketDataFormat.Protect(ticket);
         using HttpClient client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

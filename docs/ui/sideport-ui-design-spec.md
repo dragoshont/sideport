@@ -3,15 +3,15 @@
 > **Canonical target:** The six-destination product shell and trusted-person journey in
 > this document are the Phase 7 Storybook approval target. The current runtime
 > still contains the older operator-console routes until the approved deletion
-> and binding pass in Phase 11. Storybook fixtures must not imply that members
-> authorization, Authentik invitations, passkey enrollment, completion audio,
-> or reliable Wi-Fi transfer are already live.
+> and binding pass in Phase 11. Storybook fixtures must not imply reliable Wi-Fi
+> bulk transfer or device launch verification that the runtime cannot prove.
 >
 > **Phase 8 security delta:** the same approved invitation layout now represents
-> an opaque HttpOnly handoff and explicit confirmation of the actual Authentik
+> an opaque HttpOnly handoff and explicit confirmation of the actual signed-in
 > account before membership. Owner bootstrap/recovery uses the same short-lived
 > link pattern. Sideport never asks for the deployment recovery bearer in the
-> browser and never claims to create or reset an Authentik passkey.
+> browser. Native mode creates Sideport passkeys; OIDC mode delegates identity
+> and any provider-side passkey recovery to the configured provider.
 
 ## Audience
 
@@ -462,19 +462,21 @@ Flows:
 - Suspend or remove access with exact device/refresh impact.
 - View audit trail.
 
-Authentik owns invitation enrollment, passkeys, sessions, and recovery. Sideport
-owns durable membership and authorization by immutable OIDC issuer + subject.
+Identity is deployment-configurable. Native mode owns passkey enrollment and
+sessions inside Sideport; OIDC mode delegates identity and recovery to the
+configured standards-compliant provider. Sideport owns durable membership and
+authorization using the validated provider-neutral issuer + subject contract.
 Unknown authenticated principals receive `403 membership-required`; they never
-become owners implicitly. Sideport says **Continue to sign in** and lets
-Authentik choose or enroll Face ID, Touch ID, Windows Hello, or another passkey;
-it never labels that as **Sign in with Apple**. Official Sign in with Apple is
+become owners implicitly. Native mode says **Create passkey** or **Sign in with
+a passkey**. OIDC mode uses the configured generic provider label. Neither mode
+labels this as **Sign in with Apple**. Official Sign in with Apple is
 shown only when an eligible paid Apple configuration actually exists.
 
 The private link is captured only long enough to exchange it for an opaque,
-short-lived HttpOnly handoff before OIDC. After sign-in, show the actual account,
+short-lived HttpOnly handoff before identity enrollment or sign-in. After sign-in, show the actual account,
 workspace, and Member permissions and require **Join Sideport**. Recovery copy
-sends the person to Authentik; Sideport does not say it created, reset, or read a
-passkey. A fresh Owner opens a short-lived host-minted Owner link, signs in, and
+sends the person to the configured identity recovery surface. A fresh Owner
+opens a short-lived host-minted Owner link, creates or uses a passkey, and
 confirms **Finish owner setup** before the Apple signer onboarding begins.
 
 ## Activity
@@ -600,6 +602,12 @@ Minimum stories:
 - Passkey enrollment asks only for the person's name and email. Sideport
   generates the provider's opaque internal username; the UI never asks a person
   to invent one and never reuses email as an infrastructure identifier.
+- Identity is deployment-configurable without changing the product journey.
+  Native mode creates/signs in with a Sideport-owned passkey and has no
+  Authentik dependency. OIDC mode redirects to a generically labelled provider
+  and may offer provider-owned enrollment. The private-link screen shows only
+  actions the configured backend can actually perform; it never shows an OIDC
+  fallback in native-only mode or implies that an external provider is required.
 - Owner claim: short-lived setup and recovery links outside the shell; no API
   key field; actual signed-in account and Owner impact confirmed before setup or
   replacement continues.

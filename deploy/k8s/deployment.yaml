@@ -77,49 +77,17 @@ spec:
               value: "00:03:00"
             - name: Sideport__Orchestrator__InstallCancellationGrace
               value: "00:00:02"
-            # Authentik owns browser identity and passkeys. Replace these
-            # example values in a reviewed environment overlay.
+            # Native passkeys are the provider-free default. The first start of
+            # an empty PVC prints one private Owner setup URL to container logs.
+            # A reviewed environment overlay may switch this to `oidc` and add
+            # any standards-compliant provider settings.
             - name: Sideport__PublicOrigin
               value: "https://sideport.example.com/"
-            - name: Sideport__Oidc__Enabled
-              value: "true"
-            - name: Sideport__Oidc__Authority
-              value: "https://auth.example.com/application/o/sideport/"
-            - name: Sideport__Oidc__ClientId
-              value: "sideport"
-            - name: Sideport__Identity__ProviderId
-              value: "authentik"
-            - name: Sideport__Identity__ProviderLabel
-              value: "Sideport account"
-            - name: Sideport__Identity__PreferredMethod
+            - name: Sideport__Identity__Mode
               value: "passkey"
-            - name: Sideport__Identity__EnrollmentLabel
-              value: "Create passkey"
-            - name: Sideport__Identity__LoginLabel
-              value: "Continue with Microsoft"
-            - name: Sideport__Oidc__ClientSecret
-              valueFrom:
-                secretKeyRef:
-                  name: sideport-secrets
-                  key: SIDEPORT_OIDC_CLIENT_SECRET
             # Trust only the actual Traefik address or narrow cluster network.
             - name: Sideport__ReverseProxy__KnownNetworks__0
               value: "10.42.0.0/16"
-            # Optional new-account passkey enrollment adapter. Remove these
-            # values to allow existing Authentik accounts only.
-            - name: Sideport__Authentik__BaseUrl
-              value: "https://auth.example.com/"
-            - name: Sideport__Authentik__EnrollmentFlowSlug
-              value: "sideport-enrollment"
-            - name: Sideport__Authentik__EnrollmentFlowId
-              value: "00000000-0000-0000-0000-000000000001"
-            - name: Sideport__Authentik__RecoveryUrl
-              value: "https://auth.example.com/if/flow/default-recovery-flow/"
-            - name: Sideport__Authentik__ApiToken
-              valueFrom:
-                secretKeyRef:
-                  name: sideport-secrets
-                  key: SIDEPORT_AUTHENTIK_API_TOKEN
             # Accept Apple credentials in the authenticated HTTPS UI and keep
             # only their protected envelope on the Sideport state volume.
             - name: Sideport__Apple__CredentialSource

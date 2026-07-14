@@ -29,6 +29,10 @@ internal static class WorkspaceApiPolicy
             return WorkspaceApiAccess.Identity;
         if (HttpMethods.IsGet(method) && path == "/api/authentication/options")
             return WorkspaceApiAccess.Public;
+        if (HttpMethods.IsGet(method) &&
+            path is "/api/workspace/invitations/handoff/session" or
+                "/api/workspace/owner-claims/handoff/session")
+            return WorkspaceApiAccess.Public;
         if (HttpMethods.IsGet(method) && path == "/api/workspace")
             return WorkspaceApiAccess.ActiveMember;
 
@@ -39,7 +43,13 @@ internal static class WorkspaceApiPolicy
         }
 
         if (HttpMethods.IsPost(method) &&
-            path is "/api/workspace/invitations/enrollment" or "/api/workspace/owner-claims/enrollment")
+            path is "/api/workspace/invitations/enrollment" or "/api/workspace/owner-claims/enrollment" or
+                "/api/workspace/invitations/native-passkey/options" or
+                "/api/workspace/invitations/native-passkey/complete" or
+                "/api/workspace/owner-claims/native-passkey/options" or
+                "/api/workspace/owner-claims/native-passkey/complete" or
+                "/api/authentication/native-passkey/options" or
+                "/api/authentication/native-passkey/complete")
             return WorkspaceApiAccess.Public;
 
         if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) &&

@@ -46,6 +46,16 @@ require_config() {
   : "${SIDEPORT_API_TOKEN:?set SIDEPORT_API_TOKEN without printing it}"
   : "${SIDEPORT_DEVICE_ID:?set SIDEPORT_DEVICE_ID to a stable UUID}"
   : "${SIDEPORT_PUBLIC_ORIGIN:=http://127.0.0.1:8080/}"
+  : "${SIDEPORT_IDENTITY_MODE:=passkey}"
+  case "$SIDEPORT_IDENTITY_MODE" in
+    passkey) ;;
+    oidc)
+      : "${SIDEPORT_OIDC_AUTHORITY:?set SIDEPORT_OIDC_AUTHORITY for oidc mode}"
+      : "${SIDEPORT_OIDC_CLIENT_ID:?set SIDEPORT_OIDC_CLIENT_ID for oidc mode}"
+      : "${SIDEPORT_OIDC_CLIENT_SECRET:?set SIDEPORT_OIDC_CLIENT_SECRET for oidc mode}"
+      ;;
+    *) echo "SIDEPORT_IDENTITY_MODE must be passkey or oidc." >&2; exit 1 ;;
+  esac
   [ -S "$USBMUXD_SOCKET" ] || {
     echo "macOS usbmuxd socket is not available at $USBMUXD_SOCKET." >&2
     exit 1
@@ -61,6 +71,7 @@ anisette: $ANISETTE_NAME ($ANISETTE_IMAGE)
 state volumes: $SIDEPORT_VOLUME, $ANISETTE_VOLUME
 device socket: $USBMUXD_SOCKET -> /var/run/usbmuxd
 public origin: ${SIDEPORT_PUBLIC_ORIGIN:-http://127.0.0.1:8080/}
+identity mode: ${SIDEPORT_IDENTITY_MODE:-passkey}
 secrets: supplied through environment; values are never printed
 EOF
 }
@@ -80,6 +91,12 @@ start() {
     --arch amd64 --publish 127.0.0.1:8080:8080 \
     --env "Sideport__Anisette__Url=http://$ANISETTE_NAME:6969/" \
     --env "Sideport__Api__AuthToken=$SIDEPORT_API_TOKEN" \
+    --env "Sideport__Identity__Mode=$SIDEPORT_IDENTITY_MODE" \
+    --env "Sideport__Oidc__Authority=${SIDEPORT_OIDC_AUTHORITY:-}" \
+    --env "Sideport__Oidc__ClientId=${SIDEPORT_OIDC_CLIENT_ID:-}" \
+    --env "Sideport__Oidc__ClientSecret=${SIDEPORT_OIDC_CLIENT_SECRET:-}" \
+    --env "Sideport__Identity__ProviderLabel=${SIDEPORT_IDENTITY_PROVIDER_LABEL:-Your account}" \
+    --env "Sideport__Identity__LoginLabel=${SIDEPORT_IDENTITY_LOGIN_LABEL:-Continue to sign in}" \
     --env "Sideport__Apple__DeviceId=$SIDEPORT_DEVICE_ID" \
     --env "Sideport__Apple__CredentialSource=managed" \
     --env "Sideport__Apple__AllowInsecureCredentialEntryOnLoopback=true" \

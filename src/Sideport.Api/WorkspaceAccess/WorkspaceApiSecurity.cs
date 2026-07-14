@@ -46,7 +46,7 @@ internal static class WorkspaceApiSecurity
                 resolver.AuthenticationConfigured).ConfigureAwait(false))
             return;
 
-        if (!linkExchange && IsUnsafe(context.Request.Method) && principal.IsOidc)
+        if (!linkExchange && IsUnsafe(context.Request.Method) && principal.IsInteractive)
         {
             if (AppleCredentialOriginPolicy.IsExplicitCrossSite(context.Request) ||
                 !AppleCredentialOriginPolicy.IsSameOrigin(context.Request))
@@ -221,7 +221,11 @@ internal static class WorkspaceApiSecurity
         }
 
         if ((context.Request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase) ||
-             context.Request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase)) &&
+             context.Request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase) ||
+             context.Request.Path.Equals("/api/workspace/invitations/native-passkey/options", StringComparison.OrdinalIgnoreCase) ||
+             context.Request.Path.Equals("/api/workspace/invitations/native-passkey/complete", StringComparison.OrdinalIgnoreCase) ||
+             context.Request.Path.Equals("/api/workspace/owner-claims/native-passkey/options", StringComparison.OrdinalIgnoreCase) ||
+             context.Request.Path.Equals("/api/workspace/owner-claims/native-passkey/complete", StringComparison.OrdinalIgnoreCase)) &&
             !context.Request.Headers.ContainsKey("Origin"))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -236,7 +240,11 @@ internal static class WorkspaceApiSecurity
         (request.Path.Equals("/api/workspace/invitations/handoff", StringComparison.OrdinalIgnoreCase) ||
          request.Path.Equals("/api/workspace/owner-claims/handoff", StringComparison.OrdinalIgnoreCase) ||
          request.Path.Equals("/api/workspace/invitations/enrollment", StringComparison.OrdinalIgnoreCase) ||
-         request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase));
+         request.Path.Equals("/api/workspace/owner-claims/enrollment", StringComparison.OrdinalIgnoreCase) ||
+         request.Path.Equals("/api/workspace/invitations/native-passkey/options", StringComparison.OrdinalIgnoreCase) ||
+         request.Path.Equals("/api/workspace/invitations/native-passkey/complete", StringComparison.OrdinalIgnoreCase) ||
+         request.Path.Equals("/api/workspace/owner-claims/native-passkey/options", StringComparison.OrdinalIgnoreCase) ||
+         request.Path.Equals("/api/workspace/owner-claims/native-passkey/complete", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsLinkMint(HttpRequest request) =>
         HttpMethods.IsPost(request.Method) &&

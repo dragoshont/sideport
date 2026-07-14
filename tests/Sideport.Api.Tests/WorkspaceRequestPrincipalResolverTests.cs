@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Sideport.Api.Identity;
 using Sideport.Api.WorkspaceAccess;
 
 namespace Sideport.Api.Tests;
@@ -30,7 +31,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             store,
             RecoverySecret,
-            oidcEnabled: true).ResolveAsync(context);
+            interactiveIdentityEnabled: true).ResolveAsync(context);
 
         Assert.Equal(WorkspaceRequestPrincipalKind.RecoveryBearer, principal.Kind);
         Assert.False(principal.IsOidc);
@@ -60,7 +61,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             store,
             RecoverySecret,
-            oidcEnabled: true).ResolveAsync(context);
+            interactiveIdentityEnabled: true).ResolveAsync(context);
 
         Assert.Equal(
             expectedMatch
@@ -80,7 +81,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             store,
             RecoverySecret,
-            oidcEnabled: true).ResolveAsync(context);
+            interactiveIdentityEnabled: true).ResolveAsync(context);
 
         Assert.Equal(WorkspaceRequestPrincipalKind.Unverified, principal.Kind);
     }
@@ -95,7 +96,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
             securityEpoch: null,
             displayName: "  Owner  ",
             email: "owner@example.test");
-        var resolver = new WorkspaceRequestPrincipalResolver(store, recoveryBearer: null, oidcEnabled: true);
+        var resolver = new WorkspaceRequestPrincipalResolver(store, recoveryBearer: null, interactiveIdentityEnabled: true);
 
         WorkspaceRequestPrincipal empty = await resolver.ResolveAsync(context);
 
@@ -118,7 +119,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
     {
         ActiveWorkspace fixture = await CreateActiveWorkspaceAsync();
         string epoch = fixture.Document.Workspace.SecurityEpoch;
-        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, oidcEnabled: true);
+        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, interactiveIdentityEnabled: true);
 
         WorkspaceRequestPrincipal owner = await resolver.ResolveAsync(AuthenticatedContext(
             OwnerIssuer,
@@ -177,7 +178,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
     {
         ActiveWorkspace fixture = await CreateActiveWorkspaceAsync();
         string epoch = fixture.Document.Workspace.SecurityEpoch;
-        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, oidcEnabled: true);
+        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, interactiveIdentityEnabled: true);
         var identity = new ClaimsIdentity(
             [
                 new Claim("iss", OwnerIssuer),
@@ -217,7 +218,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             fixture.Store,
             null,
-            oidcEnabled: true).ResolveAsync(context);
+            interactiveIdentityEnabled: true).ResolveAsync(context);
 
         Assert.Equal(WorkspaceRequestPrincipalKind.Unverified, principal.Kind);
         Assert.Null(principal.Identity);
@@ -236,7 +237,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
                 "resolver-suspend-family-0001",
                 "req-resolver-suspend"));
         WorkspaceAccessDocument suspendedDocument = (await fixture.Store.ReadAsync())!;
-        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, oidcEnabled: true);
+        var resolver = new WorkspaceRequestPrincipalResolver(fixture.Store, null, interactiveIdentityEnabled: true);
 
         WorkspaceRequestPrincipal suspended = await resolver.ResolveAsync(AuthenticatedContext(
             FamilyIssuer,
@@ -286,7 +287,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             fixture.Store,
             null,
-            oidcEnabled: true).ResolveAsync(AuthenticatedContext(
+            interactiveIdentityEnabled: true).ResolveAsync(AuthenticatedContext(
                 OwnerIssuer,
                 SharedSubject,
                 epoch,
@@ -319,7 +320,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             store,
             null,
-            oidcEnabled: true).ResolveAsync(context);
+            interactiveIdentityEnabled: true).ResolveAsync(context);
 
         Assert.Equal(WorkspaceRequestPrincipalKind.StoreUnavailable, principal.Kind);
         Assert.False(principal.IsOidc);
@@ -335,7 +336,7 @@ public sealed class WorkspaceRequestPrincipalResolverTests
         WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
             fixture.Store,
             null,
-            oidcEnabled: true).ResolveAsync(AuthenticatedContext(
+            interactiveIdentityEnabled: true).ResolveAsync(AuthenticatedContext(
                 "https://unknown-idp.example/application/o/sideport/",
                 "unknown-subject",
                 fixture.Document.Workspace.SecurityEpoch,
@@ -344,6 +345,94 @@ public sealed class WorkspaceRequestPrincipalResolverTests
 
         Assert.Equal(WorkspaceRequestPrincipalKind.UnknownOidc, principal.Kind);
         Assert.Equal(new IdentityPresentationValue("mara@example.test", "mara@example.test"), principal.Presentation);
+    }
+
+    [Fact]
+    public async Task NativePasskeyClaims_ResolveThroughTheSameBootstrapContract()
+    {
+        var store = new WorkspaceAccessStore(StoreDirectory());
+        DefaultHttpContext context = AuthenticatedContext(
+            SideportIdentityConstants.NativeIssuer,
+            "native-user-id",
+            securityEpoch: null,
+            displayName: "Home Owner",
+            email: "owner@example.test");
+        ((ClaimsIdentity)context.User.Identity!).AddClaim(new Claim(
+            SideportIdentityConstants.AuthenticationMethodClaimType,
+            SideportIdentityConstants.NativeMethod));
+
+        WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
+            store,
+            recoveryBearer: null,
+            interactiveIdentityEnabled: true).ResolveAsync(context);
+
+        Assert.Equal(WorkspaceRequestPrincipalKind.BootstrapRequired, principal.Kind);
+        Assert.True(principal.IsInteractive);
+        Assert.False(principal.IsOidc);
+        Assert.Equal(SideportIdentityConstants.NativeMethod, principal.AuthenticationMethod);
+        Assert.Equal(
+            new WorkspaceIdentityKey(SideportIdentityConstants.NativeIssuer, "native-user-id"),
+            principal.Identity);
+    }
+
+    [Fact]
+    public async Task NativeIssuerWithoutPasskeyMethodClaim_FailsClosed()
+    {
+        var store = new WorkspaceAccessStore(StoreDirectory());
+        DefaultHttpContext context = AuthenticatedContext(
+            SideportIdentityConstants.NativeIssuer,
+            "native-user-id",
+            securityEpoch: null,
+            displayName: "Home Owner",
+            email: "owner@example.test");
+
+        WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
+            store,
+            recoveryBearer: null,
+            interactiveIdentityEnabled: true).ResolveAsync(context);
+
+        Assert.Equal(WorkspaceRequestPrincipalKind.Unverified, principal.Kind);
+        Assert.Null(principal.Identity);
+    }
+
+    [Fact]
+    public async Task ActiveNativePasskeyOwner_UsesTheWorkspaceSecurityEpoch()
+    {
+        var store = new WorkspaceAccessStore(StoreDirectory());
+        WorkspaceOwnerClaimCreateResult claim = await store.CreateOwnerClaimAsync(OwnerClaimRequest());
+        WorkspaceHandoffCreateResult handoff = await store.ExchangeOwnerClaimAsync(
+            claim.Token!,
+            "req-native-owner-handoff");
+        var nativeIdentity = new WorkspaceIdentityKey(
+            SideportIdentityConstants.NativeIssuer,
+            "native-owner-id");
+        await store.AcceptOwnerClaimAsync(
+            handoff.Token,
+            Acceptance(
+                nativeIdentity,
+                "Native Owner",
+                "native-owner@example.test",
+                "native-owner-accept-0001"));
+        WorkspaceAccessDocument document = (await store.ReadAsync())!;
+        DefaultHttpContext context = AuthenticatedContext(
+            nativeIdentity.Issuer,
+            nativeIdentity.Subject,
+            document.Workspace.SecurityEpoch,
+            "Native Owner",
+            "native-owner@example.test");
+        ((ClaimsIdentity)context.User.Identity!).AddClaim(new Claim(
+            SideportIdentityConstants.AuthenticationMethodClaimType,
+            SideportIdentityConstants.NativeMethod));
+
+        WorkspaceRequestPrincipal principal = await new WorkspaceRequestPrincipalResolver(
+            store,
+            recoveryBearer: null,
+            interactiveIdentityEnabled: true).ResolveAsync(context);
+
+        Assert.Equal(WorkspaceRequestPrincipalKind.Owner, principal.Kind);
+        Assert.True(principal.IsInteractive);
+        Assert.False(principal.IsOidc);
+        Assert.Equal("passkey", principal.AuthenticationMethod);
     }
 
     private static async Task<ActiveWorkspace> CreateActiveWorkspaceAsync()
