@@ -448,6 +448,8 @@ public sealed class DeviceEnrollmentTests : IDisposable
         var controller = new FakeDeviceController
         {
             Devices = [device],
+            // StartAsync eligibility is call 1, ProcessAsync USB discovery is
+            // call 2, and the first post-pairing recovery read is call 3.
             ListHandler = _ => Task.FromResult<IReadOnlyList<DeviceInfo>>(
                 Interlocked.Increment(ref listCalls) == 3 ? [] : [device]),
         };

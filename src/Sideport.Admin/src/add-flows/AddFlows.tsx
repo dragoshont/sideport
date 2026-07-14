@@ -182,6 +182,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   const autoRecoveryAttemptedRef = useRef<string | null>(null)
   const detectedCuePlayedRef = useRef(false)
   const attentionCuePlayedRef = useRef(false)
+  const soundSessionStartedRef = useRef(false)
   const audioContextRef = useRef<AudioContext | null>(null)
   const storageKey = enrollmentStorageKey(persistenceKey)
   const ownerLabel = iPhoneOwnerLabel(memberName)
@@ -244,6 +245,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     if (!open) {
       autoStartHandledRef.current = false
       autoRecoveryAttemptedRef.current = null
+      soundSessionStartedRef.current = false
       if (audioContextRef.current) {
         void audioContextRef.current.close()
         audioContextRef.current = null
@@ -305,6 +307,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
 
   useEffect(() => {
     if (!open || demoMode || phase !== 'recovery' || !operation || !services?.retry || !canMutate) return
+    if (operation.error?.code !== 'device-enrollment-recovery-required') return
     if (autoRecoveryAttemptedRef.current === operation.operationId) return
     autoRecoveryAttemptedRef.current = operation.operationId
     setError(null)
@@ -324,7 +327,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     if (!open || phase !== 'waiting') return
     const timeout = window.setTimeout(() => {
       setWaitingLong(true)
-      if (!attentionCuePlayedRef.current) {
+      if (soundSessionStartedRef.current && !attentionCuePlayedRef.current) {
         attentionCuePlayedRef.current = true
         playCue('attention')
       }
@@ -334,6 +337,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
 
   useEffect(() => {
     if (!open) return
+    if (!soundSessionStartedRef.current) return
     if (['trust', 'verifying', 'accepted'].includes(phase) && !detectedCuePlayedRef.current) {
       detectedCuePlayedRef.current = true
       playCue('detected')
@@ -357,6 +361,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     setWaitingLong(false)
     detectedCuePlayedRef.current = false
     attentionCuePlayedRef.current = false
+    soundSessionStartedRef.current = true
     playCue('listening')
     if (demoMode) {
       setPhase('waiting')
@@ -414,7 +419,8 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   }
 
   const activeIndex = phase === 'idle' || phase === 'waiting' || phase === 'selection' || phase === 'failed' || phase === 'recovery' ? 0 : phase === 'trust' ? 1 : phase === 'verifying' ? 2 : 3
-  const connectionActive = ['waiting', 'trust', 'verifying', 'recovery'].includes(phase)
+  const automaticTrustRecovery = phase === 'recovery' && operation?.error?.code === 'device-enrollment-recovery-required'
+  const connectionActive = ['waiting', 'trust', 'verifying'].includes(phase) || automaticTrustRecovery
   const waitingTitle = phase === 'trust'
     ? `${ownerLabel} found`
     : phase === 'verifying'
@@ -515,7 +521,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
 
           <p className="add-flow-sound-note"><Volume2 aria-hidden="true" size={16} /> Sideport uses gentle sound cues for listening, detection, and attention when browser audio is available.</p>
 
-          {error && (phase === 'failed' || phase === 'selection') && <p className="mutation-message error" role="alert">{error}</p>}
+          {error && (phase === 'failed' || phase === 'selection' || phase === 'recovery' && !automaticTrustRecovery) && <p className="mutation-message error" role="alert">{error}</p>}
           {!demoMode && (!services || !canMutate) && <p className="mutation-message">Sign in to a protected Sideport session before adding an iPhone.</p>}
           <p aria-atomic="true" aria-live="polite" className="visually-hidden">
             {phase === 'waiting' ? `Waiting for ${ownerLabel}.` : phase === 'trust' ? `${ownerLabel} found. Tap Trust This Computer and enter the passcode.` : phase === 'recovery' ? `Sideport is checking the existing Trust request for ${ownerLabel} automatically.` : phase === 'accepted' ? `${ownerLabel} added to Sideport.` : ''}
