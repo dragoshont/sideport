@@ -7,23 +7,48 @@ internal static partial class WorkspaceAccessEndpoints
 {
     private static void MapNativePasskeyEndpoints(WebApplication app, WorkspaceHttpOptions options)
     {
+        app.MapGet("/api/workspace/owner-claims/native-passkey/status", async (
+            WorkspaceAccessStore store,
+            WorkspaceLinkRateLimiter rateLimiter,
+            HttpContext context,
+            CancellationToken ct) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey-status", "presentation", context);
+                string state = await store.GetNativeOwnerBootstrapStateAsync(ct).ConfigureAwait(false);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { mode = "passkey", state });
+            }).ConfigureAwait(false));
+
         app.MapPost("/api/workspace/owner-claims/native-passkey/options", async (
             NativePasskeyProfileHttpRequest request,
             WorkspaceAccessStore store,
             NativePasskeyService passkeys,
+            NativeOwnerBootstrapCoordinator coordinator,
             WorkspaceLinkRateLimiter rateLimiter,
             HttpContext context,
             CancellationToken ct) =>
             await ExecuteAsync(async () =>
             {
                 RequireExactOrigin(context);
-                string handoff = RequireCookie(context, OwnerClaimHandoffCookie, "owner-claim-unavailable");
-                EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey", handoff, context);
-                await store.ResolvePendingOwnerClaimForEnrollmentAsync(handoff, ct).ConfigureAwait(false);
-                NativePasskeyCreationResult result = await passkeys.CreateOptionsAsync(
-                    new NativePasskeyProfile(request.DisplayName, request.Email)).ConfigureAwait(false);
-                context.Response.Headers.CacheControl = "no-store";
-                return Results.Json(new { mode = "passkey", creationOptions = result.CreationOptions });
+                EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey-bootstrap", "unclaimed", context);
+                await coordinator.Gate.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    string handoff = await RequireOrCreateNativeOwnerHandoffAsync(
+                        store,
+                        context,
+                        ct).ConfigureAwait(false);
+                    EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey", handoff, context);
+                    NativePasskeyCreationResult result = await passkeys.CreateOptionsAsync(
+                        new NativePasskeyProfile(request.DisplayName, request.Email)).ConfigureAwait(false);
+                    context.Response.Headers.CacheControl = "no-store";
+                    return Results.Json(new { mode = "passkey", creationOptions = result.CreationOptions });
+                }
+                finally
+                {
+                    coordinator.Gate.Release();
+                }
             }).ConfigureAwait(false));
 
         app.MapPost("/api/workspace/owner-claims/native-passkey/complete", async (
@@ -184,6 +209,63 @@ internal static partial class WorkspaceAccessEndpoints
                 "invitation-unavailable",
                 "The invitation is unavailable."));
 
+    private static async Task<string> RequireOrCreateNativeOwnerHandoffAsync(
+        WorkspaceAccessStore store,
+        HttpContext context,
+        CancellationToken ct)
+    {
+        if (context.Request.Cookies.TryGetValue(OwnerClaimHandoffCookie, out string? existing) &&
+            !string.IsNullOrWhiteSpace(existing))
+        {
+            try
+            {
+                await store.ResolvePendingOwnerClaimForEnrollmentAsync(existing, ct).ConfigureAwait(false);
+                return existing;
+            }
+            catch (WorkspaceAccessException error) when (error.Code == "owner-claim-unavailable")
+            {
+                DeleteHandoffCookie(context, OwnerClaimHandoffCookie);
+            }
+        }
+
+        WorkspaceAccessDocument? document = await store.ReadAsync(ct).ConfigureAwait(false);
+        if (document?.Workspace.State == WorkspaceLifecycleState.Active)
+            throw new WorkspaceAccessException("owner-claim-unavailable", "The Owner claim is unavailable.");
+        foreach (WorkspaceOwnerClaimRecord pending in document?.OwnerClaims.Where(claim =>
+                     claim.Status == WorkspaceAuthorityStatus.Pending &&
+                     claim.Kind == WorkspaceOwnerClaimKind.Bootstrap &&
+                     claim.CreatedByActor.Kind == WorkspaceActorKind.System).ToArray() ?? [])
+        {
+            await store.RevokeOwnerClaimAsync(
+                pending.ClaimId,
+                new WorkspaceAuthorityRevokeRequest(
+                    WorkspaceActorRecord.System,
+                    pending.Version,
+                    $"native-bootstrap-retry-{pending.ClaimId}",
+                    RequestId(context)),
+                ct).ConfigureAwait(false);
+        }
+
+        WorkspaceOwnerClaimCreateResult claim = await store.CreateOwnerClaimAsync(
+            new WorkspaceOwnerClaimCreateRequest(
+                ExpectedOwnerMemberId: null,
+                ImpactVersion: null,
+                Lifetime: TimeSpan.FromMinutes(15),
+                IdempotencyKey: $"native-owner-bootstrap-{Guid.NewGuid():N}",
+                RequestId: RequestId(context),
+                Actor: WorkspaceActorRecord.System),
+            ct).ConfigureAwait(false);
+        if (!claim.Created || string.IsNullOrWhiteSpace(claim.Token))
+            throw new WorkspaceAccessException("owner-claim-unavailable", "The Owner claim is unavailable.");
+
+        WorkspaceHandoffCreateResult handoff = await store.ExchangeOwnerClaimAsync(
+            claim.Token,
+            RequestId(context),
+            ct: ct).ConfigureAwait(false);
+        SetHandoffCookie(context, OwnerClaimHandoffCookie, handoff.Token, handoff.Handoff.ExpiresAt);
+        return handoff.Token;
+    }
+
     private static IResult NativePasskeyResult(NativePasskeyCompletionResult result) =>
         result.Succeeded
             ? Results.Json(new { signedIn = true, method = "passkey" })
@@ -235,4 +317,9 @@ internal static partial class WorkspaceAccessEndpoints
     internal sealed record NativePasskeyCredentialHttpRequest(
         string CredentialJson,
         string IdempotencyKey = "");
+}
+
+internal sealed class NativeOwnerBootstrapCoordinator
+{
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
 }

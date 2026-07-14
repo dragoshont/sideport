@@ -29,6 +29,8 @@ internal static class WorkspaceApiPolicy
             return WorkspaceApiAccess.Identity;
         if (HttpMethods.IsGet(method) && path == "/api/authentication/options")
             return WorkspaceApiAccess.Public;
+        if (HttpMethods.IsGet(method) && path == "/api/workspace/owner-claims/native-passkey/status")
+            return WorkspaceApiAccess.Public;
         if (HttpMethods.IsGet(method) &&
             path is "/api/workspace/invitations/handoff/session" or
                 "/api/workspace/owner-claims/handoff/session")

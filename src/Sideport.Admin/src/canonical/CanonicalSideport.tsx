@@ -640,24 +640,44 @@ function InvitationExperience({ memberName, onAccepted, onExistingSignIn, state 
 
 function OwnerClaimExperience({ onAccepted, state }: { onAccepted: () => void; state: CanonicalOwnerClaimState }) {
   const [confirming, setConfirming] = useState(false)
+  const [displayName, setDisplayName] = useState('')
+  const [email, setEmail] = useState('')
   const recovery = state === 'recovery'
+  if (!recovery) return (
+    <div className="spc-invitation" data-testid="canonical-owner-claim">
+      <header><Brand /><ProposedBadge /></header>
+      <main>
+        <SimulationNotice />
+        <div className="spc-invite-illustration"><ShieldCheck aria-hidden="true" size={44} /></div>
+        <span className="spc-eyebrow">First setup</span>
+        <h1>Finish setting up Sideport</h1>
+        <p className="spc-lead">Create the Owner passkey on this device. There is no setup token or link to copy.</p>
+        <form className="spc-identity-form" onSubmit={(event) => { event.preventDefault(); onAccepted() }}>
+          <label><span>Name</span><input autoComplete="name" onChange={(event) => setDisplayName(event.currentTarget.value)} placeholder="Your name" value={displayName} /></label>
+          <label><span>Email</span><input autoComplete="email" inputMode="email" onChange={(event) => setEmail(event.currentTarget.value)} placeholder="you@example.com" type="email" value={email} /></label>
+          <button className="spc-button primary large" disabled={!displayName.trim() || !email.trim()} type="submit">Create passkey</button>
+        </form>
+        <p className="spc-fine-print">Your passkey stays on your trusted device. Sideport never receives your Apple password.</p>
+      </main>
+    </div>
+  )
   return (
     <div className="spc-invitation" data-testid="canonical-owner-claim">
       <header><Brand /><ProposedBadge /></header>
       <main>
         <SimulationNotice />
         <div className="spc-invite-illustration"><ShieldCheck aria-hidden="true" size={44} /></div>
-        <span className="spc-eyebrow">{confirming ? 'Signed in through Authentik' : recovery ? 'Private owner recovery link' : 'Private owner setup link'}</span>
-        <h1>{confirming ? (recovery ? 'Recover owner access?' : 'Become the Sideport owner?') : (recovery ? 'Recover Sideport owner access' : 'Finish setting up Sideport')}</h1>
+        <span className="spc-eyebrow">{confirming ? 'Signed in through Authentik' : 'Private owner recovery link'}</span>
+        <h1>{confirming ? 'Recover owner access?' : 'Recover Sideport owner access'}</h1>
         <p className="spc-lead">{confirming ? 'Confirm the signed-in account before Sideport changes owner access.' : 'This short-lived, single-use link was created from the Sideport host. The long-lived recovery key stays out of the browser.'}</p>
         {confirming ? <>
-          <div className="spc-passkey-card"><CircleUserRound aria-hidden="true" size={24} /><div><strong>{recovery ? 'Mara · mara@example.test' : 'Dragos · dragos@example.test'}</strong><span>This Authentik account will be the one active Sideport owner.</span></div></div>
+          <div className="spc-passkey-card"><CircleUserRound aria-hidden="true" size={24} /><div><strong>Mara · mara@example.test</strong><span>This Authentik account will be the one active Sideport owner.</span></div></div>
           <div className="spc-passkey-card"><ShieldCheck aria-hidden="true" size={24} /><div><strong>Owner access</strong><span>Manage member access, Apple signing, approved apps, every iPhone, and technical settings.</span></div></div>
-          {recovery ? <aside className="spc-inline-note warning"><Info aria-hidden="true" size={18} /><div><strong>Dragos will lose Owner access and be signed out.</strong><span>2 Members, 2 iPhones, 3 installed apps, and their activity stay in Sideport. No app is removed and automatic refresh history is retained.</span></div></aside> : null}
-          <button className="spc-button primary large" onClick={onAccepted} type="button">{recovery ? 'Recover owner access' : 'Finish owner setup'}</button>
+          <aside className="spc-inline-note warning"><Info aria-hidden="true" size={18} /><div><strong>Dragos will lose Owner access and be signed out.</strong><span>2 Members, 2 iPhones, 3 installed apps, and their activity stay in Sideport. No app is removed and automatic refresh history is retained.</span></div></aside>
+          <button className="spc-button primary large" onClick={onAccepted} type="button">Recover owner access</button>
           <button className="spc-text-button centered-button" onClick={() => setConfirming(false)} type="button">Use a different account</button>
         </> : <>
-          {recovery ? <aside className="spc-inline-note warning"><Info aria-hidden="true" size={18} /><div><strong>The current owner will be signed out.</strong><span>Apps, iPhones, signing state, and activity are retained. Review the exact impact before the host creates this link.</span></div></aside> : null}
+          <aside className="spc-inline-note warning"><Info aria-hidden="true" size={18} /><div><strong>The current owner will be signed out.</strong><span>Apps, iPhones, signing state, and activity are retained. Review the exact impact before the host creates this link.</span></div></aside>
           <div className="spc-passkey-card"><ShieldCheck aria-hidden="true" size={24} /><div><strong>Continue to Authentik</strong><span>Authentik proves your account. Sideport then asks once more before granting Owner access.</span></div></div>
           <button className="spc-button primary large" onClick={() => setConfirming(true)} type="button">Continue to sign in</button>
         </>}

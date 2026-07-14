@@ -100,17 +100,19 @@ export const FreshDeployment: Story = {
 }
 
 export const OwnerClaimSetup: Story = {
-  name: '02b Setup · short-lived owner claim',
+  name: '02b Setup · direct Owner passkey',
   args: { experience: 'owner-claim', ownerClaimState: 'setup', role: 'owner' },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByRole('heading', { name: 'Finish setting up Sideport' })).toBeVisible()
-    await expect(canvas.getByText(/recovery key stays out of the browser/)).toBeVisible()
+    await expect(canvas.getByText(/no setup token or link to copy/)).toBeVisible()
     await expect(canvas.queryByLabelText(/API key|recovery key/i)).not.toBeInTheDocument()
-    await userEvent.click(canvas.getByRole('button', { name: 'Continue to sign in' }))
-    await expect(canvas.getByRole('heading', { name: 'Become the Sideport owner?' })).toBeVisible()
-    await expect(canvas.getByText(/Dragos · dragos@example.test/)).toBeVisible()
-    await userEvent.click(canvas.getByRole('button', { name: 'Finish owner setup' }))
+    const create = canvas.getByRole('button', { name: 'Create passkey' })
+    await expect(create).toBeDisabled()
+    await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Dragos')
+    await userEvent.type(canvas.getByRole('textbox', { name: 'Email' }), 'dragos@example.test')
+    await expect(create).toBeEnabled()
+    await userEvent.click(create)
     await expect(canvas.getByRole('heading', { name: 'Welcome to Sideport' })).toBeVisible()
   },
 }

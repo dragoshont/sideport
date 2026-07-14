@@ -17,10 +17,10 @@ export SIDEPORT_PUBLIC_ORIGIN="http://127.0.0.1:8080/"
 ./deploy/apple-container/sideport-container.sh start
 ```
 
-Native Sideport passkeys are used by default. After `start`, run
-`container logs sideport` and open the one-time **Sideport Owner setup** link.
-The link is printed only on the first start of an empty state volume and is not
-stored in plaintext. Set `SIDEPORT_IDENTITY_MODE=oidc` plus the generic OIDC
+Native Sideport passkeys are used by default. After `start`, open
+`SIDEPORT_PUBLIC_ORIGIN`; an unclaimed deployment starts Owner passkey setup
+directly. Keep the port loopback/LAN-only until the first Owner is created. Set
+`SIDEPORT_IDENTITY_MODE=oidc` plus the generic OIDC
 authority, client ID, and client secret variables only when an external identity
 provider is desired.
 

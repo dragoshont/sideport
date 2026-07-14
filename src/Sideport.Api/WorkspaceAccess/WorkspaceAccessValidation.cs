@@ -295,7 +295,9 @@ internal static class WorkspaceAccessValidation
         ValidateActor(claim.CreatedByActor);
         if (!Enum.IsDefined(claim.Kind) ||
             !Enum.IsDefined(claim.Status) ||
-            claim.CreatedByActor.Kind != WorkspaceActorKind.RecoveryBearer ||
+            claim.CreatedByActor.Kind != WorkspaceActorKind.RecoveryBearer &&
+                !(claim.Kind == WorkspaceOwnerClaimKind.Bootstrap &&
+                  claim.CreatedByActor.Kind == WorkspaceActorKind.System) ||
             !IsStableId(claim.ClaimId, "owner_claim_") ||
             !IsHexHash(claim.TokenHash) ||
             !IsHexHash(claim.CreationIdempotencyKeyHash) ||

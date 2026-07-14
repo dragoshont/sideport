@@ -77,8 +77,8 @@ spec:
               value: "00:03:00"
             - name: Sideport__Orchestrator__InstallCancellationGrace
               value: "00:00:02"
-            # Native passkeys are the provider-free default. The first start of
-            # an empty PVC prints one private Owner setup URL to container logs.
+            # Native passkeys are the provider-free default. An unclaimed
+            # deployment starts Owner setup directly at its private HTTPS origin.
             # A reviewed environment overlay may switch this to `oidc` and add
             # any standards-compliant provider settings.
             - name: Sideport__PublicOrigin

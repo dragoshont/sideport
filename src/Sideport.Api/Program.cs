@@ -370,14 +370,6 @@ builder.Services.AddHostedService<DeviceEnrollmentWorker>();
 builder.Services.AddSingleton(_ => new DiagnosticIssueStore(Path.Combine(stateDirectory, "diagnostic-issues.json")));
 builder.Services.AddSingleton<DiagnosticIssueService>();
 builder.Services.AddSingleton(new WorkspaceAccessStore(stateDirectory));
-if (nativePasskeyEnabled)
-{
-    builder.Services.AddSingleton<IOwnerSetupLinkSink, ConsoleOwnerSetupLinkSink>();
-    builder.Services.AddSingleton(sp => new OwnerSetupLinkBootstrapper(
-        sp.GetRequiredService<WorkspaceAccessStore>(),
-        publicOrigin,
-        sp.GetRequiredService<IOwnerSetupLinkSink>()));
-}
 builder.Services.AddSingleton<IGitHubSetupActorAuthorizer>(sp =>
     new WorkspaceGitHubSetupActorAuthorizer(
         sp.GetRequiredService<WorkspaceAccessStore>(),
@@ -500,6 +492,7 @@ if (interactiveIdentityEnabled)
     if (nativePasskeyEnabled)
     {
         string identityDatabasePath = Path.Combine(stateDirectory, "identity.db");
+        builder.Services.AddSingleton<NativeOwnerBootstrapCoordinator>();
         builder.Services.AddSideportNativePasskeys(
             identityDatabasePath,
             publicOrigin.Host);
@@ -576,8 +569,6 @@ if (nativePasskeyEnabled)
     SideportIdentityDbContext identityDatabase = identityScope.ServiceProvider
         .GetRequiredService<SideportIdentityDbContext>();
     await identityDatabase.Database.EnsureCreatedAsync().ConfigureAwait(false);
-    await app.Services.GetRequiredService<OwnerSetupLinkBootstrapper>()
-        .EnsureAsync().ConfigureAwait(false);
 }
 SchedulerSettingsStore schedulerSettingsStore = app.Services.GetRequiredService<SchedulerSettingsStore>();
 try
