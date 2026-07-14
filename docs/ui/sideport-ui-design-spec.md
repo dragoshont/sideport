@@ -608,9 +608,10 @@ Minimum stories:
   and may offer provider-owned enrollment. The private-link screen shows only
   actions the configured backend can actually perform; it never shows an OIDC
   fallback in native-only mode or implies that an external provider is required.
-- Owner claim: short-lived setup and recovery links outside the shell; no API
-  key field; actual signed-in account and Owner impact confirmed before setup or
-  replacement continues.
+- Owner claim: native first-run setup opens directly on an unclaimed private
+  deployment with no link or API-key field. Later Owner recovery/replacement
+  still uses a short-lived private link and confirms the actual account and
+  impact before replacement continues.
 - One-cable member assistant: cable/unlock/Trust/passcode guidance together;
   detection, pairing, Trust verification, and Sideport acceptance automatic
   after one start action; Developer Mode/restart/reconnect guidance before app

@@ -38,11 +38,10 @@ non-live until its Phase 9 implementation passes.
   server-custodied after Apple authentication.
   API keys are accepted only in their documented Authorization header and are
   never returned to browser code, copied into domain request bodies, or
-  persisted in domain/audit records. A fresh native-passkey deployment also
-  writes its fragment-only Owner setup URL once directly to container stderr;
-  it is not routed through the in-process log store, persisted, or emitted again
-  after restart. Private keys and anisette identity
-  material never cross the API boundary.
+  persisted in domain/audit records. Native first-Owner bootstrap creates and
+  exchanges its claim entirely server-side; no raw bootstrap authority is sent
+  to browser code, logs, or durable plaintext. Private keys and anisette
+  identity material never cross the API boundary.
 - Mutating endpoints must return structured failure reasons. A successful HTTP
   response means the requested state transition or operation record was accepted,
   not that a device install necessarily completed unless the endpoint says so.
@@ -76,6 +75,7 @@ non-live until its Phase 9 implementation passes.
 | `GET` | `/api/about` | Service metadata | live | Protected like other `/api/*`. |
 | `GET` | `/api/me` | Current API identity mode | live | Native passkey user, OIDC user, or bearer-token client. |
 | `GET` | `/api/authentication/options` | Public sign-in presentation and enrollment capability | live | Reports `passkey|oidc|none`; actions are advertised only when the active backend can perform them. |
+| `GET` | `/api/workspace/owner-claims/native-passkey/status` | Public first-Owner presentation state | live | Native mode only; returns `available|private-link-required|claimed`, contains no identity or authority material, and is `no-store`. |
 | `GET` | `/api/anisette/info` | Anisette client info probe | live | No raw anisette secrets. |
 | `GET` | `/api/logs?limit=` | In-process API log tail | live | Ring buffer, not durable operation history. |
 | `GET` | `/api/apple-access/status` | App Store Connect read-only probe | live | Optional paid-team path. |
@@ -158,8 +158,10 @@ The first release does not link native and OIDC accounts and does not run both
 interactive backends simultaneously. Switching modes requires an explicit
 workspace reset or a separately designed Owner recovery/migration flow.
 
-Native passkey creation is allowed only from a valid pending Owner/invitation
-handoff. The server returns WebAuthn creation options, validates the browser's
+Native invitation and Owner-recovery passkey creation requires a valid pending
+handoff. On an unclaimed native deployment, the same-origin creation-options
+request creates and exchanges a short-lived bootstrap claim server-side and
+sets only the opaque HttpOnly handoff cookie. The server returns WebAuthn creation options, validates the browser's
 attestation with required user verification, creates the Identity user only
 after successful attestation, persists the credential/sign counter, and signs
 the browser into the existing Sideport session cookie. Passkey assertion login
@@ -167,12 +169,14 @@ uses discoverable credentials and updates the stored sign counter before the
 cookie is issued. Native endpoints are same-origin, no-store, rate-limited, and
 absent outside `passkey` mode.
 
-On a fresh native-passkey installation, Sideport creates one pending Owner claim
-only when no workspace or pending claim exists and logs its fragment-only setup
-URL once. The long-lived recovery bearer remains server-side recovery authority;
-it is never entered in the browser. The plaintext setup URL is not persisted or
-re-logged. If lost or expired, a trusted operator revokes/regenerates it through
-the existing recovery-bearer command/API.
+On a fresh native-passkey installation, navigating to `/` redirects to
+`/owner-claim`; Name + Email and **Create passkey** are immediately available.
+The first same-origin visitor who completes user-verified WebAuthn becomes the
+Owner. Operators must therefore keep an unclaimed deployment loopback/LAN-only.
+After bootstrap, normal passkey authentication and workspace membership protect
+the origin. Recovery and Owner replacement still require a private recovery
+claim minted with the server-side recovery bearer; that bearer is never entered
+in the browser.
 
 The same enrollment capability is available from a pending Owner-claim handoff
 at `POST /api/workspace/owner-claims/enrollment`. It validates only the opaque
@@ -455,6 +459,11 @@ identity.
 
 #### Owner bootstrap and recovery
 
+Native first-Owner bootstrap uses the direct same-origin flow described above;
+it does not require the recovery bearer, a setup URL, or a token copied from the
+host. The recovery-bearer flow below remains the contract for OIDC bootstrap and
+for later Owner recovery/replacement in either interactive identity mode.
+
 An OIDC/family-capable deployment requires a configured recovery bearer. When
 it is missing, `/api/me` reports `membership.state=bootstrap-required` with
 `reason=recovery-proof-not-configured`, Owner-claim minting is unavailable, and
@@ -514,12 +523,13 @@ preview. The raw claim is never written to local/session storage, another
 cookie, the login return URL, or OIDC state.
 
 While the workspace is missing or remains `bootstrap-required`, safe navigation
-to `/` returns a temporary, no-store redirect to `/owner-claim` before the OIDC
-challenge middleware runs. This redirect does not mint a claim or grant access;
-the recovery bearer still creates the fragment-only Owner link. Once the
-workspace has an active Owner, `/` resumes the normal OIDC-gated product-shell
-behavior. Other routes, APIs, probes, assets, and callbacks retain their
-documented access rules.
+to `/` returns a temporary, no-store redirect to `/owner-claim` before any OIDC
+challenge middleware runs. In native mode the page may start the constrained
+server-side bootstrap ceremony directly. In OIDC mode the redirect does not mint
+a claim or grant access; the recovery bearer still creates the fragment-only
+Owner link. Once the workspace has an active Owner, `/` resumes the normal
+interactive-login-gated product-shell behavior. Other routes, APIs, probes,
+assets, and callbacks retain their documented access rules.
 
 After OIDC login, `/owner-claim` calls authenticated, no-store
 `GET /api/workspace/owner-claims/handoff`. The endpoint resolves only the opaque

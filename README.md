@@ -543,10 +543,11 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `Sideport__Authentik__EnrollmentFlowId` | passkey enrollment only | — | Exact Authentik flow UUID to bind newly created invitations. |
 
 With `Sideport__Identity__Mode=passkey`, Sideport owns the WebAuthn ceremony and
-stores passkeys in `/var/lib/sideport/identity.db`. A fresh empty deployment
-prints one private **Sideport Owner setup** URL to container logs. Open that URL;
-the browser asks only for Name and Email, then the device creates the passkey.
-The link is not persisted in plaintext or printed again after restart.
+stores passkeys in `/var/lib/sideport/identity.db`. Open the deployment URL: an
+unclaimed Sideport redirects directly to Owner setup, asks only for Name and
+Email, and creates the first Owner passkey. Keep a fresh deployment private or
+LAN-only until the Owner is claimed; after that, normal passkey sign-in and
+workspace authorization protect the application.
 
 When OIDC is enabled the browser UI requires an interactive login and the
 authenticated session cookie also authorizes `/api/*`, so the bearer token stays

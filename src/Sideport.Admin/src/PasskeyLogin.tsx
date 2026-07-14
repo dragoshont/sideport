@@ -88,7 +88,7 @@ export function PasskeyLogin() {
       {phase === 'checking' || phase === 'working' ? <div role="status"><Loader2 aria-hidden="true" className="spin" size={22} /> {phase === 'working' ? 'Waiting for this device…' : message}</div> : null}
       {phase === 'ready' ? <button className="spc-button primary large" onClick={() => void signIn()} type="button"><KeyRound aria-hidden="true" size={18} /> Sign in with a passkey</button> : null}
       {phase === 'done' ? <div className="spc-invite-result" role="status"><CheckCircle2 aria-hidden="true" size={20} /><div><strong>Signed in</strong><span>Opening Sideport…</span></div></div> : null}
-      {phase === 'error' ? <aside className="spc-inline-note warning" role="alert"><Info aria-hidden="true" size={18} /><div><strong>Sign-in is unavailable.</strong><span>{message}</span></div></aside> : null}
+      {phase === 'error' ? <div className="spc-inline-note warning" role="alert"><Info aria-hidden="true" size={18} /><div><strong>Sign-in is unavailable.</strong><span>{message}</span></div></div> : null}
       <p className="spc-fine-print">Face ID, Touch ID, Windows Hello, Android screen lock, and synced password managers can all hold a passkey.</p>
     </main>
   </div>

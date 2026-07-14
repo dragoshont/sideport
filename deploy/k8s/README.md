@@ -34,10 +34,9 @@ inside the UI. Apple credentials do not belong in the Kubernetes Secret.
 ## Identity modes
 
 The base example uses `Sideport__Identity__Mode=passkey`, so Authentik is not
-required. On the first start of an empty PVC, read the one-time setup link with
-`kubectl -n sideport logs deploy/sideport -c sideport`; open it directly and
-create the Owner passkey. The URL is not persisted in plaintext and is not
-printed again after restart.
+required. Open the Sideport HTTPS origin: an unclaimed deployment starts Owner
+passkey setup directly. Keep ingress private/LAN-only until the Owner exists;
+after bootstrap, the same origin requires the Owner/member passkey session.
 
 To use external identity, set `Sideport__Identity__Mode=oidc` in a reviewed
 overlay and provide a generic OIDC Authority, ClientId, and ClientSecret.

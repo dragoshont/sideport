@@ -54,6 +54,29 @@ internal sealed class WorkspaceAccessStore
         }
     }
 
+    internal async Task<string> GetNativeOwnerBootstrapStateAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            WorkspaceAccessDocument? document = await ReadUnsafeAsync(ct).ConfigureAwait(false);
+            if (document?.Workspace.State == WorkspaceLifecycleState.Active)
+                return "claimed";
+
+            DateTimeOffset now = _time.GetUtcNow();
+            return document?.OwnerClaims.Any(claim =>
+                claim.Status == WorkspaceAuthorityStatus.Pending &&
+                claim.ExpiresAt > now &&
+                claim.CreatedByActor.Kind != WorkspaceActorKind.System) == true
+                ? "private-link-required"
+                : "available";
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async Task<WorkspaceMemberRecord?> FindMemberAsync(
         WorkspaceIdentityKey identity,
         CancellationToken ct = default)
@@ -81,6 +104,9 @@ internal sealed class WorkspaceAccessStore
         WorkspaceAccessValidation.ValidateRequestIds(request.RequestId, request.CorrelationId);
         if (request.Lifetime <= TimeSpan.Zero || request.Lifetime > TimeSpan.FromHours(1))
             throw new ArgumentOutOfRangeException(nameof(request), "Owner claims must expire within one hour.");
+        WorkspaceActorRecord actor = request.Actor ?? WorkspaceActorRecord.RecoveryBearer;
+        if (actor.Kind is not (WorkspaceActorKind.RecoveryBearer or WorkspaceActorKind.System))
+            throw Domain("capability-denied", "This actor cannot create an Owner claim.");
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -109,6 +135,8 @@ internal sealed class WorkspaceAccessStore
                 kind = WorkspaceOwnerClaimKind.Recovery;
                 semanticTarget = request.ExpectedOwnerMemberId;
             }
+            if (kind == WorkspaceOwnerClaimKind.Recovery && actor.Kind != WorkspaceActorKind.RecoveryBearer)
+                throw Domain("capability-denied", "Only recovery access can replace an active Owner.");
 
             string semanticDigest = SemanticDigest(
                 kind.ToString(),
@@ -117,7 +145,7 @@ internal sealed class WorkspaceAccessStore
                 request.Lifetime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
             WorkspaceIdempotencyRecord? replay = FindIdempotency(
                 current,
-                ActorKey(WorkspaceActorRecord.RecoveryBearer),
+                ActorKey(actor),
                 "owner-claim:create",
                 request.IdempotencyKey,
                 semanticTarget,
@@ -204,7 +232,7 @@ internal sealed class WorkspaceAccessStore
                 HashBytes(secret),
                 HashText(request.IdempotencyKey),
                 semanticDigest,
-                WorkspaceActorRecord.RecoveryBearer,
+                actor,
                 request.ExpectedOwnerMemberId,
                 request.ImpactVersion,
                 ClaimantMemberId: null,
@@ -221,7 +249,7 @@ internal sealed class WorkspaceAccessStore
                 ? current.Workspace
                 : Advance(current.Workspace, now);
             WorkspaceIdempotencyRecord idempotency = NewIdempotency(
-                ActorKey(WorkspaceActorRecord.RecoveryBearer),
+                ActorKey(actor),
                 "owner-claim:create",
                 semanticTarget,
                 request.IdempotencyKey,
@@ -231,7 +259,7 @@ internal sealed class WorkspaceAccessStore
                 now);
             WorkspaceAuditEventRecord audit = NewAudit(
                 WorkspaceAuditAction.OwnerClaimCreated,
-                WorkspaceActorRecord.RecoveryBearer,
+                actor,
                 WorkspaceAuditTargetType.OwnerClaim,
                 claimId,
                 now,
@@ -265,8 +293,8 @@ internal sealed class WorkspaceAccessStore
         ArgumentNullException.ThrowIfNull(request);
         WorkspaceAccessValidation.ValidateIdempotencyKey(request.IdempotencyKey);
         WorkspaceAccessValidation.ValidateRequestIds(request.RequestId, request.CorrelationId);
-        if (request.Actor.Kind != WorkspaceActorKind.RecoveryBearer)
-            throw Domain("capability-denied", "Only recovery access can revoke an Owner claim.");
+        if (request.Actor.Kind is not (WorkspaceActorKind.RecoveryBearer or WorkspaceActorKind.System))
+            throw Domain("capability-denied", "This actor cannot revoke an Owner claim.");
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -292,6 +320,13 @@ internal sealed class WorkspaceAccessStore
             if (index < 0)
                 throw Domain("owner-claim-unavailable", "The Owner claim is unavailable.");
             WorkspaceOwnerClaimRecord existing = current.OwnerClaims[index];
+            if (request.Actor.Kind == WorkspaceActorKind.System &&
+                (current.Workspace.State != WorkspaceLifecycleState.BootstrapRequired ||
+                 existing.Kind != WorkspaceOwnerClaimKind.Bootstrap ||
+                 existing.CreatedByActor.Kind != WorkspaceActorKind.System))
+            {
+                throw Domain("capability-denied", "System bootstrap can replace only its own unclaimed Owner setup.");
+            }
             EnsureExpectedVersion(existing.Version, request.ExpectedVersion);
             if (existing.Status != WorkspaceAuthorityStatus.Pending)
                 throw Domain("owner-claim-unavailable", "The Owner claim is unavailable.");

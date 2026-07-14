@@ -4,7 +4,8 @@ import { creationOptionsFromJson, credentialJson, passkeyError, requestOptionsFr
 import './canonical/CanonicalSideport.css'
 
 type FlowKind = 'owner-claim' | 'invitation'
-type Phase = 'exchanging' | 'sign-in' | 'creating' | 'preview' | 'accepting' | 'done' | 'error'
+type Phase = 'exchanging' | 'sign-in' | 'creating' | 'preview' | 'accepting' | 'done' | 'claimed' | 'error'
+type NativeOwnerBootstrapState = 'available' | 'private-link-required' | 'claimed'
 
 interface Preview {
   account?: { displayName?: string; email?: string }
@@ -20,6 +21,11 @@ interface AuthenticationOptions {
   preferredMethod?: string
   enrollmentEnabled?: boolean
   nativePasskeyEnabled?: boolean
+}
+
+interface NativeOwnerBootstrapStatus {
+  mode?: 'passkey'
+  state?: NativeOwnerBootstrapState
 }
 
 function apiPath(kind: FlowKind, action: 'handoff' | 'session' | 'accept' | 'enrollment' | 'native-options' | 'native-complete'): string {
@@ -68,6 +74,7 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
   const [enrollmentUrl, setEnrollmentUrl] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
+  const [directOwnerSetup, setDirectOwnerSetup] = useState(false)
   const started = useRef(false)
   const isOwner = kind === 'owner-claim'
   const nativeMode = authentication.mode === 'passkey' && authentication.nativePasskeyEnabled === true
@@ -107,18 +114,42 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
         }
       }
 
-      const me = await jsonRequest('/api/me')
-      if (me.response.ok && me.body?.authenticated === true && (me.body?.via === 'oidc' || me.body?.via === 'passkey')) {
-        await loadPreview(me)
-        return
+      let nativeOwnerStatus: NativeOwnerBootstrapState | undefined
+      if (isOwner && configuredAuthentication.mode === 'passkey') {
+        const statusResult = await jsonRequest('/api/workspace/owner-claims/native-passkey/status')
+        if (!statusResult.response.ok) {
+          setMessage('Sideport could not check whether Owner setup is available. Refresh and try again.')
+          setPhase('error')
+          return
+        }
+        nativeOwnerStatus = ((statusResult.body ?? {}) as NativeOwnerBootstrapStatus).state
+        if (nativeOwnerStatus === 'available') setDirectOwnerSetup(true)
       }
 
-      const handoffSession = await jsonRequest(apiPath(kind, 'session'))
-      if (!handoffSession.response.ok) {
-        setMessage(isOwner
-          ? 'Open the one-time Owner setup link shown in Sideport’s startup logs. If it expired, create a new Owner link from the server.'
-          : 'Open the complete private invitation link that was sent to you.')
-        setPhase('error')
+      const me = await jsonRequest('/api/me')
+      const signedIn = me.response.ok && me.body?.authenticated === true && (me.body?.via === 'oidc' || me.body?.via === 'passkey')
+      const needsPrivateHandoff = !isOwner || configuredAuthentication.mode !== 'passkey' || nativeOwnerStatus !== 'available'
+      let handoffAvailable = false
+      if (needsPrivateHandoff) {
+        const handoffSession = await jsonRequest(apiPath(kind, 'session'))
+        handoffAvailable = handoffSession.response.ok
+        if (!handoffAvailable) {
+          if (isOwner && nativeOwnerStatus === 'claimed') {
+            setMessage('Owner setup is already complete. Sign in from Sideport Home.')
+            setPhase('claimed')
+          } else {
+            setMessage(isOwner
+              ? 'Open the complete private Owner recovery link that was created for you.'
+              : 'Open the complete private invitation link that was sent to you.')
+            setPhase('error')
+          }
+          return
+        }
+      }
+
+      if (signedIn) {
+        if (handoffAvailable) await loadPreview(me)
+        else setPhase('sign-in')
         return
       }
 
@@ -214,7 +245,7 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
   const validOwnerProfile = displayName.trim().length > 0 && email.trim().length > 2
 
   return <div className="spc-invitation" data-testid={`runtime-${kind}`}>
-    <header><strong>Sideport</strong><span className="spc-eyebrow">Private link</span></header>
+    <header><strong>Sideport</strong><span className="spc-eyebrow">{directOwnerSetup ? 'First setup' : 'Private link'}</span></header>
     <main>
       <div className="spc-invite-illustration">{isOwner ? <ShieldCheck aria-hidden="true" size={44} /> : <Users aria-hidden="true" size={44} />}</div>
       <span className="spc-eyebrow">{isOwner ? 'Owner access' : 'Trusted access'}</span>
@@ -241,7 +272,8 @@ export function WorkspaceHandoff({ kind }: { kind: FlowKind }) {
         <button className="spc-button primary large" onClick={() => void accept()} type="button">{isOwner ? recovering ? 'Recover owner access' : 'Finish owner setup' : 'Join Sideport'}</button>
       </> : null}
       {phase === 'done' ? <div className="spc-invite-result" role="status"><CheckCircle2 aria-hidden="true" size={20} /><div><strong>Access saved</strong><span>Opening Sideport…</span></div></div> : null}
-      {phase === 'error' ? <aside className="spc-inline-note warning" role="alert"><Info aria-hidden="true" size={18} /><div><strong>This link cannot continue.</strong><span>{message}</span></div></aside> : null}
+      {phase === 'claimed' ? <><div className="spc-invite-result" role="status"><CheckCircle2 aria-hidden="true" size={20} /><div><strong>Sideport is already set up</strong><span>{message}</span></div></div><button className="spc-button primary large" onClick={() => window.location.assign('/login?returnUrl=%2F')} type="button"><KeyRound aria-hidden="true" size={18} /> Sign in</button></> : null}
+      {phase === 'error' ? <div className="spc-inline-note warning" role="alert"><Info aria-hidden="true" size={18} /><div><strong>This link cannot continue.</strong><span>{message}</span></div></div> : null}
       <p className="spc-fine-print">Your passkey stays on your trusted device. Sideport never receives your Apple password.</p>
     </main>
   </div>

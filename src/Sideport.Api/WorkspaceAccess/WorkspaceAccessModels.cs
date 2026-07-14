@@ -264,7 +264,8 @@ internal sealed record WorkspaceOwnerClaimCreateRequest(
     TimeSpan Lifetime,
     string IdempotencyKey,
     string RequestId,
-    string? CorrelationId = null);
+    string? CorrelationId = null,
+    WorkspaceActorRecord? Actor = null);
 
 internal sealed record WorkspaceInvitationCreateRequest(
     WorkspaceActorRecord Actor,

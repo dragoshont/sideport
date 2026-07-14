@@ -98,25 +98,66 @@ public sealed class NativePasskeyHttpTests
     }
 
     [Fact]
-    public async Task OwnerPasskeyOptions_RequireExactOriginAndValidHandoff()
+    public async Task OwnerBootstrapStatus_IsAvailableOnAFreshDeployment()
     {
         using var app = new NativePasskeyTestApp();
         using HttpClient browser = app.CreateClient();
 
-        HttpResponseMessage missingHandoff = await SendJsonAsync(
+        HttpResponseMessage response = await browser.GetAsync(
+            "/api/workspace/owner-claims/native-passkey/status");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty);
+        JsonObject body = await JsonAsync(response);
+        Assert.Equal("passkey", String(body, "mode"));
+        Assert.Equal("available", String(body, "state"));
+    }
+
+    [Fact]
+    public async Task FreshNativeDeployment_RedirectsRootToDirectOwnerSetup()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient browser = app.CreateClient();
+
+        HttpResponseMessage response = await browser.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/owner-claim", response.Headers.Location?.OriginalString);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+    }
+
+    [Fact]
+    public async Task OwnerBootstrapStatus_RequiresTheExistingPrivateRecoveryLink()
+    {
+        using var app = new NativePasskeyTestApp();
+        WorkspaceAccessStore store = app.Services.GetRequiredService<WorkspaceAccessStore>();
+        await store.CreateOwnerClaimAsync(new WorkspaceOwnerClaimCreateRequest(
+            ExpectedOwnerMemberId: null,
+            ImpactVersion: null,
+            Lifetime: TimeSpan.FromMinutes(15),
+            IdempotencyKey: "native-private-bootstrap-0001",
+            RequestId: "native-private-bootstrap-request"));
+        using HttpClient browser = app.CreateClient();
+
+        JsonObject body = await JsonAsync(await browser.GetAsync(
+            "/api/workspace/owner-claims/native-passkey/status"));
+
+        Assert.Equal("private-link-required", String(body, "state"));
+        HttpResponseMessage directBootstrap = await SendJsonAsync(
             browser,
             "/api/workspace/owner-claims/native-passkey/options",
-            new { displayName = "Home Owner", email = "owner@example.test" },
+            new { displayName = "Other Person", email = "other@example.test" },
             Origin);
-        Assert.Equal(HttpStatusCode.NotFound, missingHandoff.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, directBootstrap.StatusCode);
+        WorkspaceAccessDocument document = (await store.ReadAsync())!;
+        Assert.Equal(WorkspaceActorRecord.RecoveryBearer, Assert.Single(document.OwnerClaims).CreatedByActor);
+    }
 
-        string ownerToken = app.SetupToken;
-        HttpResponseMessage exchanged = await SendJsonAsync(
-            browser,
-            "/api/workspace/owner-claims/handoff",
-            new { claimToken = ownerToken },
-            Origin);
-        Assert.Equal(HttpStatusCode.OK, exchanged.StatusCode);
+    [Fact]
+    public async Task OwnerPasskeyOptions_CreateOpaqueBootstrapHandoffOnlyAfterExactOrigin()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient browser = app.CreateClient();
 
         HttpResponseMessage wrongOrigin = await SendJsonAsync(
             browser,
@@ -132,6 +173,13 @@ public sealed class NativePasskeyHttpTests
             Origin);
         Assert.Equal(HttpStatusCode.OK, options.StatusCode);
         Assert.Contains("no-store", options.Headers.CacheControl?.ToString() ?? string.Empty);
+        string responseText = await options.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("spown1_", responseText, StringComparison.Ordinal);
+        Assert.DoesNotContain(RecoveryToken, responseText, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            options.Headers.GetValues("Set-Cookie"),
+            value => value.Contains("spown1_", StringComparison.Ordinal) ||
+                     value.Contains(RecoveryToken, StringComparison.Ordinal));
         JsonObject body = await JsonAsync(options);
         Assert.Equal("passkey", String(body, "mode"));
         string creationOptions = String(body, "creationOptions");
@@ -141,6 +189,17 @@ public sealed class NativePasskeyHttpTests
         Assert.Contains(
             options.Headers.GetValues("Set-Cookie"),
             value => value.StartsWith("sideport.passkey-ceremony=", StringComparison.Ordinal));
+        Assert.Contains(
+            options.Headers.GetValues("Set-Cookie"),
+            value => value.StartsWith("__Host-sideport.owner-claim-handoff=", StringComparison.Ordinal));
+        await using AsyncServiceScope scope = app.Services.CreateAsyncScope();
+        WorkspaceAccessDocument document = (await scope.ServiceProvider
+            .GetRequiredService<WorkspaceAccessStore>()
+            .ReadAsync())!;
+        Assert.Equal(WorkspaceActorRecord.System, Assert.Single(document.OwnerClaims).CreatedByActor);
+        JsonObject status = await JsonAsync(await browser.GetAsync(
+            "/api/workspace/owner-claims/native-passkey/status"));
+        Assert.Equal("available", String(status, "state"));
     }
 
     [Fact]
@@ -148,12 +207,6 @@ public sealed class NativePasskeyHttpTests
     {
         using var app = new NativePasskeyTestApp();
         using HttpClient browser = app.CreateClient();
-        string ownerToken = app.SetupToken;
-        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
-            browser,
-            "/api/workspace/owner-claims/handoff",
-            new { claimToken = ownerToken },
-            Origin)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
             browser,
             "/api/workspace/owner-claims/native-passkey/options",
@@ -208,11 +261,6 @@ public sealed class NativePasskeyHttpTests
         using HttpClient enrollment = app.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
             enrollment,
-            "/api/workspace/owner-claims/handoff",
-            new { claimToken = app.SetupToken },
-            Origin)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
-            enrollment,
             "/api/workspace/owner-claims/native-passkey/options",
             new { displayName = "Home Owner", email = "owner@example.test" },
             Origin)).StatusCode);
@@ -261,6 +309,142 @@ public sealed class NativePasskeyHttpTests
         Assert.Equal("passkey", String(returningMe, "via"));
         Assert.Equal("active", String(returningMe["membership"], "state"));
         Assert.Equal("owner", String(returningMe["membership"], "role"));
+
+        JsonObject status = await JsonAsync(await returning.GetAsync(
+            "/api/workspace/owner-claims/native-passkey/status"));
+        Assert.Equal("claimed", String(status, "state"));
+
+        using HttpClient stranger = app.CreateClient();
+        HttpResponseMessage secondOwner = await SendJsonAsync(
+            stranger,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Other Person", email = "other@example.test" },
+            Origin);
+        Assert.Equal(HttpStatusCode.NotFound, secondOwner.StatusCode);
+    }
+
+    [Fact]
+    public async Task StaleBootstrapCookie_IsReplacedOnTheNextCreateAttempt()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient firstBrowser = app.CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
+            firstBrowser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Home Owner", email = "owner@example.test" },
+            Origin)).StatusCode);
+        WorkspaceAccessStore store = app.Services.GetRequiredService<WorkspaceAccessStore>();
+        WorkspaceAccessDocument first = (await store.ReadAsync())!;
+        WorkspaceOwnerClaimRecord firstClaim = Assert.Single(first.OwnerClaims);
+        Assert.Equal(WorkspaceActorRecord.System, firstClaim.CreatedByActor);
+
+        using HttpClient secondBrowser = app.CreateClient();
+        HttpResponseMessage retriedWithoutCookie = await SendJsonAsync(
+            secondBrowser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Home Owner", email = "owner@example.test" },
+            Origin);
+
+        Assert.Equal(HttpStatusCode.OK, retriedWithoutCookie.StatusCode);
+        WorkspaceAccessDocument replaced = (await store.ReadAsync())!;
+        Assert.Equal(WorkspaceAuthorityStatus.Revoked, replaced.OwnerClaims.Single(claim => claim.ClaimId == firstClaim.ClaimId).Status);
+        WorkspaceOwnerClaimRecord replacement = Assert.Single(replaced.OwnerClaims, claim => claim.Status == WorkspaceAuthorityStatus.Pending);
+        Assert.Equal(WorkspaceActorRecord.System, replacement.CreatedByActor);
+
+        HttpResponseMessage retriedWithStaleCookie = await SendJsonAsync(
+            firstBrowser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Home Owner", email = "owner@example.test" },
+            Origin);
+
+        Assert.Equal(HttpStatusCode.OK, retriedWithStaleCookie.StatusCode);
+        WorkspaceAccessDocument recovered = (await store.ReadAsync())!;
+        Assert.Equal(2, recovered.OwnerClaims.Count(claim => claim.Status == WorkspaceAuthorityStatus.Revoked));
+        Assert.Single(recovered.OwnerClaims, claim => claim.Status == WorkspaceAuthorityStatus.Pending);
+        Assert.All(recovered.OwnerClaims, claim => Assert.Equal(WorkspaceActorRecord.System, claim.CreatedByActor));
+        Assert.Equal(2, recovered.AuditEvents.Count(audit =>
+            audit.Action == WorkspaceAuditAction.OwnerClaimRevoked &&
+            audit.Actor.Kind == WorkspaceActorKind.System));
+    }
+
+    [Fact]
+    public async Task ConcurrentDirectBootstrapAttempts_AreSerializedAndLeaveOnePendingClaim()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient firstBrowser = app.CreateClient();
+        using HttpClient secondBrowser = app.CreateClient();
+
+        Task<HttpResponseMessage> first = SendJsonAsync(
+            firstBrowser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "First Owner", email = "first@example.test" },
+            Origin);
+        Task<HttpResponseMessage> second = SendJsonAsync(
+            secondBrowser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Second Owner", email = "second@example.test" },
+            Origin);
+        HttpResponseMessage[] responses = await Task.WhenAll(first, second);
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        WorkspaceAccessDocument document = (await app.Services
+            .GetRequiredService<WorkspaceAccessStore>()
+            .ReadAsync())!;
+        Assert.Single(document.OwnerClaims, claim => claim.Status == WorkspaceAuthorityStatus.Pending);
+        Assert.Single(document.OwnerClaims, claim => claim.Status == WorkspaceAuthorityStatus.Revoked);
+        Assert.All(document.OwnerClaims, claim => Assert.Equal(WorkspaceActorRecord.System, claim.CreatedByActor));
+    }
+
+    [Fact]
+    public async Task DirectOwnerBootstrap_IsRateLimited()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient browser = app.CreateClient();
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            HttpResponseMessage allowed = await SendJsonAsync(
+                browser,
+                "/api/workspace/owner-claims/native-passkey/options",
+                new { displayName = "Home Owner", email = "owner@example.test" },
+                Origin);
+            Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        }
+
+        HttpResponseMessage limited = await SendJsonAsync(
+            browser,
+            "/api/workspace/owner-claims/native-passkey/options",
+            new { displayName = "Home Owner", email = "owner@example.test" },
+            Origin);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Contains("passkey-rate-limited", await limited.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SystemBootstrapCannotRevokeARecoveryBearerClaim()
+    {
+        using var app = new NativePasskeyTestApp();
+        WorkspaceAccessStore store = app.Services.GetRequiredService<WorkspaceAccessStore>();
+        WorkspaceOwnerClaimCreateResult created = await store.CreateOwnerClaimAsync(
+            new WorkspaceOwnerClaimCreateRequest(
+                ExpectedOwnerMemberId: null,
+                ImpactVersion: null,
+                Lifetime: TimeSpan.FromMinutes(15),
+                IdempotencyKey: "native-recovery-owned-0001",
+                RequestId: "native-recovery-owned-request"));
+
+        WorkspaceAccessException error = await Assert.ThrowsAsync<WorkspaceAccessException>(() =>
+            store.RevokeOwnerClaimAsync(
+                created.Claim.ClaimId,
+                new WorkspaceAuthorityRevokeRequest(
+                    WorkspaceActorRecord.System,
+                    created.Claim.Version,
+                    "native-system-revoke-denied-0001",
+                    "native-system-revoke-denied-request")));
+
+        Assert.Equal("capability-denied", error.Code);
+        WorkspaceAccessDocument document = (await store.ReadAsync())!;
+        Assert.Equal(WorkspaceAuthorityStatus.Pending, Assert.Single(document.OwnerClaims).Status);
     }
 
     [Fact]
@@ -268,11 +452,6 @@ public sealed class NativePasskeyHttpTests
     {
         using var app = new NativePasskeyTestApp(useSuccessfulPasskeyHandler: true);
         using HttpClient browser = app.CreateClient();
-        Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
-            browser,
-            "/api/workspace/owner-claims/handoff",
-            new { claimToken = app.SetupToken },
-            Origin)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await SendJsonAsync(
             browser,
             "/api/workspace/owner-claims/native-passkey/options",
@@ -360,10 +539,6 @@ public sealed class NativePasskeyHttpTests
                 builder.ConfigureServices(services => services.RemoveAll<IHostedService>());
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IOwnerSetupLinkSink>();
-                    services.AddSingleton<RecordingOwnerSetupSink>();
-                    services.AddSingleton<IOwnerSetupLinkSink>(sp =>
-                        sp.GetRequiredService<RecordingOwnerSetupSink>());
                     if (useSuccessfulPasskeyHandler)
                     {
                         services.RemoveAll<IPasskeyHandler<SideportIdentityUser>>();
@@ -376,15 +551,6 @@ public sealed class NativePasskeyHttpTests
         internal string StateDirectory { get; }
 
         internal IServiceProvider Services => _factory.Services;
-
-        internal string SetupToken
-        {
-            get
-            {
-                Uri setupUrl = Assert.Single(Services.GetRequiredService<RecordingOwnerSetupSink>().Urls);
-                return setupUrl.Fragment[1..];
-            }
-        }
 
         internal HttpClient CreateClient() => _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -402,13 +568,6 @@ public sealed class NativePasskeyHttpTests
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
-    }
-
-    private sealed class RecordingOwnerSetupSink : IOwnerSetupLinkSink
-    {
-        internal List<Uri> Urls { get; } = [];
-
-        public void Write(Uri setupUrl) => Urls.Add(setupUrl);
     }
 
     private sealed class SuccessfulPasskeyHandler : IPasskeyHandler<SideportIdentityUser>

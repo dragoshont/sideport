@@ -9,6 +9,7 @@ public sealed class WorkspaceApiPolicyTests
     {
         yield return Case("GET", "/api/about", WorkspaceApiAccess.ActiveMember);
         yield return Case("GET", "/api/authentication/options", WorkspaceApiAccess.Public);
+        yield return Case("GET", "/api/workspace/owner-claims/native-passkey/status", WorkspaceApiAccess.Public);
         yield return Case("GET", "/api/workspace/invitations/handoff/session", WorkspaceApiAccess.Public);
         yield return Case("GET", "/api/workspace/owner-claims/handoff/session", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/authentication/native-passkey/options", WorkspaceApiAccess.Public);

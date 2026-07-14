@@ -14,7 +14,7 @@ function pathOf(input: RequestInfo | URL): string {
   return typeof input === 'string' ? input : input instanceof URL ? input.pathname : new URL(input.url).pathname
 }
 
-function installOidcMock(enrollmentEnabled: boolean): () => void {
+function installOidcMock(enrollmentEnabled: boolean, handoffAvailable = true): () => void {
   const originalFetch = window.fetch
   window.fetch = (async (input: RequestInfo | URL) => {
     const path = pathOf(input)
@@ -32,7 +32,10 @@ function installOidcMock(enrollmentEnabled: boolean): () => void {
       })
     }
     if (path === '/api/me') return Response.json({ authenticated: false, via: 'none' }, { status: 401 })
-    if (path.endsWith('/handoff/session')) return Response.json({ available: true })
+    if (path.endsWith('/handoff/session'))
+      return handoffAvailable
+        ? Response.json({ available: true })
+        : Response.json({ error: 'owner-claim-unavailable' }, { status: 404 })
     if (path.endsWith('/enrollment')) {
       return Response.json({ available: true, enrollmentUrl: 'https://identity.example/enroll/fixture' })
     }
@@ -41,7 +44,11 @@ function installOidcMock(enrollmentEnabled: boolean): () => void {
   return () => { window.fetch = originalFetch }
 }
 
-function installNativeMock(kind: 'owner-claim' | 'invitation'): () => void {
+function installNativeMock(
+  kind: 'owner-claim' | 'invitation',
+  ownerState: 'available' | 'private-link-required' | 'claimed' = 'available',
+  handoffAvailable = true,
+): () => void {
   const originalFetch = window.fetch
   const originalCredentials = Object.getOwnPropertyDescriptor(navigator, 'credentials')
   Object.defineProperty(navigator, 'credentials', {
@@ -71,7 +78,12 @@ function installNativeMock(kind: 'owner-claim' | 'invitation'): () => void {
       })
     }
     if (path === '/api/me') return Response.json({ authenticated: false, via: 'none' }, { status: 401 })
-    if (path.endsWith('/handoff/session')) return Response.json({ available: true })
+    if (path === '/api/workspace/owner-claims/native-passkey/status')
+      return Response.json({ mode: 'passkey', state: ownerState })
+    if (path.endsWith('/handoff/session'))
+      return !handoffAvailable || ownerState !== 'available' && kind === 'owner-claim'
+        ? Response.json({ error: 'owner-claim-unavailable' }, { status: 404 })
+        : Response.json({ available: true })
     if (path === `/api/workspace/${kind === 'owner-claim' ? 'owner-claims' : 'invitations'}/native-passkey/options`)
       return Response.json({ mode: 'passkey', creationOptions })
     if (path.endsWith('/native-passkey/complete'))
@@ -83,6 +95,21 @@ function installNativeMock(kind: 'owner-claim' | 'invitation'): () => void {
     if (originalCredentials) Object.defineProperty(navigator, 'credentials', originalCredentials)
     else Reflect.deleteProperty(navigator, 'credentials')
   }
+}
+
+function installDirectOwnerSetupMock(): () => void {
+  const originalFetch = window.fetch
+  window.fetch = (async (input: RequestInfo | URL) => {
+    const path = pathOf(input)
+    if (path === '/api/authentication/options')
+      return Response.json({ mode: 'passkey', nativePasskeyEnabled: true, enrollmentEnabled: true })
+    if (path === '/api/me')
+      return Response.json({ authenticated: false, via: 'none' }, { status: 401 })
+    if (path === '/api/workspace/owner-claims/native-passkey/status')
+      return Response.json({ mode: 'passkey', state: 'available' })
+    return Response.json({ error: 'unexpected-request', message: `Unexpected Storybook request: ${path}` }, { status: 500 })
+  }) as typeof window.fetch
+  return () => { window.fetch = originalFetch }
 }
 
 const meta = {
@@ -102,6 +129,51 @@ export const NativeOwnerReady: Story = {
 
 export const NativeInvitationReady: Story = {
   beforeEach: () => installNativeMock('invitation'),
+}
+
+export const NativeInvitationRequiresPrivateLink: Story = {
+  beforeEach: () => installNativeMock('invitation', 'available', false),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.findByRole('alert')).resolves.toHaveTextContent('Open the complete private invitation link')
+    await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
+  },
+}
+
+export const NativeOwnerDirectVisitStartsSetup: Story = {
+  args: { kind: 'owner-claim' },
+  beforeEach: () => installDirectOwnerSetupMock(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.findByText('First setup')).resolves.toBeVisible()
+    await expect(canvas.findByRole('textbox', { name: 'Name' })).resolves.toBeVisible()
+    await expect(canvas.getByRole('textbox', { name: 'Email' })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Create passkey' })).toBeDisabled()
+    await expect(canvas.queryByText(/setup link|startup logs/i)).not.toBeInTheDocument()
+  },
+}
+
+export const NativeOwnerAlreadyClaimed: Story = {
+  args: { kind: 'owner-claim' },
+  beforeEach: () => installNativeMock('owner-claim', 'claimed'),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.findByText('Sideport is already set up')).resolves.toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Sign in' })).toBeVisible()
+    await expect(canvas.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument()
+    await expect(canvas.queryByRole('textbox', { name: 'Email' })).not.toBeInTheDocument()
+  },
+}
+
+export const NativeOwnerRecoveryRequiresPrivateLink: Story = {
+  args: { kind: 'owner-claim' },
+  beforeEach: () => installNativeMock('owner-claim', 'private-link-required'),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.findByRole('alert')).resolves.toHaveTextContent('Open the complete private Owner recovery link')
+    await expect(canvas.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument()
+    await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
+  },
 }
 
 export const NativeOwnerCreatesPasskey: Story = {
@@ -146,5 +218,16 @@ export const OidcExistingAccountOnly: Story = {
     const canvas = within(canvasElement)
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Continue with Company SSO' })).toBeVisible())
     await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
+  },
+}
+
+export const OidcOwnerStillRequiresPrivateLink: Story = {
+  args: { kind: 'owner-claim' },
+  beforeEach: () => installOidcMock(true, false),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.findByRole('alert')).resolves.toHaveTextContent('Open the complete private Owner recovery link')
+    await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
+    await expect(canvas.queryByRole('button', { name: 'Continue with Company SSO' })).not.toBeInTheDocument()
   },
 }
