@@ -1,0 +1,3029 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Components Manifest</title>
+  <style>
+      :root {
+          --bg: #0b0c10;
+          --panel: #121318;
+          --muted: #9aa0a6;
+          --fg: #e8eaed;
+          --ok: #22c55e;
+          --info: #1e88e5;
+          --err: #c62828;
+          --ok-bg: #0c1a13;
+          --info-bg: #0c1624;
+          --err-bg: #1a0e0e;
+          --chip: #1f2330;
+          --border: #2b2f3a;
+          --link: #8ab4f8;
+          --active-ring: 1px; /* 1px active ring for pills and toggles */
+      }
+
+      * {
+          box-sizing: border-box;
+      }
+
+      html,
+      body {
+          margin: 0;
+          background: var(--bg);
+          color: var(--fg);
+          font: 14px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          Cantarell,
+          'Helvetica Neue',
+          Arial,
+          'Noto Sans';
+      }
+
+      .wrap {
+          max-width: 1100px;
+          margin: 0 auto;
+          padding: 16px 20px;
+      }
+
+      header {
+          position: sticky;
+          top: 0;
+          backdrop-filter: blur(6px);
+          background: color-mix(in srgb, var(--bg) 84%, transparent);
+          border-bottom: 1px solid var(--border);
+          z-index: 10;
+      }
+
+      h1 {
+          font-size: 20px;
+          margin: 0 0 6px;
+      }
+
+      .summary {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+          align-items: center;
+      }
+
+      /* Top filter pills */
+      .filter-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          background: var(--panel);
+          text-decoration: none;
+          cursor: pointer;
+          user-select: none;
+          color: var(--fg);
+      }
+
+      .filter-pill.ok {
+          color: #b9f6ca;
+          border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+          background: color-mix(in srgb, var(--ok) 18%, #000);
+      }
+
+      .filter-pill.info {
+          color: #b3d9ff;
+          border-color: color-mix(in srgb, var(--info) 55%, var(--border));
+          background: var(--info-bg);
+      }
+
+      .filter-pill.err {
+          color: #ff9aa0;
+          border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+          background: var(--err-bg);
+      }
+
+      .filter-pill.all {
+          color: #d7dbe0;
+          border-color: var(--border);
+          background: var(--panel);
+      }
+
+      .filter-pill[aria-disabled='true'] {
+          cursor: default;
+          text-decoration: none;
+      }
+
+      .filter-pill:focus,
+      .filter-pill:active {
+          outline: none;
+          box-shadow: none;
+      }
+
+      /* Selected top pill ring via :target */
+      #filter-all:target ~ header .filter-pill[data-k='all'],
+      #filter-errors:target ~ header .filter-pill[data-k='errors'],
+      #filter-infos:target ~ header .filter-pill[data-k='infos'],
+      #filter-story-errors:target ~ header .filter-pill[data-k='story-errors'],
+      #filter-doc-errors:target ~ header .filter-pill[data-k='docs'],
+      #filter-docs:target ~ header .filter-pill[data-k='docs'] {
+          box-shadow: 0 0 0 var(--active-ring) currentColor;
+          border-color: currentColor;
+      }
+
+      /* Hidden targets for filtering */
+      #filter-all,
+      #filter-errors,
+      #filter-infos,
+      #filter-story-errors,
+      #filter-doc-errors,
+      #filter-docs {
+          display: none;
+      }
+
+      main {
+          padding: 36px 0 40px;
+      }
+
+      .grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 18px;
+      }
+
+      /* one card per row */
+
+      .card {
+          border: 1px solid var(--border);
+          background: var(--panel);
+          border-radius: 14px;
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+      }
+
+      .head {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+      }
+
+      .title {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+      }
+
+      .title h2 {
+          font-size: 16px;
+          margin: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+      }
+
+      .meta {
+          font-size: 12px;
+          color: var(--muted);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+      }
+
+      .kv {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+      }
+
+      .chip {
+          font-size: 12px;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: var(--chip);
+          border: 1px solid var(--border);
+      }
+
+      .hint {
+          color: var(--muted);
+          font-size: 12px;
+      }
+
+      .badges {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+      }
+
+      /* Per-card badges: labels become toggles when clickable */
+      .badge {
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 999px;
+          border: 1px solid var(--border);
+          background: var(--chip);
+          color: #d7dbe0;
+      }
+
+      .badge.ok {
+          color: #b9f6ca;
+          border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+      }
+
+      .badge.info {
+          color: #b3d9ff;
+          border-color: color-mix(in srgb, var(--info) 55%, var(--border));
+      }
+
+      .badge.err {
+          color: #ff9aa0;
+          border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+      }
+
+      .as-toggle {
+          cursor: pointer;
+      }
+
+      /* 1px ring on active toggle */
+      .tg-err:checked + label.as-toggle,
+      .tg-info:checked + label.as-toggle,
+      .tg-stories:checked + label.as-toggle,
+      .tg-docs:checked + label.as-toggle,
+      .tg-subcomponents:checked + label.as-toggle,
+      .tg-content:checked + label.as-toggle,
+      .tg-props:checked + label.as-toggle {
+          box-shadow: 0 0 0 var(--active-ring) currentColor;
+          border-color: currentColor;
+      }
+
+      /* Panels: hidden by default, shown when respective toggle checked */
+      .panels {
+          display: grid;
+          gap: 10px;
+      }
+
+      .panel {
+          display: none;
+      }
+
+      .tg-err:checked ~ .panels .panel-err {
+          display: grid;
+      }
+
+      .tg-info:checked ~ .panels .panel-info {
+          display: grid;
+          gap: 8px;
+      }
+
+      .tg-stories:checked ~ .panels .panel-stories {
+          display: grid;
+          gap: 8px;
+      }
+
+      .tg-docs:checked ~ .panels .panel-docs {
+          display: grid;
+          gap: 8px;
+      }
+
+      .tg-subcomponents:checked ~ .panels .panel-subcomponents {
+          display: grid;
+          gap: 8px;
+      }
+
+      .tg-content:checked ~ .panels .panel-content {
+          display: grid;
+          gap: 8px;
+      }
+
+      .tg-props:checked ~ .panels .panel-props {
+          display: grid;
+      }
+
+      /* Colored notes for prop type error + info */
+      .note {
+          padding: 12px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+      }
+
+      .note.err {
+          border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+          background: var(--err-bg);
+          color: #ffd1d4;
+      }
+
+      .note.info {
+          border-color: color-mix(in srgb, var(--info) 55%, var(--border));
+          background: var(--info-bg);
+          color: #d6e8ff;
+      }
+
+      .note.ok {
+          border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+          background: var(--ok-bg);
+          color: var(--fg);
+      }
+
+      .note-title {
+          font-weight: 600;
+          margin-bottom: 6px;
+      }
+
+      .note-body {
+          white-space: normal;
+      }
+
+      /* Story error cards */
+      .ex {
+          padding: 10px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: #0f131b;
+      }
+
+      .ex.err {
+          border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+      }
+
+      .row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+      }
+
+      .status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+      }
+
+      .dot-ok {
+          background: var(--ok);
+      }
+
+      .dot-err {
+          background: var(--err);
+      }
+
+      .ex-name {
+          font-weight: 600;
+      }
+
+      /* Error groups (visible in errors filter) */
+      .error-groups {
+          display: none;
+          margin-bottom: 16px;
+      }
+
+      .group {
+          border: 1px solid var(--border);
+          background: var(--panel);
+          border-radius: 14px;
+          overflow: hidden;
+      }
+
+      .group + .group {
+          margin-top: 12px;
+      }
+
+      .group-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 14px;
+          cursor: pointer;
+          border-bottom: 1px solid var(--border);
+      }
+
+      .group-header:hover {
+          background: #141722;
+      }
+
+      .group-title {
+          font-weight: 600;
+          flex: 1;
+      }
+
+      .group-count {
+          font-size: 12px;
+          color: var(--muted);
+      }
+
+      .group-cards {
+          display: none;
+          padding: 12px;
+      }
+
+      .group .card {
+          margin: 12px 0;
+      }
+
+      .group .card:first-child {
+          margin-top: 0;
+      }
+
+      .group .card:last-child {
+          margin-bottom: 0;
+      }
+
+      /* caret rotation */
+      .group-tg:checked + label .caret {
+          transform: rotate(90deg);
+      }
+
+      .caret {
+          transition: transform 0.15s ease;
+      }
+
+      /* toggle body */
+      .group-tg:checked ~ .group-cards {
+          display: block;
+      }
+
+      /* CSS-only filtering of cards via top pills */
+      #filter-errors:target ~ main .card:not(.has-error):not(.has-story-error) {
+          display: none;
+      }
+
+      #filter-infos:target ~ main .card:not(.has-info) {
+          display: none;
+      }
+
+      #filter-story-errors:target ~ main .card:not(.has-story-error) {
+          display: none;
+      }
+
+      #filter-doc-errors:target ~ main .card:not(.has-doc-error) {
+          display: none;
+      }
+
+      #filter-docs:target ~ main .card:has(> .tg-docs),
+      #filter-docs:target ~ main .card.is-doc {
+          display: block;
+      }
+
+      #filter-docs:target ~ main .card:not(:has(> .tg-docs)):not(.is-doc) {
+          display: none;
+      }
+
+      #filter-all:target ~ main .card {
+          display: block;
+      }
+
+      /* In errors view, hide standalone component-error cards in the regular grid (they will appear in groups) */
+      #filter-errors:target ~ main .grid .card.has-error {
+          display: none;
+      }
+
+      /* Show grouped section only in errors view */
+      #filter-errors:target ~ main .error-groups {
+          display: block;
+      }
+
+      /* Section titles */
+      .section-title {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--muted);
+          margin: 24px 0 12px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid var(--border);
+      }
+      .section-title:first-child {
+          margin-top: 0;
+      }
+
+      /* When a toggle is checked, show the corresponding panel */
+      .card > .tg-err:checked ~ .panels .panel-err {
+          display: grid;
+      }
+      
+      .card > .tg-info:checked ~ .panels .panel-info {
+          display: grid;
+      }
+      
+      .card > .tg-stories:checked ~ .panels .panel-stories {
+          display: grid;
+      }
+
+      .card > .tg-docs:checked ~ .panels .panel-docs {
+          display: grid;
+      }
+
+      .card > .tg-subcomponents:checked ~ .panels .panel-subcomponents {
+          display: grid;
+      }
+
+      .card > .tg-content:checked ~ .panels .panel-content {
+          display: grid;
+      }
+
+      /* Add vertical spacing around panels only when any panel is visible */
+      .card > .tg-err:checked ~ .panels,
+      .card > .tg-info:checked ~ .panels,
+      .card > .tg-stories:checked ~ .panels,
+      .card > .tg-docs:checked ~ .panels,
+      .card > .tg-subcomponents:checked ~ .panels,
+      .card > .tg-content:checked ~ .panels,
+      .card > .tg-props:checked ~ .panels {
+          margin: 10px 0;
+      }
+
+      /* Optional: a subtle 1px ring on the active badge, using :has() if available */
+      @supports selector(.card:has(.tg-err:checked)) {
+          .card:has(.tg-err:checked) label[for$='-err'],
+          .card:has(.tg-info:checked) label[for$='-info'],
+          .card:has(.tg-stories:checked) label[for$='-stories'],
+          .card:has(.tg-docs:checked) label[for$='-docs'],
+          .card:has(.tg-subcomponents:checked) label[for$='-subcomponents'],
+          .card:has(.tg-content:checked) label[for$='-content'],
+          .card:has(.tg-props:checked) label[for$='-props'] {
+              box-shadow: 0 0 0 1px currentColor;
+              border-color: currentColor;
+          }
+      }
+
+      /* Wrap long lines in code blocks at ~120 characters */
+      pre, code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+      pre {
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          overflow-x: auto; /* fallback for extremely long tokens */
+          margin: 8px 0 0;
+      }
+      pre > code {
+          display: block;
+          white-space: inherit;
+          overflow-wrap: inherit;
+          word-break: inherit;
+          inline-size: min(100%, 120ch);
+      }
+
+      /* MDX content container for docs */
+      .mdx-content {
+          background: #0f131b;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 12px;
+          max-height: 400px;
+          overflow-y: auto;
+          margin-top: 8px;
+      }
+  </style>
+</head>
+<body>
+<!-- Hidden targets for the top-level filters -->
+<span id="filter-all"></span>
+<span id="filter-errors"></span>
+<span id="filter-infos"></span>
+<span id="filter-story-errors"></span>
+<span id="filter-doc-errors"></span>
+<span id="filter-docs"></span>
+<header>
+  <div class="wrap">
+    <h1>Manifest Debugger</h1>
+    <div class="summary"><a class="filter-pill all" data-k="all" href="#filter-all">All</a><a class="filter-pill err" data-k="errors" href="#filter-errors">1/8 prop type error</a><a class="filter-pill info" data-k="infos" href="#filter-infos">8/8 infos</a><a class="filter-pill err" data-k="story-errors" href="#filter-story-errors">7/108 story errors</a></div>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <div class="note info" style="margin-bottom: 16px;">
+            <strong>Tip:</strong> You are using <code>react-docgen</code> (the default). Generation took <strong>4.9s</strong>. For higher quality prop types, consider switching to <code>react-docgen-typescript</code> in your <code>main.ts</code>:
+            <pre><code>typescript: {
+  reactDocgen: 'react-docgen-typescript',
+}</code></pre>
+            Note: <code>react-docgen-typescript</code> can be slower. If performance is acceptable for your project, it generally produces better results.
+            <a href="https://storybook.js.org/docs/api/main-config/main-config-typescript#reactdocgen" target="_blank">Learn more</a>
+          </div>
+    <h2 class="section-title">Components</h2>
+    <div class="grid" role="list">
+      
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="AddIPhoneDialog">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> AddIPhoneDialog</h2>
+      <div class="badges">
+        <label for="c-0-sideport-add-iphone-dialog-props" class="badge ok as-toggle">14 prop types</label>
+        <label for="c-0-sideport-add-iphone-dialog-info" class="badge info as-toggle">1 info</label>
+        <label for="c-0-sideport-add-iphone-dialog-stories" class="badge ok as-toggle">5 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/add-flows/AddIPhoneDialog.stories.tsx">sideport-add-iphone-dialog · ./src/add-flows/AddIPhoneDialog.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-0-sideport-add-iphone-dialog-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-0-sideport-add-iphone-dialog-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-0-sideport-add-iphone-dialog-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">14 prop types</span>
+            </div>
+            <pre><code>Component: src/add-flows/AddFlows.tsx::AddIPhoneDialog</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>attentionDelayMs?: number = 8_000
+
+autoStart?: boolean = false
+
+canMutate?: boolean = false
+
+demoMode: boolean
+
+memberName?: string
+
+onAccepted?: (operation: EnrollmentOperation | null) =&gt; void
+
+onContinue?: () =&gt; void
+
+onOpenChange: (open: boolean) =&gt; void
+
+open: boolean
+
+persistenceKey?: string
+
+resumeOperationId?: string | null
+
+returnFocusRef?: RefObject&lt;HTMLElement | null&gt;
+
+services?: AddIPhoneServices
+
+soundPlayer?: (cue: IPhoneSoundCue) =&gt; void</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { AddIPhoneDialog } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Waiting For Dragos</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const WaitingForDragos = () =&gt; &lt;AddIPhoneDialog
+    open
+    onOpenChange={fn()}
+    onContinue={fn()}
+    demoMode={false}
+    canMutate
+    memberName=&quot;Dragos&quot;
+    services={waitingServices}
+    soundPlayer={soundCue}
+    attentionDelayMs={60_000} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Still Waiting For Dragos</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const StillWaitingForDragos = () =&gt; &lt;AddIPhoneDialog
+    open
+    onOpenChange={fn()}
+    onContinue={fn()}
+    demoMode={false}
+    canMutate
+    memberName=&quot;Dragos&quot;
+    services={waitingServices}
+    soundPlayer={soundCue}
+    attentionDelayMs={20} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Dragos I Phone Detected</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DragosIPhoneDetected = () =&gt; &lt;AddIPhoneDialog
+    open
+    onOpenChange={fn()}
+    onContinue={fn()}
+    demoMode={false}
+    canMutate
+    memberName=&quot;Dragos&quot;
+    services={detectedServices}
+    soundPlayer={soundCue} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Resumed Waiting Does Not Play Audio</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const ResumedWaitingDoesNotPlayAudio = () =&gt; &lt;AddIPhoneDialog
+    open
+    onOpenChange={fn()}
+    onContinue={fn()}
+    demoMode={false}
+    canMutate
+    memberName=&quot;Dragos&quot;
+    services={resumedWaitingServices}
+    soundPlayer={soundCue}
+    resumeOperationId=&quot;op-waiting-dragos&quot;
+    attentionDelayMs={20} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Access Revocation Does Not Auto Retry</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AccessRevocationDoesNotAutoRetry = () =&gt; &lt;AddIPhoneDialog
+    open
+    onOpenChange={fn()}
+    onContinue={fn()}
+    demoMode={false}
+    canMutate
+    memberName=&quot;Dragos&quot;
+    services={unrelatedRecoveryServices}
+    soundPlayer={soundCue} /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="CanonicalSideport">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> CanonicalSideport</h2>
+      <div class="badges">
+        <label for="c-1-sideport-canonical-product-props" class="badge ok as-toggle">7 prop types</label>
+        <label for="c-1-sideport-canonical-product-info" class="badge info as-toggle">1 info</label>
+        <label for="c-1-sideport-canonical-product-stories" class="badge ok as-toggle">26 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/CanonicalSideport.stories.tsx">sideport-canonical-product · ./src/CanonicalSideport.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-1-sideport-canonical-product-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-1-sideport-canonical-product-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-1-sideport-canonical-product-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">7 prop types</span>
+            </div>
+            <pre><code>Component: src/canonical/CanonicalSideport.tsx::CanonicalSideport</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>experience?: &#39;shell&#39; | &#39;invitation&#39; | &#39;owner-claim&#39; | &#39;first-run&#39; | &#39;add-iphone&#39; = &#39;shell&#39;
+
+initialAssistantStep?: &#39;connect&#39; | &#39;waiting&#39; | &#39;prepare&#39; | &#39;choose&#39; | &#39;install-waiting&#39; | &#39;installing&#39; | &#39;done&#39; = &#39;connect&#39;
+
+initialRoute?: &#39;home&#39; | &#39;apps&#39; | &#39;devices&#39; | &#39;people&#39; | &#39;activity&#39; | &#39;settings&#39; = &#39;home&#39;
+
+invitationState?: &#39;ready&#39; | &#39;expired&#39; | &#39;used&#39; | &#39;suspended&#39; | &#39;recovery&#39; = &#39;ready&#39;
+
+memberName?: string = &#39;Mara&#39;
+
+ownerClaimState?: &#39;setup&#39; | &#39;recovery&#39; = &#39;setup&#39;
+
+role?: &#39;owner&#39; | &#39;member&#39; = &#39;owner&#39;</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { CanonicalSideport } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">01 Shell · owner home</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerHome = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">13 Settings · exact signing replacement impact</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerSigningReplacement = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;settings&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">02 Shell · member scope and safe projections</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberHome = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;member&quot; initialRoute=&quot;home&quot; memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">03 Setup · fresh deployment outside shell</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FreshDeployment = () =&gt; &lt;CanonicalSideport experience=&quot;first-run&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">02b Setup · direct Owner passkey</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerClaimSetup = () =&gt; &lt;CanonicalSideport experience=&quot;owner-claim&quot; ownerClaimState=&quot;setup&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">02b.1 Setup · owner claim preview</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerClaimSetupPreview = () =&gt; &lt;CanonicalSideport experience=&quot;owner-claim&quot; ownerClaimState=&quot;setup&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">02c Recovery · replace inaccessible owner</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerClaimRecovery = () =&gt; &lt;CanonicalSideport experience=&quot;owner-claim&quot; ownerClaimState=&quot;recovery&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">02c.1 Recovery · owner claim preview</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerClaimRecoveryPreview = () =&gt; &lt;CanonicalSideport experience=&quot;owner-claim&quot; ownerClaimState=&quot;recovery&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">04 Setup · owner signing is not member login</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerAppleSigningIsSeparateFromMemberLogin = () =&gt; &lt;CanonicalSideport experience=&quot;first-run&quot; role=&quot;owner&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">05 People · invitation and signed-account consent</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberInvitation = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; role=&quot;member&quot; memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">05b People · invitation expired</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberInvitationExpired = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; invitationState=&quot;expired&quot; role=&quot;member&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">05c People · invitation already used</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberInvitationAlreadyUsed = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; invitationState=&quot;used&quot; role=&quot;member&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">05d People · access suspended</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberAccessSuspended = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; invitationState=&quot;suspended&quot; role=&quot;member&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">05e People · Authentik-owned recovery</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberPasskeyRecovery = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; invitationState=&quot;recovery&quot; role=&quot;member&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">06 Member · invite to verified install</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FullMemberOneCableJourney = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; role=&quot;member&quot; memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">07 Add · one shared iPhone assistant</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneFromSignedInShell = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;activity&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">08 Apps · approved library and sources</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AppsLibraryAndSources = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;apps&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">09 Search · keyboard close and focus restoration</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const GlobalSearchKeyboardAndFocus = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">09b Activity · people, devices, apps, and attention</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MultiUserActivity = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;activity&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">09c Devices · continuous USB monitor and three owners</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const ContinuousUsbMonitoring = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;owner&quot; initialRoute=&quot;devices&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">10 Apps · one Install action starts work</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OneTapInstallFromApps = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;member&quot; initialRoute=&quot;apps&quot; memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">10b Accessibility · keyboard app choice</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const KeyboardOnlyAppChoice = () =&gt; &lt;CanonicalSideport
+    experience=&quot;add-iphone&quot;
+    initialAssistantStep=&quot;choose&quot;
+    role=&quot;member&quot;
+    memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">11 Install · verified and safe to unplug</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const VerifiedSafeToUnplug = () =&gt; &lt;CanonicalSideport
+    experience=&quot;add-iphone&quot;
+    role=&quot;member&quot;
+    initialAssistantStep=&quot;done&quot;
+    memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">12 Mobile · member invitation at 390px</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MobileMemberJourney390 = () =&gt; &lt;CanonicalSideport experience=&quot;invitation&quot; role=&quot;member&quot; memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">12b Mobile · complete one-cable journey at 390px</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MobileOneCableJourney390 = () =&gt; &lt;CanonicalSideport
+    experience=&quot;add-iphone&quot;
+    initialAssistantStep=&quot;connect&quot;
+    role=&quot;member&quot;
+    memberName=&quot;Mara&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">13 Accessibility · shell reflows at 320px</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MobileShell320Reflow = () =&gt; &lt;CanonicalSideport experience=&quot;shell&quot; role=&quot;member&quot; initialRoute=&quot;apps&quot; /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  has-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="Components">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-err"></span> Components</h2>
+      <div class="badges">
+        <label for="c-2-sideport-components-err" class="badge err as-toggle">prop type error</label>
+        <label for="c-2-sideport-components-info" class="badge info as-toggle">1 info</label>
+        <label for="c-2-sideport-components-stories" class="badge ok as-toggle">17 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/Components.stories.tsx">sideport-components · ./src/Components.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  <input id="c-2-sideport-components-err" class="tg tg-err" type="checkbox" hidden />
+  <input id="c-2-sideport-components-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-2-sideport-components-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  
+
+  <div class="panels">
+    
+        <div class="panel panel-err">
+          
+    <div class="note err">
+      <div class="note-title">Prop type error</div>
+      <div class="note-body"><pre><code>We could not detect the component from your story file. Specify meta.component.
+  13 | import type { DeviceSummary, HealthState, RegisteredAppSummary, SourceKind, WorkspaceRole } from &#39;./data/sideportTypes&#39;
+  14 |
+&gt; 15 | const meta: Meta = {
+     | ^
+  16 |   title: &#39;Sideport/Components&#39;,
+  17 |   decorators: [
+  18 |     (Story) =&gt; (
+
+./src/Components.stories.tsx:
+import type { Meta, StoryObj } from &#39;@storybook/react-vite&#39;
+import {
+  AppSlotGrid,
+  DeviceCard,
+  DiagnosticIssueList,
+  RenewalQueueList,
+  RoleBadge,
+  SourcePill,
+  StatusPill,
+} from &#39;./App&#39;
+import { fixtures } from &#39;./data/sideportFixtures&#39;
+import type { AdminDataStatus } from &#39;./api/sideportApi&#39;
+import type { DeviceSummary, HealthState, RegisteredAppSummary, SourceKind, WorkspaceRole } from &#39;./data/sideportTypes&#39;
+
+const meta: Meta = {
+  title: &#39;Sideport/Components&#39;,
+  decorators: [
+    (Story) =&gt; (
+      &lt;div className=&quot;story-pad&quot;&gt;
+        &lt;Story /&gt;
+      &lt;/div&gt;
+    ),
+  ],
+  parameters: {
+    layout: &#39;fullscreen&#39;,
+    docs: {
+      description: {
+        component: &#39;Per-component state matrix from the design spec. Each story exercises a hard-to-reach state in isolation, so empty / blocked / failed / full paths can be reviewed without driving the whole shell.&#39;,
+      },
+    },
+  },
+}
+
+export default meta
+
+type Story = StoryObj&lt;typeof meta&gt;
+
+const liveStatus: AdminDataStatus = { mode: &#39;live&#39;, baseUrl: &#39;/sideport-api&#39;, message: &#39;Live API&#39;, canMutate: true }
+
+const appsFor = (udid: string): RegisteredAppSummary[] =&gt;
+  fixtures.apps.filter((app) =&gt; app.deviceUdid === udid).map((app) =&gt; ({ ...app, deviceUdid: udid }))
+
+const nApps = (count: number, udid: string): RegisteredAppSummary[] =&gt;
+  fixtures.apps.slice(0, count).map((app, index) =&gt; ({ ...app, deviceUdid: udid, bundleId: `${app.bundleId}.${index}` }))
+
+const wifiDevice = fixtures.devices[0]
+const usbDevice = fixtures.devices[1]
+const offlineDevice = fixtures.devices[2]
+const blockedDevice: DeviceSummary = { ...wifiDevice, udid: &#39;BLOCKED-UDID&#39;, name: &#39;Blocked iPhone&#39;, health: &#39;blocked&#39;, connection: &#39;usb&#39;, blocker: &#39;Provisioning profile expired.&#39; }
+const fullDevice: DeviceSummary = { ...usbDevice, udid: &#39;FULL-UDID&#39;, name: &#39;Full iPhone&#39;, appSlotsUsed: 3 }
+
+// ---------- DeviceCard ----------
+export const DeviceCardWifi: Story = { name: &#39;DeviceCard — Wi-Fi&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={wifiDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardUsb: Story = { name: &#39;DeviceCard — USB&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={usbDevice} apps={appsFor(usbDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardOffline: Story = { name: &#39;DeviceCard — offline&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={offlineDevice} apps={[]} /&gt;&lt;/div&gt; }
+export const DeviceCardBlocked: Story = { name: &#39;DeviceCard — blocked&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={blockedDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardFullSlots: Story = { name: &#39;DeviceCard — 3/3 slots&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={fullDevice} apps={nApps(3, fullDevice.udid)} /&gt;&lt;/div&gt; }
+
+// ---------- AppSlotGrid ----------
+export const SlotsEmpty: Story = { name: &#39;AppSlotGrid — 0/3 empty&#39;, render: () =&gt; &lt;AppSlotGrid apps={[]} canRegister /&gt; }
+export const SlotsPartial: Story = { name: &#39;AppSlotGrid — 1/3 used&#39;, render: () =&gt; &lt;AppSlotGrid apps={nApps(1, &#39;demo-device&#39;)} canRegister /&gt; }
+export const SlotsFull: Story = { name: &#39;AppSlotGrid — 3/3 full&#39;, render: () =&gt; &lt;AppSlotGrid apps={nApps(3, &#39;demo-device&#39;)} canRegister={false} /&gt; }
+
+// ---------- RenewalQueueList ----------
+export const RenewalRunningQueued: Story = { name: &#39;RenewalQueue — operation states&#39;, render: () =&gt; &lt;RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+export const RenewalBlocked: Story = { name: &#39;RenewalQueue — blocked&#39;, render: () =&gt; &lt;RenewalQueueList items={fixtures.renewals.filter((item) =&gt; item.risk === &#39;blocked&#39;)} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+export const RenewalEmpty: Story = { name: &#39;RenewalQueue — empty&#39;, render: () =&gt; &lt;RenewalQueueList items={[]} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+
+// ---------- DiagnosticIssueList ----------
+export const IssuesAll: Story = { name: &#39;Diagnostics — all categories&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues} /&gt; }
+export const IssueInstallFailed: Story = { name: &#39;Diagnostics — install failed&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.category.includes(&#39;Install&#39;))} /&gt; }
+export const IssueResolved: Story = { name: &#39;Diagnostics — resolved&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.status === &#39;resolved&#39;)} /&gt; }
+
+// ---------- Atoms ----------
+const healthStates: HealthState[] = [&#39;healthy&#39;, &#39;warning&#39;, &#39;blocked&#39;, &#39;failed&#39;, &#39;offline&#39;]
+const sources: SourceKind[] = [&#39;live&#39;, &#39;derived&#39;, &#39;demo&#39;, &#39;planned&#39;]
+const roles: WorkspaceRole[] = [&#39;owner&#39;, &#39;family&#39;]
+
+export const StatusPills: Story = { name: &#39;StatusPill — all states&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{healthStates.map((state) =&gt; &lt;StatusPill key={state} state={state} label={state} /&gt;)}&lt;/div&gt; }
+export const SourcePills: Story = { name: &#39;SourcePill — all sources&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{sources.map((source) =&gt; &lt;SourcePill key={source} source={source} label={source} /&gt;)}&lt;/div&gt; }
+export const RoleBadges: Story = { name: &#39;RoleBadge — all roles&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{roles.map((role) =&gt; &lt;RoleBadge key={role} role={role} /&gt;)}&lt;/div&gt; }
+</code></pre></div>
+    </div>
+        </div>
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import {
+    AppSlotGrid,
+    DeviceCard,
+    DiagnosticIssueList,
+    RenewalQueueList,
+    RoleBadge,
+    SourcePill,
+    StatusPill,
+} from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — Wi-Fi</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardWifi = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={wifiDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — USB</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardUsb = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={usbDevice} apps={appsFor(usbDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — offline</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardOffline = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={offlineDevice} apps={[]} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — blocked</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardBlocked = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={blockedDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — 3/3 slots</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardFullSlots = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={fullDevice} apps={nApps(3, fullDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 0/3 empty</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsEmpty = () =&gt; &lt;AppSlotGrid apps={[]} canRegister /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 1/3 used</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsPartial = () =&gt; &lt;AppSlotGrid apps={nApps(1, &#39;demo-device&#39;)} canRegister /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 3/3 full</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsFull = () =&gt; &lt;AppSlotGrid apps={nApps(3, &#39;demo-device&#39;)} canRegister={false} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — operation states</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalRunningQueued = () =&gt; &lt;RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — blocked</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalBlocked = () =&gt; &lt;RenewalQueueList items={fixtures.renewals.filter((item) =&gt; item.risk === &#39;blocked&#39;)} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — empty</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalEmpty = () =&gt; &lt;RenewalQueueList items={[]} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — all categories</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssuesAll = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — install failed</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssueInstallFailed = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.category.includes(&#39;Install&#39;))} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — resolved</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssueResolved = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.status === &#39;resolved&#39;)} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">StatusPill — all states</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const StatusPills = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{healthStates.map((state) =&gt; &lt;StatusPill key={state} state={state} label={state} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">SourcePill — all sources</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SourcePills = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{sources.map((source) =&gt; &lt;SourcePill key={source} source={source} label={source} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RoleBadge — all roles</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RoleBadges = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{roles.map((role) =&gt; &lt;RoleBadge key={role} role={role} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="PasskeyLogin">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> PasskeyLogin</h2>
+      <div class="badges">
+        
+        <label for="c-3-sideport-passkey-login-info" class="badge info as-toggle">1 info</label>
+        <label for="c-3-sideport-passkey-login-stories" class="badge ok as-toggle">1 story</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/PasskeyLogin.stories.tsx">sideport-passkey-login · ./src/PasskeyLogin.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-3-sideport-passkey-login-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-3-sideport-passkey-login-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { PasskeyLogin } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Ready</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const Ready = () =&gt; &lt;PasskeyLogin /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="RuntimeFirstRunOnboarding">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> RuntimeFirstRunOnboarding</h2>
+      <div class="badges">
+        <label for="c-4-sideport-runtime-first-run-onboarding-props" class="badge ok as-toggle">27 prop types</label>
+        <label for="c-4-sideport-runtime-first-run-onboarding-info" class="badge info as-toggle">1 info</label>
+        <label for="c-4-sideport-runtime-first-run-onboarding-stories" class="badge ok as-toggle">1 story</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/onboarding/RuntimeFirstRunOnboarding.stories.tsx">sideport-runtime-first-run-onboarding · ./src/onboarding/RuntimeFirstRunOnboarding.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-4-sideport-runtime-first-run-onboarding-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-4-sideport-runtime-first-run-onboarding-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-4-sideport-runtime-first-run-onboarding-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">27 prop types</span>
+            </div>
+            <pre><code>Component: src/onboarding/RuntimeFirstRunOnboarding.tsx::RuntimeFirstRunOnboarding</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>apiStatus: AdminDataStatus
+
+appleContent?: ReactNode
+
+appSelectionError?: string | null
+
+appSelectionPending?: boolean = false
+
+canAddApp?: boolean = false
+
+canAddIPhone?: boolean = false
+
+canCompleteOnboarding?: boolean = false
+
+canRunInstall?: boolean = false
+
+data: SideportReadModel
+
+finalizationPending?: boolean = false
+
+installOperation?: OperationRecordDto | null
+
+installPollError?: string | null
+
+installPreflight?: OperationPreflightDto | null
+
+installRequestError?: string | null
+
+installRequestPending?: boolean = false
+
+onAddApp: () =&gt; void
+
+onAddIPhone: () =&gt; void
+
+onExit?: () =&gt; void
+
+onInstallApp: (catalogAppId: string) =&gt; void
+
+onOpenDevice: (device: DeviceSummary) =&gt; void
+
+onPrepareInstall: (catalogAppId: string) =&gt; void
+
+onReconcileInstall: () =&gt; void
+
+onRefresh: () =&gt; void
+
+onRetryFinalization: () =&gt; void
+
+onSelectedCatalogAppChange?: (catalogAppId: string) =&gt; void
+
+reconciliationPending?: boolean = false
+
+selectedCatalogAppId?: string</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { RuntimeFirstRunOnboarding } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Polls and advances from server evidence</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const PollsAndAdvancesFromServerEvidence = () =&gt; &lt;AutoAdvanceHarness /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  has-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="SideportAdminApp">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-err"></span> SideportAdminApp</h2>
+      <div class="badges">
+        <label for="c-5-sideport-admin-shell-props" class="badge ok as-toggle">17 prop types</label>
+        <label for="c-5-sideport-admin-shell-info" class="badge info as-toggle">1 info</label>
+        <label for="c-5-sideport-admin-shell-stories" class="badge err as-toggle">7/43 story errors</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/SideportAdmin.stories.tsx">sideport-admin-shell · ./src/SideportAdmin.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-5-sideport-admin-shell-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-5-sideport-admin-shell-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-5-sideport-admin-shell-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">17 prop types</span>
+            </div>
+            <pre><code>Component: src/App.tsx::SideportAdminApp</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>addAppServices?: AddAppServices
+
+addIPhoneServices?: AddIPhoneServices
+
+apiStatus?: AdminDataStatus
+
+completeOnboardingService?: (payload: OnboardingCompletionPayload) =&gt; Promise&lt;unknown&gt;
+
+data?: SideportReadModel
+
+initialCommandOpen?: boolean = false
+
+initialRoute?: &#39;home&#39; | &#39;apps&#39; | &#39;devices&#39; | &#39;people&#39; | &#39;activity&#39; | &#39;settings&#39; | &#39;device-detail&#39; | &#39;install-app&#39; = &#39;home&#39;
+
+initialSetupOpen?: boolean = false
+
+installAppService?: (payload: InstallOperationPayload) =&gt; Promise&lt;OperationRecordDto&gt;
+
+iPhoneAttentionDelayMs?: number
+
+iPhoneSoundPlayer?: (cue: IPhoneSoundCue) =&gt; void
+
+onApiTokenSaved?: () =&gt; void
+
+preflightInstallService?: (payload: InstallPreflightPayload) =&gt; Promise&lt;OperationPreflightDto&gt;
+
+readOperationService?: (operationId: string) =&gt; Promise&lt;OperationRecordDto&gt;
+
+reconcileOperationService?: (operationId: string, payload: { idempotencyKey: string; note?: string }) =&gt; Promise&lt;OperationRecordDto&gt;
+
+registerPendingAppService?: (payload: PendingAppRegistrationPayload) =&gt; Promise&lt;AppRegistrationDto&gt;
+
+schedulerSettingsService?: (enabled: boolean) =&gt; Promise&lt;SchedulerStatusDto&gt;</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">Overview Healthy</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  526 | })
+  527 |
+&gt; 528 | export const OverviewHealthy = routeStory(&#39;home&#39;, &#39;Overview - healthy mixed fleet&#39;)
+      |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  529 | export const FirstRunOnboarding: Story = {
+  530 |   name: &#39;First Run Onboarding&#39;,
+  531 |   args: { data: freshOnboardingData, apiStatus: freshOnboardingStatus, initialRoute: &#39;home&#39; },</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">Device Inventory</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  779 |   },
+  780 | }
+&gt; 781 | export const DeviceInventory = routeStory(&#39;devices&#39;, &#39;Devices - table and mobile cards&#39;)
+      |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  782 | export const DeviceDetailTwoApps = routeStory(&#39;device-detail&#39;, &#39;Device detail - two app slots&#39;)
+  783 | export const AppCatalogSeed = routeStory(&#39;apps&#39;, &#39;App catalog - Cert Clock seed&#39;)
+  784 | export const AppCatalogSearch: Story = {</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">Device Detail Two Apps</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  780 | }
+  781 | export const DeviceInventory = routeStory(&#39;devices&#39;, &#39;Devices - table and mobile cards&#39;)
+&gt; 782 | export const DeviceDetailTwoApps = routeStory(&#39;device-detail&#39;, &#39;Device detail - two app slots&#39;)
+      |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  783 | export const AppCatalogSeed = routeStory(&#39;apps&#39;, &#39;App catalog - Cert Clock seed&#39;)
+  784 | export const AppCatalogSearch: Story = {
+  785 |   name: &#39;Apps - search approved library&#39;,</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">App Catalog Seed</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  781 | export const DeviceInventory = routeStory(&#39;devices&#39;, &#39;Devices - table and mobile cards&#39;)
+  782 | export const DeviceDetailTwoApps = routeStory(&#39;device-detail&#39;, &#39;Device detail - two app slots&#39;)
+&gt; 783 | export const AppCatalogSeed = routeStory(&#39;apps&#39;, &#39;App catalog - Cert Clock seed&#39;)
+      |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  784 | export const AppCatalogSearch: Story = {
+  785 |   name: &#39;Apps - search approved library&#39;,
+  786 |   args: { data: fixtures, apiStatus: completedOnboardingStatus, initialRoute: &#39;apps&#39; },</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">Activity Operations</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  860 |   },
+  861 | }
+&gt; 862 | export const ActivityOperations = routeStory(&#39;activity&#39;, &#39;Activity - operation history&#39;)
+      |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  863 | export const PeopleWorkspace = routeStory(&#39;people&#39;, &#39;People - roles, members, invite, audit&#39;)
+  864 | export const SettingsConsolidated = routeStory(&#39;settings&#39;, &#39;Settings - sign-in, refresh, signing, and system&#39;)
+  865 | export const SettingsSchedulerPolicy: Story = {</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">People Workspace</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  861 | }
+  862 | export const ActivityOperations = routeStory(&#39;activity&#39;, &#39;Activity - operation history&#39;)
+&gt; 863 | export const PeopleWorkspace = routeStory(&#39;people&#39;, &#39;People - roles, members, invite, audit&#39;)
+      |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  864 | export const SettingsConsolidated = routeStory(&#39;settings&#39;, &#39;Settings - sign-in, refresh, signing, and system&#39;)
+  865 | export const SettingsSchedulerPolicy: Story = {
+  866 |   name: &#39;Settings - live automatic refresh policy&#39;,</code></pre>
+            </div>
+            <div class="note err">
+              <div class="row">
+                <span class="ex-name">Settings Consolidated</span>
+                <span class="badge err">story error</span>
+              </div>
+              
+              
+              
+              <pre><code>Could not evaluate story expression
+  862 | export const ActivityOperations = routeStory(&#39;activity&#39;, &#39;Activity - operation history&#39;)
+  863 | export const PeopleWorkspace = routeStory(&#39;people&#39;, &#39;People - roles, members, invite, audit&#39;)
+&gt; 864 | export const SettingsConsolidated = routeStory(&#39;settings&#39;, &#39;Settings - sign-in, refresh, signing, and system&#39;)
+      |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  865 | export const SettingsSchedulerPolicy: Story = {
+  866 |   name: &#39;Settings - live automatic refresh policy&#39;,
+  867 |   args: {</code></pre>
+            </div>
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { SideportAdminApp } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run Onboarding</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FirstRunOnboarding = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={freshOnboardingData}
+    apiStatus={freshOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Owner account - portal access before iPhone setup</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OwnerAccountCanEnterPortalWithoutIPhone = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen={false}
+    data={freshOnboardingData}
+    apiStatus={freshOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - missing iPhone is actionable and automatic</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FirstRunConnectIPhoneActionable = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForDeviceOnboardingData}
+    apiStatus={{ ...deviceOnboardingStatus, mode: &#39;live&#39; }}
+    initialRoute=&quot;home&quot;
+    addIPhoneServices={onboardingAutoStartServices}
+    iPhoneSoundPlayer={iPhoneSoundStory}
+    iPhoneAttentionDelayMs={20} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - active iPhone connection resumes without another start</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FirstRunConnectIPhoneResumesWithoutStartingAgain = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForDeviceOnboardingData}
+    apiStatus={deviceEnrollmentInProgressStatus}
+    initialRoute=&quot;home&quot;
+    addIPhoneServices={onboardingResumeServices} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - selection survives a runtime remount</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const LiveOnboarding = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={interactiveOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - install starts inline once</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OnboardingInstallStartsInline = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={{ ...interactiveOnboardingStatus, baseUrl: &#39;storybook://onboarding-install-start&#39; }}
+    initialRoute=&quot;home&quot;
+    registerPendingAppService={savePendingOnboardingStory}
+    preflightInstallService={preflightOnboardingStory}
+    installAppService={async (payload) =&gt; {
+      if (!payload.finishOnboarding) throw new Error(&#39;The onboarding install must carry finishOnboarding=true.&#39;)
+      if (payload.preflightId !== installPreflightReady.preflightId || payload.planVersion !== installPreflightReady.planVersion) throw new Error(&#39;The confirmed preflight was not submitted.&#39;)
+      if (payload.catalogAppId !== fixtures.catalogApps[0].id || payload.accountProfileId !== &#39;demo-personal-account&#39;) throw new Error(&#39;The selected catalog app and Apple account were not bound to the install.&#39;)
+      return installStarted(payload)
+    }}
+    readOperationService={async (operationId) =&gt; ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: &#39;com.example.certcountdown&#39;, catalogAppId: fixtures.catalogApps[0].id, accountProfileId: &#39;demo-personal-account&#39;, preflightId: &#39;install_preflight_story&#39;, planVersion: &#39;sha256:storybook-plan&#39;, finishOnboarding: true, confirmedPlannedMutations: true, idempotencyKey: &#39;story&#39; }), operationId, status: &#39;succeeded&#39;, stages: [{ id: &#39;verify&#39;, label: &#39;Verify on iPhone&#39;, status: &#39;succeeded&#39;, message: &#39;Verified.&#39; }] })} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - install request error stays inline</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OnboardingInstallRequestError = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={{ ...interactiveOnboardingStatus, baseUrl: &#39;storybook://onboarding-install-error&#39; }}
+    initialRoute=&quot;home&quot;
+    registerPendingAppService={savePendingStoryApp}
+    preflightInstallService={async () =&gt; installPreflightReady}
+    installAppService={async () =&gt; { throw new Error(&#39;Sideport could not safely start this USB install.&#39;) }} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - mobile setup at 390px</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const FirstRunOnboardingMobile390 = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={freshOnboardingData}
+    apiStatus={freshOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - server completion survives remount</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const CompletedOnboardingReload = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={completedOnboardingData}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - verified install retries finalization only</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OnboardingFinalizationRecovery = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={finalizationRecoveryStatus}
+    initialRoute=&quot;home&quot;
+    completeOnboardingService={finishOnboardingStory}
+    readOperationService={async () =&gt; finalizationWaitingOperation} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - unknown install checks iPhone without reinstalling</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OnboardingUnknownInstallReconciliation = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={unknownInstallStatus}
+    initialRoute=&quot;home&quot;
+    reconcileOperationService={reconcileOnboardingStory}
+    readOperationService={async (operationId) =&gt; operationId === unknownInstallOperationId ? unknownInstallOperation : reconciledMismatchOperation} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">First Run - terminal lineage block never offers finalization retry</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OnboardingTerminalLineageBlock = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={readyForAppOnboardingData}
+    apiStatus={terminalLineageStatus}
+    initialRoute=&quot;home&quot;
+    readOperationService={async () =&gt; terminalLineageOperation} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Apps - search approved library</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AppCatalogSearch = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;apps&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Install app - one action with smart defaults</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const InstallAppOneAction = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={completedOnboardingData}
+    apiStatus={{ ...completedOnboardingStatus, baseUrl: &#39;storybook://standalone-install&#39; }}
+    initialRoute=&quot;install-app&quot;
+    registerPendingAppService={savePendingStoryApp}
+    preflightInstallService={async () =&gt; installPreflightReady}
+    installAppService={async (payload) =&gt; {
+      if (payload.finishOnboarding) throw new Error(&#39;A signed-in install must not finish onboarding.&#39;)
+      return installStarted(payload)
+    }}
+    readOperationService={async (operationId) =&gt; ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: &#39;com.example.certcountdown&#39;, catalogAppId: fixtures.catalogApps[0].id, accountProfileId: &#39;demo-personal-account&#39;, preflightId: &#39;install_preflight_story&#39;, planVersion: &#39;sha256:storybook-plan&#39;, finishOnboarding: false, confirmedPlannedMutations: true, idempotencyKey: &#39;story&#39; }), operationId, status: &#39;running&#39; })} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Install app - active standalone install resumes after reload</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const InstallAppReloadResume = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={standaloneResumeData}
+    apiStatus={{ ...completedOnboardingStatus, baseUrl: &#39;storybook://standalone-resume&#39; }}
+    initialRoute=&quot;install-app&quot;
+    registerPendingAppService={fn(savePendingStoryApp)}
+    preflightInstallService={fn(async () =&gt; installPreflightReady)}
+    readOperationService={fn(async () =&gt; ({
+      operationId: standaloneResumeOperationId,
+      type: &#39;install&#39;,
+      status: &#39;succeeded&#39;,
+      target: { deviceUdid: fixtures.devices[1].udid, bundleId: &#39;com.example.certcountdown&#39; },
+      stages: [{ id: &#39;verify&#39;, label: &#39;Verify on iPhone&#39;, status: &#39;succeeded&#39;, message: &#39;Verified after reload.&#39; }],
+      result: { success: true, bundleId: &#39;com.example.certcountdown&#39;, version: &#39;0.1.0&#39;, expiresAt: &#39;2026-07-19T12:00:00Z&#39; },
+    }))} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">App catalog - pending registration is not healthy</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const PendingRegistrationState = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={pendingRegistrationData}
+    apiStatus={demoStatus}
+    initialRoute=&quot;apps&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Settings - live automatic refresh policy</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SettingsSchedulerPolicy = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={completedOnboardingData}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;settings&quot;
+    schedulerSettingsService={schedulerDisabledStory} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Empty Fleet</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const EmptyFleet = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={emptyFixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;devices&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Anisette Blocked</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AnisetteBlocked = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={blockedFixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Api Unavailable Runtime</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const ApiUnavailableRuntime = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={runtimeEmptyData}
+    apiStatus={apiUnavailableStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Token Required Settings</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const TokenRequiredSettings = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={tokenRequiredStatus}
+    initialRoute=&quot;settings&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Request security - OIDC CSRF stays in memory</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OidcAppleRequestSecurity = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;settings&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Command menu - ⌘K search</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const CommandMenuOpen = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;home&quot;
+    initialCommandOpen /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Device detail - tabs + working refresh</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceDetailTabbed = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;device-detail&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - global Add menu + keyboard focus</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const GlobalAddMenu = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - Add iPhone waits for Trust automatically</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneAutomatic = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={dragosFixtures}
+    apiStatus={demoStatus}
+    initialRoute=&quot;devices&quot;
+    iPhoneSoundPlayer={iPhoneSoundStory} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - Add app sources + private GitHub permission</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddAppSources = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;home&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - global Add at 390px</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const GlobalAddMobile390 = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;activity&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - live GitHub releases are selectable</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddAppRuntimeBound = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={tokenRequiredStatus}
+    initialRoute=&quot;apps&quot;
+    addAppServices={runtimeAddAppServices} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - GitHub remains available when configured storage fails</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddAppSourcesLoadIndependently = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={tokenRequiredStatus}
+    initialRoute=&quot;apps&quot;
+    addAppServices={githubAvailableWhenStorageFails} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - live iPhone enrollment polls to accepted</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneRuntimeBound = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={dragosFixtures}
+    apiStatus={tokenRequiredStatus}
+    initialRoute=&quot;devices&quot;
+    addIPhoneServices={runtimeAddIPhoneServices}
+    iPhoneSoundPlayer={iPhoneSoundStory} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - active iPhone enrollment survives close and reopen</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneResumeAfterClose = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={tokenRequiredStatus}
+    initialRoute=&quot;devices&quot;
+    addIPhoneServices={runtimeAddIPhoneServices} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - iPhone recovery continues automatically with sound cues</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneRecoveryRetry = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={{ ...tokenRequiredStatus, baseUrl: &#39;storybook://device-enrollment-recovery&#39; }}
+    initialRoute=&quot;devices&quot;
+    addIPhoneServices={enrollmentRecoveryServices}
+    iPhoneSoundPlayer={iPhoneSoundStory} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - iPhone recovery retry failure stays verify-only and actionable</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const AddIPhoneRecoveryRetryFailure = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={{ ...tokenRequiredStatus, baseUrl: &#39;storybook://device-enrollment-recovery-failure&#39; }}
+    initialRoute=&quot;devices&quot;
+    addIPhoneServices={enrollmentRecoveryFailureServices}
+    iPhoneSoundPlayer={iPhoneSoundStory} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - command menu includes Add actions</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const CommandMenuAddActions = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={fixtures}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;settings&quot;
+    initialCommandOpen /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Signed in - Member can add iPhone without Owner controls</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const MemberCapabilityBoundaries = () =&gt; &lt;SideportAdminApp
+    initialSetupOpen
+    data={memberData}
+    apiStatus={completedOnboardingStatus}
+    initialRoute=&quot;settings&quot; /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="SigningPipeline">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> SigningPipeline</h2>
+      <div class="badges">
+        <label for="c-6-sideport-signing-pipeline-props" class="badge ok as-toggle">3 prop types</label>
+        <label for="c-6-sideport-signing-pipeline-info" class="badge info as-toggle">1 info</label>
+        <label for="c-6-sideport-signing-pipeline-stories" class="badge ok as-toggle">4 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/SigningPipeline.stories.tsx">sideport-signing-pipeline · ./src/SigningPipeline.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-6-sideport-signing-pipeline-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-6-sideport-signing-pipeline-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-6-sideport-signing-pipeline-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">3 prop types</span>
+            </div>
+            <pre><code>Component: src/App.tsx::SigningPipeline</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>note?: string
+
+stages?: PipelineStage[] = [
+  { id: &#39;authorize&#39;, label: &#39;Authorize&#39;, detail: &#39;GrandSlam login&#39;, state: &#39;pending&#39; },
+  { id: &#39;provision&#39;, label: &#39;Provision&#39;, detail: &#39;App ID + profile&#39;, state: &#39;pending&#39; },
+  { id: &#39;sign&#39;, label: &#39;Sign&#39;, detail: &#39;zsign re-sign&#39;, state: &#39;pending&#39; },
+  { id: &#39;install&#39;, label: &#39;Install&#39;, detail: &#39;Push to device&#39;, state: &#39;pending&#39; },
+  { id: &#39;verify&#39;, label: &#39;Verify&#39;, detail: &#39;Bundle + profile evidence&#39;, state: &#39;pending&#39; },
+]
+
+title?: string = &#39;Sign · install · verify&#39;</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { SigningPipeline } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Running — signing in progress</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const Running = () =&gt; &lt;SigningPipeline title=&quot;Refreshing Cert Clock&quot; stages={running} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Failed — install step failed</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const Failed = () =&gt; &lt;SigningPipeline
+    title=&quot;Refresh failed — Dice Roll&quot;
+    stages={failed}
+    note=&quot;Install failed: the device became unreachable mid-install. Reconnect the iPhone and retry the operation.&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Complete — signed and verified</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const Complete = () =&gt; &lt;SigningPipeline title=&quot;Cert Clock signed and verified&quot; stages={complete} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Not started — wizard preview</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NotStarted = () =&gt; &lt;SigningPipeline
+    title=&quot;Operation preview&quot;
+    note=&quot;Saving a registration records intent only. These stages run when the refresh operation is wired to this device.&quot; /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+<article
+  class="card 
+  no-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="WorkspaceHandoff">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-ok"></span> WorkspaceHandoff</h2>
+      <div class="badges">
+        <label for="c-7-sideport-workspace-handoff-props" class="badge ok as-toggle">1 prop type</label>
+        <label for="c-7-sideport-workspace-handoff-info" class="badge info as-toggle">1 info</label>
+        <label for="c-7-sideport-workspace-handoff-stories" class="badge ok as-toggle">11 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/WorkspaceHandoff.stories.tsx">sideport-workspace-handoff · ./src/WorkspaceHandoff.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  
+  <input id="c-7-sideport-workspace-handoff-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-7-sideport-workspace-handoff-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  <input id="c-7-sideport-workspace-handoff-props" class="tg tg-props" type="checkbox" hidden />
+
+  <div class="panels">
+    
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+        <div class="panel panel-props">
+          <div class="note ok">
+            <div class="row">
+              <span class="ex-name">Prop types <small>(react-docgen)</small></span>
+              <span class="badge ok">1 prop type</span>
+            </div>
+            <pre><code>Component: src/WorkspaceHandoff.tsx::WorkspaceHandoff</code></pre>
+            <pre><code>Props:</code></pre>
+            <pre><code>kind: &#39;owner-claim&#39; | &#39;invitation&#39;</code></pre>
+          </div>
+        </div>
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import { WorkspaceHandoff } from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Owner Ready</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeOwnerReady = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Invitation Ready</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeInvitationReady = () =&gt; &lt;WorkspaceHandoff kind=&quot;invitation&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Invitation Requires Private Link</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeInvitationRequiresPrivateLink = () =&gt; &lt;WorkspaceHandoff kind=&quot;invitation&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Owner Direct Visit Starts Setup</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeOwnerDirectVisitStartsSetup = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Owner Already Claimed</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeOwnerAlreadyClaimed = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Owner Recovery Requires Private Link</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeOwnerRecoveryRequiresPrivateLink = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Owner Creates Passkey</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeOwnerCreatesPasskey = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Native Invitation Creates Passkey</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const NativeInvitationCreatesPasskey = () =&gt; &lt;WorkspaceHandoff kind=&quot;invitation&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Oidc Provider Enrollment And Existing Account</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OidcProviderEnrollmentAndExistingAccount = () =&gt; &lt;WorkspaceHandoff kind=&quot;invitation&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Oidc Existing Account Only</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OidcExistingAccountOnly = () =&gt; &lt;WorkspaceHandoff kind=&quot;invitation&quot; /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Oidc Owner Still Requires Private Link</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const OidcOwnerStillRequiresPrivateLink = () =&gt; &lt;WorkspaceHandoff kind=&quot;owner-claim&quot; /&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article>
+    </div>
+    <div class="error-groups" role="region" aria-label="Prop type error groups">
+        <section class="group">
+          <input id="no-component-found-toggle" class="group-tg" type="checkbox" hidden />
+          <label for="no-component-found-toggle" class="group-header">
+            <span class="caret">▸</span>
+            <span class="group-title">No component found</span>
+            <span class="group-count">1</span>
+          </label>
+          <div class="group-cards">
+<article
+  class="card 
+  has-error 
+  has-info 
+  no-story-error
+  no-doc-error"
+  role="listitem"
+  aria-label="Components">
+  <div class="head">
+    <div class="title">
+      <h2><span class="status-dot dot-err"></span> Components</h2>
+      <div class="badges">
+        <label for="c-error-0-sideport-components-err" class="badge err as-toggle">prop type error</label>
+        <label for="c-error-0-sideport-components-info" class="badge info as-toggle">1 info</label>
+        <label for="c-error-0-sideport-components-stories" class="badge ok as-toggle">17 stories</label>
+        
+        
+      </div>
+    </div>
+    <div class="meta" title="./src/Components.stories.tsx">sideport-components · ./src/Components.stories.tsx</div>
+    
+    
+    
+  </div>
+
+  <!-- ⬇️ Hidden toggles must be siblings BEFORE .panels -->
+  <input id="c-error-0-sideport-components-err" class="tg tg-err" type="checkbox" hidden />
+  <input id="c-error-0-sideport-components-info" class="tg tg-info" type="checkbox" hidden />
+  <input id="c-error-0-sideport-components-stories" class="tg tg-stories" type="checkbox" hidden />
+  
+  
+  
+
+  <div class="panels">
+    
+        <div class="panel panel-err">
+          
+    <div class="note err">
+      <div class="note-title">Prop type error</div>
+      <div class="note-body"><pre><code>We could not detect the component from your story file. Specify meta.component.
+  13 | import type { DeviceSummary, HealthState, RegisteredAppSummary, SourceKind, WorkspaceRole } from &#39;./data/sideportTypes&#39;
+  14 |
+&gt; 15 | const meta: Meta = {
+     | ^
+  16 |   title: &#39;Sideport/Components&#39;,
+  17 |   decorators: [
+  18 |     (Story) =&gt; (
+
+./src/Components.stories.tsx:
+import type { Meta, StoryObj } from &#39;@storybook/react-vite&#39;
+import {
+  AppSlotGrid,
+  DeviceCard,
+  DiagnosticIssueList,
+  RenewalQueueList,
+  RoleBadge,
+  SourcePill,
+  StatusPill,
+} from &#39;./App&#39;
+import { fixtures } from &#39;./data/sideportFixtures&#39;
+import type { AdminDataStatus } from &#39;./api/sideportApi&#39;
+import type { DeviceSummary, HealthState, RegisteredAppSummary, SourceKind, WorkspaceRole } from &#39;./data/sideportTypes&#39;
+
+const meta: Meta = {
+  title: &#39;Sideport/Components&#39;,
+  decorators: [
+    (Story) =&gt; (
+      &lt;div className=&quot;story-pad&quot;&gt;
+        &lt;Story /&gt;
+      &lt;/div&gt;
+    ),
+  ],
+  parameters: {
+    layout: &#39;fullscreen&#39;,
+    docs: {
+      description: {
+        component: &#39;Per-component state matrix from the design spec. Each story exercises a hard-to-reach state in isolation, so empty / blocked / failed / full paths can be reviewed without driving the whole shell.&#39;,
+      },
+    },
+  },
+}
+
+export default meta
+
+type Story = StoryObj&lt;typeof meta&gt;
+
+const liveStatus: AdminDataStatus = { mode: &#39;live&#39;, baseUrl: &#39;/sideport-api&#39;, message: &#39;Live API&#39;, canMutate: true }
+
+const appsFor = (udid: string): RegisteredAppSummary[] =&gt;
+  fixtures.apps.filter((app) =&gt; app.deviceUdid === udid).map((app) =&gt; ({ ...app, deviceUdid: udid }))
+
+const nApps = (count: number, udid: string): RegisteredAppSummary[] =&gt;
+  fixtures.apps.slice(0, count).map((app, index) =&gt; ({ ...app, deviceUdid: udid, bundleId: `${app.bundleId}.${index}` }))
+
+const wifiDevice = fixtures.devices[0]
+const usbDevice = fixtures.devices[1]
+const offlineDevice = fixtures.devices[2]
+const blockedDevice: DeviceSummary = { ...wifiDevice, udid: &#39;BLOCKED-UDID&#39;, name: &#39;Blocked iPhone&#39;, health: &#39;blocked&#39;, connection: &#39;usb&#39;, blocker: &#39;Provisioning profile expired.&#39; }
+const fullDevice: DeviceSummary = { ...usbDevice, udid: &#39;FULL-UDID&#39;, name: &#39;Full iPhone&#39;, appSlotsUsed: 3 }
+
+// ---------- DeviceCard ----------
+export const DeviceCardWifi: Story = { name: &#39;DeviceCard — Wi-Fi&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={wifiDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardUsb: Story = { name: &#39;DeviceCard — USB&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={usbDevice} apps={appsFor(usbDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardOffline: Story = { name: &#39;DeviceCard — offline&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={offlineDevice} apps={[]} /&gt;&lt;/div&gt; }
+export const DeviceCardBlocked: Story = { name: &#39;DeviceCard — blocked&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={blockedDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt; }
+export const DeviceCardFullSlots: Story = { name: &#39;DeviceCard — 3/3 slots&#39;, render: () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={fullDevice} apps={nApps(3, fullDevice.udid)} /&gt;&lt;/div&gt; }
+
+// ---------- AppSlotGrid ----------
+export const SlotsEmpty: Story = { name: &#39;AppSlotGrid — 0/3 empty&#39;, render: () =&gt; &lt;AppSlotGrid apps={[]} canRegister /&gt; }
+export const SlotsPartial: Story = { name: &#39;AppSlotGrid — 1/3 used&#39;, render: () =&gt; &lt;AppSlotGrid apps={nApps(1, &#39;demo-device&#39;)} canRegister /&gt; }
+export const SlotsFull: Story = { name: &#39;AppSlotGrid — 3/3 full&#39;, render: () =&gt; &lt;AppSlotGrid apps={nApps(3, &#39;demo-device&#39;)} canRegister={false} /&gt; }
+
+// ---------- RenewalQueueList ----------
+export const RenewalRunningQueued: Story = { name: &#39;RenewalQueue — operation states&#39;, render: () =&gt; &lt;RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+export const RenewalBlocked: Story = { name: &#39;RenewalQueue — blocked&#39;, render: () =&gt; &lt;RenewalQueueList items={fixtures.renewals.filter((item) =&gt; item.risk === &#39;blocked&#39;)} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+export const RenewalEmpty: Story = { name: &#39;RenewalQueue — empty&#39;, render: () =&gt; &lt;RenewalQueueList items={[]} apps={fixtures.apps} apiStatus={liveStatus} /&gt; }
+
+// ---------- DiagnosticIssueList ----------
+export const IssuesAll: Story = { name: &#39;Diagnostics — all categories&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues} /&gt; }
+export const IssueInstallFailed: Story = { name: &#39;Diagnostics — install failed&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.category.includes(&#39;Install&#39;))} /&gt; }
+export const IssueResolved: Story = { name: &#39;Diagnostics — resolved&#39;, render: () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.status === &#39;resolved&#39;)} /&gt; }
+
+// ---------- Atoms ----------
+const healthStates: HealthState[] = [&#39;healthy&#39;, &#39;warning&#39;, &#39;blocked&#39;, &#39;failed&#39;, &#39;offline&#39;]
+const sources: SourceKind[] = [&#39;live&#39;, &#39;derived&#39;, &#39;demo&#39;, &#39;planned&#39;]
+const roles: WorkspaceRole[] = [&#39;owner&#39;, &#39;family&#39;]
+
+export const StatusPills: Story = { name: &#39;StatusPill — all states&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{healthStates.map((state) =&gt; &lt;StatusPill key={state} state={state} label={state} /&gt;)}&lt;/div&gt; }
+export const SourcePills: Story = { name: &#39;SourcePill — all sources&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{sources.map((source) =&gt; &lt;SourcePill key={source} source={source} label={source} /&gt;)}&lt;/div&gt; }
+export const RoleBadges: Story = { name: &#39;RoleBadge — all roles&#39;, render: () =&gt; &lt;div className=&quot;story-row&quot;&gt;{roles.map((role) =&gt; &lt;RoleBadge key={role} role={role} /&gt;)}&lt;/div&gt; }
+</code></pre></div>
+    </div>
+        </div>
+    
+        <div class="panel panel-info">
+          
+    <div class="note info">
+      <div class="note-title">Info</div>
+      <div class="note-body">No description found. Write a jsdoc comment such as /** Component description */.</div>
+    </div>
+        </div>
+    
+    
+        <div class="panel panel-stories">
+          
+          
+          
+          <div class="note ok">
+                <div class="row">
+                  <span class="ex-name">Imports</span>
+                </div>
+                <pre><code>import {
+    AppSlotGrid,
+    DeviceCard,
+    DiagnosticIssueList,
+    RenewalQueueList,
+    RoleBadge,
+    SourcePill,
+    StatusPill,
+} from "sideport-admin";</code></pre>
+              </div>
+          
+          
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — Wi-Fi</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardWifi = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={wifiDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — USB</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardUsb = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={usbDevice} apps={appsFor(usbDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — offline</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardOffline = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={offlineDevice} apps={[]} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — blocked</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardBlocked = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={blockedDevice} apps={appsFor(wifiDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">DeviceCard — 3/3 slots</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const DeviceCardFullSlots = () =&gt; &lt;div className=&quot;story-card&quot;&gt;&lt;DeviceCard device={fullDevice} apps={nApps(3, fullDevice.udid)} /&gt;&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 0/3 empty</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsEmpty = () =&gt; &lt;AppSlotGrid apps={[]} canRegister /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 1/3 used</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsPartial = () =&gt; &lt;AppSlotGrid apps={nApps(1, &#39;demo-device&#39;)} canRegister /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">AppSlotGrid — 3/3 full</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SlotsFull = () =&gt; &lt;AppSlotGrid apps={nApps(3, &#39;demo-device&#39;)} canRegister={false} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — operation states</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalRunningQueued = () =&gt; &lt;RenewalQueueList items={fixtures.renewals} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — blocked</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalBlocked = () =&gt; &lt;RenewalQueueList items={fixtures.renewals.filter((item) =&gt; item.risk === &#39;blocked&#39;)} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RenewalQueue — empty</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RenewalEmpty = () =&gt; &lt;RenewalQueueList items={[]} apps={fixtures.apps} apiStatus={liveStatus} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — all categories</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssuesAll = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — install failed</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssueInstallFailed = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.category.includes(&#39;Install&#39;))} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">Diagnostics — resolved</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const IssueResolved = () =&gt; &lt;DiagnosticIssueList issues={fixtures.issues.filter((issue) =&gt; issue.status === &#39;resolved&#39;)} /&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">StatusPill — all states</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const StatusPills = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{healthStates.map((state) =&gt; &lt;StatusPill key={state} state={state} label={state} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">SourcePill — all sources</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const SourcePills = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{sources.map((source) =&gt; &lt;SourcePill key={source} source={source} label={source} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+            <div class="note ok">
+              <div class="row">
+                <span class="ex-name">RoleBadge — all roles</span>
+                <span class="badge ok">story ok</span>
+              </div>
+              
+              
+              <pre><code>const RoleBadges = () =&gt; &lt;div className=&quot;story-row&quot;&gt;{roles.map((role) =&gt; &lt;RoleBadge key={role} role={role} /&gt;)}&lt;/div&gt;;</code></pre>
+            </div>
+        </div>
+    
+    
+  </div>
+</article></div>
+        </section>
+      </div>
+    
+    
+  </div>
+</main>
+</body>
+</html>  
