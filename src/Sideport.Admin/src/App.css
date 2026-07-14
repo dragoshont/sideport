@@ -36,6 +36,7 @@
 .renewal-meta,
 .hero-actions,
 .observability-panel,
+.setup-reminder,
 .app-summary,
 .empty-slot,
 .ghost-action,
@@ -1943,6 +1944,22 @@ tr:last-child td {
 .observability-panel p {
   color: #637083;
   line-height: 1.45;
+}
+
+.setup-reminder {
+  gap: 12px;
+  align-items: center;
+}
+
+.setup-reminder-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+
+.setup-reminder > .primary-action {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 980px) {

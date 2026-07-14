@@ -115,6 +115,7 @@ export interface SideportAdminAppProps {
   apiStatus?: AdminDataStatus
   initialRoute?: RouteId
   initialCommandOpen?: boolean
+  initialSetupOpen?: boolean
   addIPhoneServices?: AddIPhoneServices
   addAppServices?: AddAppServices
   installAppService?: (payload: InstallOperationPayload) => Promise<OperationRecordDto>
@@ -279,12 +280,13 @@ function operationFailure(record: OperationRecordDto): string | null {
   return record.error?.message ?? record.error?.detail ?? (record.status === 'failed' || record.status === 'blocked' ? 'Sideport could not start this install.' : null)
 }
 
-export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initialCommandOpen = false, addIPhoneServices: injectedAddIPhoneServices, addAppServices: injectedAddAppServices, installAppService: injectedInstallAppService, preflightInstallService: injectedPreflightInstallService, readOperationService: injectedReadOperationService, reconcileOperationService: injectedReconcileOperationService, completeOnboardingService: injectedCompleteOnboardingService, registerPendingAppService: injectedRegisterPendingAppService, schedulerSettingsService: injectedSchedulerSettingsService, onApiTokenSaved }: SideportAdminAppProps) {
+export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initialCommandOpen = false, initialSetupOpen = false, addIPhoneServices: injectedAddIPhoneServices, addAppServices: injectedAddAppServices, installAppService: injectedInstallAppService, preflightInstallService: injectedPreflightInstallService, readOperationService: injectedReadOperationService, reconcileOperationService: injectedReconcileOperationService, completeOnboardingService: injectedCompleteOnboardingService, registerPendingAppService: injectedRegisterPendingAppService, schedulerSettingsService: injectedSchedulerSettingsService, onApiTokenSaved }: SideportAdminAppProps) {
   const queryClient = useQueryClient()
   const viewData = data ?? runtimeEmptyData
   const viewStatus = apiStatus ?? runtimeStatus
   const catalogApps = viewData.catalogApps
   const [route, setRoute] = useState<RouteId>(initialRoute)
+  const [setupOpen, setSetupOpen] = useState(initialSetupOpen)
   const [selectedCatalogAppId, setSelectedCatalogAppId] = useState('')
   const [selectedDeviceUdid, setSelectedDeviceUdid] = useState(viewData.devices[0]?.udid ?? '')
   const [commandOpen, setCommandOpen] = useState(initialCommandOpen)
@@ -619,8 +621,8 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   }, [])
 
   const setupIncomplete = viewStatus.onboarding !== undefined && viewStatus.onboarding.setupState !== 'complete'
-  if (setupIncomplete) {
-    return <RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={openAddIPhone} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />
+  if (setupIncomplete && setupOpen) {
+    return <RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={openAddIPhone} onExit={() => setSetupOpen(false)} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />
   }
 
   return (
@@ -661,7 +663,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
       <div className="workspace">
         <TopBar addTriggerRef={globalAddTriggerRef} apiStatus={viewStatus} onAddApp={canImportCatalog ? openAddApp : undefined} onAddIPhone={openAddIPhone} onOpenCommand={() => setCommandOpen(true)} system={viewData.system} />
         <main className="content-area">
-          {route === 'home' && <OverviewPage data={viewData} onNavigate={setRoute} />}
+          {route === 'home' && <OverviewPage data={viewData} onContinueSetup={setupIncomplete ? () => setSetupOpen(true) : undefined} onNavigate={setRoute} setupCompletedCount={viewStatus.onboarding?.workflow?.steps.filter((step) => step.state === 'complete').length} setupNextAction={viewStatus.onboarding?.workflow?.nextAction?.label} setupTotalCount={viewStatus.onboarding?.workflow?.steps.length} />}
           {route === 'devices' && <DevicesPage data={viewData} onAddIPhone={openAddIPhone} onOpenDevice={openDevice} />}
           {route === 'device-detail' && <DeviceDetailPage data={viewData} device={selectedDevice} apiStatus={viewStatus} onInstallApp={() => openInstallPage(catalogApps[0]?.id)} />}
           {route === 'apps' && <AppCatalogPage data={viewData} catalogApps={catalogApps} onAddApp={canImportCatalog ? openAddApp : undefined} onInstallApp={openInstallPage} />}
@@ -705,7 +707,7 @@ function sidebarNote(apiStatus: AdminDataStatus): string {
   return 'Live API reads are safe. Register, refresh, delete, and install remain disabled in this UI slice.'
 }
 
-export function OverviewPage({ data, onNavigate }: { data: SideportReadModel; onNavigate?: (route: RouteId) => void }) {
+export function OverviewPage({ data, onNavigate, onContinueSetup, setupCompletedCount = 0, setupNextAction, setupTotalCount = 0 }: { data: SideportReadModel; onNavigate?: (route: RouteId) => void; onContinueSetup?: () => void; setupCompletedCount?: number; setupNextAction?: string; setupTotalCount?: number }) {
   const reachable = data.devices.filter((device) => device.connection !== 'offline').length
   const blocked = data.renewals.filter((item) => item.risk === 'blocked').length
   const due = data.renewals.filter((item) => item.risk === 'due-now').length
@@ -717,6 +719,8 @@ export function OverviewPage({ data, onNavigate }: { data: SideportReadModel; on
         title="Apps and iPhones at a glance"
         description="Sideport keeps watching for connected iPhones and handles approved app updates in the background."
       />
+
+      {onContinueSetup && <section aria-labelledby="sideport-setup-reminder-title" className="panel setup-reminder"><ShieldCheck aria-hidden="true" size={22} /><div className="setup-reminder-copy"><strong id="sideport-setup-reminder-title">Your Owner account is ready</strong><p className="muted">Connect Apple signing, an iPhone, and the first app whenever it is convenient. Sideport will keep your place and will not claim automatic refresh is ready until installation is verified.</p><small aria-live="polite" className="muted">{setupCompletedCount} of {setupTotalCount} setup checks complete{setupNextAction ? ` · Next: ${setupNextAction}` : ''}</small></div><button className="primary-action" onClick={onContinueSetup} type="button">Continue setup</button></section>}
 
       <section className="metric-grid" aria-label="Fleet health summary">
         <MetricCard icon={Smartphone} label="Reachable iPhones" value={String(reachable)} detail="Available over USB or paired Wi-Fi." source="live" tone="blue" />
