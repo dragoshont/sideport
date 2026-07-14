@@ -12,6 +12,7 @@ import type { AddAppServices, AddIPhoneServices } from './add-flows/AddFlows'
 const meta = {
   title: 'Sideport/Admin Shell',
   component: SideportAdminApp,
+  args: { initialSetupOpen: true },
   parameters: {
     docs: {
       description: {
@@ -485,6 +486,25 @@ export const FirstRunOnboarding: Story = {
     await expect(canvas.getByRole('heading', { name: 'Connect Apple' })).toBeVisible()
     await expect(canvas.getAllByRole('main')).toHaveLength(1)
     await expect(canvas.getByText('1 of 6 complete')).toBeVisible()
+  },
+}
+export const OwnerAccountCanEnterPortalWithoutIPhone: Story = {
+  name: 'Owner account - portal access before iPhone setup',
+  args: { data: freshOnboardingData, apiStatus: freshOnboardingStatus, initialRoute: 'home', initialSetupOpen: false },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('heading', { name: 'Apps and iPhones at a glance' })).toBeVisible()
+    await expect(canvas.getByText('Your Owner account is ready')).toBeVisible()
+    await expect(canvas.getByText(/Next: Connect Apple/)).toBeVisible()
+    await expect(canvas.queryByTestId('runtime-first-run-onboarding')).not.toBeInTheDocument()
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Continue setup' }))
+    await expect(canvas.getByTestId('runtime-first-run-onboarding')).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Connect Apple' })).toBeVisible()
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Set up later' }))
+    await expect(canvas.getByRole('heading', { name: 'Apps and iPhones at a glance' })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Continue setup' })).toBeVisible()
   },
 }
 export const FirstRunConnectIPhoneActionable: Story = {

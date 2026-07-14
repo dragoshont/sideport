@@ -66,8 +66,13 @@ Secondary surfaces:
 - Persistent, role-aware **Add** menu. Owners can add an iPhone, import an app,
   or invite someone they trust. Members can add their own iPhone. Context and empty
   states invoke the same assistants rather than page-specific variants.
-- Setup is outside the signed-in shell while `setupState` is incomplete. After
-  the durable completion receipt exists, Sideport lands on Home and Setup is
+- Owner account creation and operational setup are separate. After the Owner
+  claim is accepted, Sideport lands on Home even while `setupState` is
+  incomplete. Home shows one persistent **Continue setup** reminder with the
+  next server-authoritative action. The Owner may enter or leave the existing
+  setup assistant at any time; leaving never creates the durable completion
+  receipt or claims that signing, an iPhone, installation, or automatic refresh
+  is ready. After the receipt exists, the reminder disappears and Setup remains
   available only as a recovery/status surface in Settings.
 - First-run setup and later **Add iPhone** share one cable-to-install assistant.
   The assistant stays open through Trust, Developer Mode guidance, restart and
