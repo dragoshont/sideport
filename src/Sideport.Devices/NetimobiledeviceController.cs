@@ -18,6 +18,7 @@ public sealed class NetimobiledeviceController : IDeviceController
     private readonly IDeviceBackend _backend;
     private readonly ILogger<NetimobiledeviceController> _logger;
     private readonly DeviceMetrics _metrics;
+    private readonly DevicePairingOwner _pairingOwner;
     private readonly TimeSpan _installedAppsCacheTtl;
     private readonly TimeProvider _timeProvider;
     private readonly object _installedAppsCacheGate = new();
@@ -29,11 +30,13 @@ public sealed class NetimobiledeviceController : IDeviceController
         ILogger<NetimobiledeviceController>? logger = null,
         DeviceMetrics? metrics = null,
         TimeSpan? installedAppsCacheTtl = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        DevicePairingOwner pairingOwner = DevicePairingOwner.Sideport)
     {
         _backend = backend;
         _logger = logger ?? NullLogger<NetimobiledeviceController>.Instance;
         _metrics = metrics ?? new DeviceMetrics();
+        _pairingOwner = pairingOwner;
         _installedAppsCacheTtl = installedAppsCacheTtl ?? TimeSpan.FromMinutes(5);
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -41,6 +44,17 @@ public sealed class NetimobiledeviceController : IDeviceController
     public async Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default)
     {
         IReadOnlyList<BackendDevice> raw = await _backend.ListDevicesAsync(ct);
+        return MapDevices(raw);
+    }
+
+    public async Task<IReadOnlyList<DeviceInfo>> ListConnectedDevicesAsync(CancellationToken ct = default)
+    {
+        IReadOnlyList<BackendDevice> raw = await _backend.ListConnectedDevicesAsync(ct);
+        return MapDevices(raw);
+    }
+
+    private static IReadOnlyList<DeviceInfo> MapDevices(IReadOnlyList<BackendDevice> raw)
+    {
 
         // A device reachable over both USB and Wi-Fi appears once; prefer USB
         // (more reliable for install). Dedup by UDID, USB winning.
@@ -96,7 +110,8 @@ public sealed class NetimobiledeviceController : IDeviceController
                 "error",
                 "Connect this iPhone to the Sideport host with USB before pairing.",
                 current.LockdownCheckedAt,
-                UsableForInstall: false);
+                UsableForInstall: false,
+                DevicePairingDisposition.UsbRequired);
         }
 
         if (string.Equals(current.TrustState, "trusted", StringComparison.Ordinal))
@@ -108,7 +123,8 @@ public sealed class NetimobiledeviceController : IDeviceController
                 current.TrustState,
                 current.TrustReason,
                 current.LockdownCheckedAt,
-                current.UsableForInstall);
+                current.UsableForInstall,
+                DevicePairingDisposition.Trusted);
         }
 
         if (string.Equals(current.TrustState, "locked", StringComparison.Ordinal))
@@ -120,18 +136,47 @@ public sealed class NetimobiledeviceController : IDeviceController
                 current.TrustState,
                 current.TrustReason,
                 current.LockdownCheckedAt,
-                UsableForInstall: false);
+                UsableForInstall: false,
+                DevicePairingDisposition.Locked);
         }
 
         if (!string.Equals(current.TrustState, "untrusted", StringComparison.Ordinal))
+        {
+            DevicePairingDisposition disposition = current.Disposition == DevicePairingDisposition.Unknown
+                ? DevicePairingDisposition.TransportUnavailable
+                : current.Disposition;
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                current.TrustState,
+                current.TrustReason ?? "Sideport could not verify the iPhone before pairing.",
+                current.LockdownCheckedAt,
+                UsableForInstall: false,
+                disposition);
+        }
+
+        if (current.Disposition == DevicePairingDisposition.RepairRequired)
         {
             return new DevicePairingResult(
                 current.Udid,
                 current.Connection,
                 "error",
-                current.TrustReason ?? "Sideport could not verify the iPhone before pairing.",
+                current.TrustReason ?? "The saved pairing record is damaged and must be repaired before pairing can continue.",
                 current.LockdownCheckedAt,
-                UsableForInstall: false);
+                UsableForInstall: false,
+                DevicePairingDisposition.RepairRequired);
+        }
+
+        if (_pairingOwner == DevicePairingOwner.Host)
+        {
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                "untrusted",
+                "Pairing is managed by the host. Keep the iPhone connected and approve Trust if the host asks.",
+                current.LockdownCheckedAt,
+                UsableForInstall: false,
+                DevicePairingDisposition.HostManaged);
         }
 
         return await _backend.PairAsync(udid, progress, ct).ConfigureAwait(false);

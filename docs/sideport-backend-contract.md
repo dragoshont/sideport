@@ -126,6 +126,27 @@ The planned V2 contract below preserves paired-Wi-Fi refresh while adding the
 bounded transfer, unknown-state quarantine, verification, and fallback rules
 required before it is called production-ready.
 
+Device discovery and Trust verification are separate operations. Enrollment
+wait/recovery loops use usbmux enumeration only to determine whether the target
+UDID is present over USB; they open lockdown only for the subsequent explicit
+Trust probe. Enumeration is not evidence of Trust or install usability.
+
+`Sideport:Devices:PairingOwner` selects the single component allowed to initiate
+USB pairing:
+
+- `sideport` (default) preserves the current behavior: only the explicit
+  user-started Add iPhone operation may request pairing.
+- `host` disables Sideport pairing requests for deployments where the host
+  usbmux daemon owns pairing/preflight. Sideport continues passive USB
+  enumeration and Trust verification and waits for the host-created pairing
+  record.
+
+Pairing and Trust results carry a typed disposition (`trusted`,
+`awaiting-trust`, `denied`, `locked`, `transport-unavailable`,
+`repair-required`, `usb-required`, or `host-managed`). Enrollment decisions use that disposition rather than
+parsing operator-facing error text. Unknown remains the compatibility default
+for older controller implementations.
+
 ### Identity provider and passkey ownership
 
 The Sideport identity and enrollment HTTP contract is provider-neutral. Native

@@ -16,11 +16,22 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
     public Exception? ThrowOnInstall { get; set; }
     public int PairCalls { get; private set; }
     public int ProbeTrustCalls { get; private set; }
+    public int ListDevicesCalls { get; private set; }
+    public int ListConnectedDevicesCalls { get; private set; }
     public Dictionary<string, DeviceTrustProbe> TrustByUdid { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Func<string, IProgress<DevicePairingProgress>?, CancellationToken, Task<DevicePairingResult>>? PairHandler { get; set; }
 
-    public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<BackendDevice>>(Devices);
+    public Task<IReadOnlyList<BackendDevice>> ListConnectedDevicesAsync(CancellationToken ct)
+    {
+        ListConnectedDevicesCalls++;
+        return Task.FromResult<IReadOnlyList<BackendDevice>>(Devices);
+    }
+
+    public Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct)
+    {
+        ListDevicesCalls++;
+        return Task.FromResult<IReadOnlyList<BackendDevice>>(Devices);
+    }
 
     public Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct)
     {
