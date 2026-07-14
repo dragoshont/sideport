@@ -210,6 +210,15 @@ Interaction and accessibility:
   acceptance, keep focus stable and render a disabled status label in place of
   a second decision. Announce meaningful stage changes politely; never ask the
   user to confirm an event Sideport can observe itself.
+- Personalize the primary live status from the current member, for example
+  **Waiting for Dragos’s iPhone…**. Attempt three subtle, distinct Web Audio
+  cues after the user's start action: listening started, iPhone detected/Trust
+  verified, and attention/still not detected. Audio is best effort and never
+  substitutes for visible text, `aria-live` status, or server evidence.
+- If the iPhone is still absent after a short wait, keep the same operation open
+  and show the physical checks together: unlocked, charging, data-capable cable,
+  and direct USB. Do not show a generic red lockdown error for an ambiguous or
+  temporarily disconnected post-pairing state.
 - Present the flow as a calm setup assistant, not an operations dashboard. Each
   screen shows one goal, a short plain-language explanation, current outcome,
   consequential warnings, essential choices, and one primary action.
@@ -615,9 +624,11 @@ Minimum stories:
 - One-cable member assistant: cable/unlock/Trust/passcode guidance together;
   detection, pairing, Trust verification, and Sideport acceptance automatic
   after one start action; Developer Mode/restart/reconnect guidance before app
-  choice; unified approved app library; one **Install** action; verified chime
-  attempt plus **Installed — you can unplug**; automatic home-Wi-Fi refresh with
-  honest cable fallback.
+  choice; no **Check Trust** recovery action and Continue stays disabled until
+  server acceptance; personalized waiting/detected/attention sound cues;
+  unified approved app library; one **Install** action; verified chime attempt
+  plus **Installed — you can unplug**; automatic home-Wi-Fi refresh with honest
+  cable fallback.
 - Owner setup outside the shell: fresh Docker and Apple Container explanations
   in plain language, deployment-specific repair disclosure, one Apple signer,
   Apple-returned team selection only when multiple teams exist, and handoff to

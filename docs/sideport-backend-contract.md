@@ -1377,11 +1377,12 @@ device as accepted with the initiating actor and timestamp. There is no second
 **Add to Sideport** confirmation.
 
 Timeout or restart before a pairing request is retry-safe. After a pairing
-request, recovery first performs a non-pairing trust check: trusted continues
-to acceptance, definitely denied/unpaired fails safely, and ambiguous or
-unreachable becomes `recovery-required`; it never repeats pairing
-automatically. Trust denial, lock, timeout, disconnect, Wi-Fi-only discovery,
-or an unknown concurrent device operation adds nothing.
+request, the same bounded operation performs non-pairing Trust checks until the
+iPhone is accepted, definitely denied/unpaired, unauthorized, canceled, or the
+five-minute window expires. A locked, temporarily disconnected, Wi-Fi-only, or
+ambiguous iPhone remains in automatic waiting/recovery with no second pairing
+request and no user-facing retry action. Only expiry becomes terminal
+`recovery-required`; definite denial/unpaired fails safely and adds nothing.
 
 The existing `POST /api/devices/known` remains for compatibility and manual
 inventory outside onboarding, but the onboarding and future **Devices → Add
