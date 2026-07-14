@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Popover from '@radix-ui/react-popover'
 import {
@@ -108,6 +108,7 @@ interface AddIPhoneDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   demoMode: boolean
+  autoStart?: boolean
   canMutate?: boolean
   services?: AddIPhoneServices
   onAccepted?: (operation: EnrollmentOperation | null) => void
@@ -158,12 +159,13 @@ function rememberEnrollmentOperationId(key: string | null, operationId: string |
   }
 }
 
-export function AddIPhoneDialog({ open, onOpenChange, demoMode, canMutate = false, services, onAccepted, onContinue, resumeOperationId, persistenceKey, returnFocusRef }: AddIPhoneDialogProps) {
+export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = false, canMutate = false, services, onAccepted, onContinue, resumeOperationId, persistenceKey, returnFocusRef }: AddIPhoneDialogProps) {
   const [phase, setPhase] = useState<IPhonePhase>('idle')
   const [operation, setOperation] = useState<EnrollmentOperation | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pollRevision, setPollRevision] = useState(0)
   const acceptedNotifiedRef = useRef<string | null>(null)
+  const autoStartHandledRef = useRef(false)
   const storageKey = enrollmentStorageKey(persistenceKey)
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && !isResumableEnrollment(operation)) {
@@ -174,6 +176,10 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, canMutate = fals
     }
     onOpenChange(nextOpen)
   }
+
+  useEffect(() => {
+    if (!open) autoStartHandledRef.current = false
+  }, [open])
 
   useEffect(() => {
     if (!open || demoMode || !services) return
@@ -235,7 +241,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, canMutate = fals
     onAccepted?.(operation)
   }, [onAccepted, operation, phase])
 
-  const beginEnrollment = async () => {
+  const beginEnrollment = useCallback(async () => {
     setError(null)
     if (demoMode) {
       setPhase('waiting')
@@ -253,6 +259,20 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, canMutate = fals
       setPhase('failed')
       setError(reason instanceof Error ? reason.message : 'Sideport could not start the iPhone connection.')
     }
+  }, [canMutate, demoMode, services, storageKey])
+
+  const autoStartEnrollment = () => {
+    // Radix invokes this once for each explicit dialog opening. Using that
+    // single-fire UI boundary avoids effect/remount races while the existing
+    // operation store and polling continue to own resume behavior.
+    if (!autoStart || autoStartHandledRef.current || phase !== 'idle' || operation) return
+    // The onboarding trigger is disabled without this capability. If it changes
+    // between the click and dialog mount, fail closed and start nothing.
+    if (!demoMode && (!services || !canMutate)) return
+    const resumableOperationId = resumeOperationId ?? readEnrollmentOperationId(storageKey)
+    autoStartHandledRef.current = true
+    if (resumableOperationId) return
+    void beginEnrollment()
   }
 
   const retryEnrollment = async () => {
@@ -309,6 +329,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, canMutate = fals
         <Dialog.Content
           className="dialog-content add-flow-dialog"
           data-testid="add-iphone-dialog"
+          onOpenAutoFocus={autoStartEnrollment}
           onCloseAutoFocus={(event) => {
             if (!returnFocusRef?.current) return
             event.preventDefault()

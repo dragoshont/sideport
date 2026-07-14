@@ -153,8 +153,9 @@ Flow steps:
    revocation or cutover; never imply that Sideport will revoke implicitly.
 3. **iPhone:** show the USB, unlock, **Trust This Computer**, passcode,
    Developer Mode, restart, and post-restart confirmation steps together.
-   **Connect iPhone** starts one authenticated, five-minute enrollment session.
-   Sideport then waits for one USB iPhone, requests pairing automatically,
+   **Connect iPhone** starts one authenticated, five-minute enrollment session
+   and immediately changes the assistant to its waiting state; onboarding never
+   asks for a second Connect click. Sideport then waits for one USB iPhone, requests pairing automatically,
    waits for the user to trust it on the iPhone, verifies lockdown, and adds the
    trusted phone to inventory. There are no separate Pair, Trust-confirmation,
    or Add buttons. Wi-Fi-only discovery blocks first pairing and the first
