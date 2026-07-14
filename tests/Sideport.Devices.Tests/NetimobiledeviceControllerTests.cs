@@ -7,14 +7,33 @@ public class NetimobiledeviceControllerTests
 {
     private readonly FakeDeviceBackend _backend = new();
 
-    private NetimobiledeviceController Build(TimeSpan? installedAppsCacheTtl = null, TimeProvider? timeProvider = null) =>
+    private NetimobiledeviceController Build(
+        TimeSpan? installedAppsCacheTtl = null,
+        TimeProvider? timeProvider = null,
+        DevicePairingOwner pairingOwner = DevicePairingOwner.Sideport) =>
         new(
             _backend,
             NullLogger<NetimobiledeviceController>.Instance,
             installedAppsCacheTtl: installedAppsCacheTtl,
-            timeProvider: timeProvider);
+            timeProvider: timeProvider,
+            pairingOwner: pairingOwner);
 
     // --- device discovery + dedup -----------------------------------------
+
+    [Theory]
+    [InlineData(null, DevicePairingOwner.Sideport)]
+    [InlineData("", DevicePairingOwner.Sideport)]
+    [InlineData("sideport", DevicePairingOwner.Sideport)]
+    [InlineData("HOST", DevicePairingOwner.Host)]
+    public void PairingOwnerConfiguration_ParsesSupportedValues(
+        string? configured,
+        DevicePairingOwner expected) =>
+        Assert.Equal(expected, DevicesServiceCollectionExtensions.ParsePairingOwner(configured));
+
+    [Fact]
+    public void PairingOwnerConfiguration_RejectsUnknownValue() =>
+        Assert.Throws<InvalidOperationException>(() =>
+            DevicesServiceCollectionExtensions.ParsePairingOwner("automatic"));
 
     [Fact]
     public async Task ListDevices_DistinctDevices_AllReturnedOrderedByName()
@@ -90,6 +109,22 @@ public class NetimobiledeviceControllerTests
         Assert.Equal(checkedAt, device.LockdownCheckedAt);
         Assert.True(device.UsableForInstall);
         Assert.Equal(0, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task ListConnectedDevices_UsesEnumerationOnlyBackendPath()
+    {
+        _backend.Devices.Add(new BackendDevice(
+            "UDID-1", "", "", "", DeviceConnection.Usb,
+            "unknown", "Trust has not been checked."));
+
+        DeviceInfo device = Assert.Single(await Build().ListConnectedDevicesAsync());
+
+        Assert.Equal("UDID-1", device.Udid);
+        Assert.Equal(DeviceConnection.Usb, device.Connection);
+        Assert.Equal(1, _backend.ListConnectedDevicesCalls);
+        Assert.Equal(0, _backend.ListDevicesCalls);
+        Assert.Equal(0, _backend.ProbeTrustCalls);
     }
 
     // --- device connectivity self-test (DiagnoseAsync) --------------------
@@ -202,6 +237,19 @@ public class NetimobiledeviceControllerTests
         Assert.Equal("trusted", result.TrustState);
         Assert.Equal(1, _backend.ProbeTrustCalls);
         Assert.Equal(1, _backend.PairCalls);
+    }
+
+    [Fact]
+    public async Task Pair_HostOwned_ReturnsTypedHostManagedOutcomeWithoutPairRequest()
+    {
+        ScriptTrust("UDID-1", DeviceConnection.Usb, "untrusted");
+
+        DevicePairingResult result = await Build(pairingOwner: DevicePairingOwner.Host).PairAsync("UDID-1");
+
+        Assert.Equal(DevicePairingDisposition.HostManaged, result.Disposition);
+        Assert.Equal("untrusted", result.TrustState);
+        Assert.Equal(1, _backend.ProbeTrustCalls);
+        Assert.Equal(0, _backend.PairCalls);
     }
 
     [Fact]

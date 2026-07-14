@@ -11,6 +11,15 @@ public interface IDeviceController
     /// <summary>Discover reachable devices over USB and (later) Wi-Fi.</summary>
     Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Enumerate connected transports without opening lockdown. This is for
+    /// presence/connection selection only and never proves Trust or install
+    /// usability. Implementations that cannot separate discovery from Trust
+    /// may fall back to <see cref="ListDevicesAsync"/>.
+    /// </summary>
+    Task<IReadOnlyList<DeviceInfo>> ListConnectedDevicesAsync(CancellationToken ct = default) =>
+        ListDevicesAsync(ct);
+
     /// <summary>List installed user apps and their signing expiry on a device.</summary>
     Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(
         string udid, CancellationToken ct = default);
@@ -82,7 +91,8 @@ public sealed record DeviceTrustProbe(
     string TrustState,
     string? TrustReason,
     DateTimeOffset LockdownCheckedAt,
-    bool UsableForInstall);
+    bool UsableForInstall,
+    DevicePairingDisposition Disposition = DevicePairingDisposition.Unknown);
 
 /// <summary>
 /// User-visible progress from an explicit pairing request. <paramref
@@ -98,7 +108,29 @@ public sealed record DevicePairingResult(
     string TrustState,
     string? TrustReason,
     DateTimeOffset LockdownCheckedAt,
-    bool UsableForInstall);
+    bool UsableForInstall,
+    DevicePairingDisposition Disposition = DevicePairingDisposition.Unknown);
+
+/// <summary>Typed pairing/Trust outcome used for control-flow decisions.</summary>
+public enum DevicePairingDisposition
+{
+    Unknown,
+    Trusted,
+    AwaitingTrust,
+    Denied,
+    Locked,
+    TransportUnavailable,
+    RepairRequired,
+    UsbRequired,
+    HostManaged,
+}
+
+/// <summary>The single component allowed to initiate first USB pairing.</summary>
+public enum DevicePairingOwner
+{
+    Sideport,
+    Host,
+}
 
 /// <summary>Result of a device-connectivity self-test (worst layer wins).</summary>
 public sealed record DeviceDiagnostics(

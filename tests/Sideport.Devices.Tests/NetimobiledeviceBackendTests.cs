@@ -60,6 +60,38 @@ public class NetimobiledeviceBackendTests
 
         Assert.Equal("locked", state);
         Assert.Contains("Unlock", reason);
+        Assert.Equal(
+            DevicePairingDisposition.Locked,
+            NetimobiledeviceBackend.ClassifyTrustFailureDisposition(
+                new LockdownException(LockdownError.PasswordProtected)));
+    }
+
+    [Fact]
+    public void ClassifyTrustFailure_UserDenied_IsTypedDenied()
+    {
+        Assert.Equal(
+            DevicePairingDisposition.Denied,
+            NetimobiledeviceBackend.ClassifyTrustFailureDisposition(
+                new LockdownException(LockdownError.UserDeniedPairing)));
+    }
+
+    [Theory]
+    [InlineData(LockdownError.PairingFailed)]
+    [InlineData(LockdownError.InvalidHostID)]
+    [InlineData(LockdownError.InvalidPairRecord)]
+    public void ClassifyTrustFailure_DamagedSavedTrust_RequiresRepair(LockdownError error)
+    {
+        Assert.Equal(
+            DevicePairingDisposition.RepairRequired,
+            NetimobiledeviceBackend.ClassifyTrustFailureDisposition(new LockdownException(error)));
+    }
+
+    [Fact]
+    public void ClassifyTrustFailure_FatalPairing_IsTransportFailureNotMissingTrust()
+    {
+        Assert.Equal(
+            DevicePairingDisposition.TransportUnavailable,
+            NetimobiledeviceBackend.ClassifyTrustFailureDisposition(new FatalPairingException()));
     }
 
     [Fact]
@@ -93,6 +125,7 @@ public class NetimobiledeviceBackendTests
 
         Assert.Equal(DeviceConnection.Wifi, result.Connection);
         Assert.Equal("error", result.TrustState);
+        Assert.Equal(DevicePairingDisposition.UsbRequired, result.Disposition);
         Assert.False(result.UsableForInstall);
         Assert.DoesNotContain(udid, result.TrustReason!);
     }

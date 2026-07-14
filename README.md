@@ -348,6 +348,8 @@ services:
       # Where the host keeps the iPhone pairing records — needed for Wi‑Fi
       # installs (the trusted handshake runs in-process over direct TCP).
       Sideport__Devices__PairingRecordsDir: "/var/lib/lockdown"
+      # Keep the default "sideport" unless the host usbmux daemon owns pairing.
+      Sideport__Devices__PairingOwner: "sideport"
       # Your Apple password. The variable NAME encodes your Apple ID:
       #   you@example.com  ->  SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM
       SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM: "<YOUR-APPLE-ID-PASSWORD>"
@@ -519,6 +521,7 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `SIDEPORT_APPLE_PW_<APPLEID>` | ✅ | — | Apple password. Encode the Apple ID in the name: `you@example.com` → `SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM`. |
 | `USBMUXD_SOCKET_ADDRESS` | recommended | system default | How to reach the iPhone. Set to `unix:/var/run/usbmuxd` when you mount the host socket. |
 | `Sideport__Devices__PairingRecordsDir` | — | `/var/lib/lockdown` | Where the host keeps the iPhone pairing records. Mount this **read‑only** for **Wi‑Fi** installs — the trusted lockdown handshake runs in‑process over direct TCP and reads the record here. USB installs don't need it. |
+| `Sideport__Devices__PairingOwner` | — | `sideport` | The single component allowed to initiate USB pairing: `sideport` for the explicit Add iPhone flow, or `host` when host usbmux preflight owns pairing. In `host` mode Sideport only enumerates and verifies Trust. |
 | `SIDEPORT_API_TOKEN` | recommended | *(unset)* | Bearer token guarding `/api/*`. If unset, the API is **open** and logs a loud warning. |
 | `Sideport__Signer__BinaryPath` | — | `/opt/sideport/zsign` | The signer binary (baked into the image). |
 | `Sideport__Scheduler__Enabled` | — | `true` | Turn the automatic 7-day refresh loop on/off. |
