@@ -514,6 +514,65 @@ h3 {
   gap: 3px;
 }
 
+.add-flow-waiting {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #c9d7f4;
+  border-radius: 12px;
+  color: #16315f;
+  background: #f1f6ff;
+}
+
+.add-flow-waiting.attention {
+  border-color: #f0d8a8;
+  color: #6f4b16;
+  background: #fffaf0;
+}
+
+.add-flow-waiting-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #1d4ed8;
+  background: #dbeafe;
+  box-shadow: 0 0 0 7px rgba(40, 100, 216, 0.08);
+}
+
+.add-flow-waiting.attention .add-flow-waiting-icon {
+  color: #8a5d19;
+  background: #fcebc7;
+  box-shadow: none;
+}
+
+.add-flow-waiting > div {
+  display: grid;
+  gap: 5px;
+}
+
+.add-flow-waiting strong {
+  font-size: 18px;
+}
+
+.add-flow-waiting span:not(.add-flow-waiting-icon) {
+  color: #54627a;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.add-flow-sound-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #637083;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 .add-flow-advanced {
   color: #40516a;
   font-size: 13px;
@@ -529,6 +588,13 @@ h3 {
 
 .add-flow-actions {
   padding-top: 2px;
+}
+
+.primary-action.add-flow-button:disabled {
+  opacity: 1;
+  color: #637083;
+  border-color: #dce3ee;
+  background: #eef2f6;
 }
 
 .add-source-list {

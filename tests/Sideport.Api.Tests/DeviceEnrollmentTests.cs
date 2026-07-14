@@ -382,7 +382,7 @@ public sealed class DeviceEnrollmentTests : IDisposable
     }
 
     [Fact]
-    public async Task UnknownVerificationAfterPairing_IsRecoveryRequiredAndAddsNothing()
+    public async Task UnknownVerificationAfterPairing_RetriesTrustAutomaticallyAndAccepts()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         var controller = FakeDeviceController.WithSingleUsb("ambiguous-udid", "untrusted", now);
@@ -390,6 +390,8 @@ public sealed class DeviceEnrollmentTests : IDisposable
             "ambiguous-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
         controller.Probes.Enqueue(new DeviceTrustProbe(
             "ambiguous-udid", DeviceConnection.Usb, "unknown", "The final lockdown reply was lost.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "ambiguous-udid", DeviceConnection.Usb, "trusted", "Lockdown verified.", now, true));
         controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
             udid, DeviceConnection.Usb, "trusted", "Trust accepted.", DateTimeOffset.UtcNow, true));
         await using EnrollmentFixture fixture = CreateFixture(controller);
@@ -399,18 +401,133 @@ public sealed class DeviceEnrollmentTests : IDisposable
             new OperationActorDto("api-token", "api-token-client"));
         await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
 
+        OperationRecordDto completed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.True(
+            string.Equals(completed.Status, "succeeded", StringComparison.Ordinal),
+            $"Expected success, got {completed.Status}: {completed.Error?.Code} {completed.Error?.Message}");
+        Assert.Equal(1, controller.PairCalls);
+        Assert.True(controller.ProbeCalls >= 3);
+        Assert.Equal("accepted", Assert.Single(await fixture.KnownDevices.ListAsync()).InventoryState);
+    }
+
+    [Fact]
+    public async Task UntrustedProbeAfterPairing_WaitsForTrustAndAcceptsWithoutPairingAgain()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var controller = FakeDeviceController.WithSingleUsb("pending-trust-udid", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pending-trust-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pending-trust-udid", DeviceConnection.Usb, "untrusted", "No valid pairing record is available for this iPhone.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pending-trust-udid", DeviceConnection.Usb, "trusted", "Lockdown verified.", now, true));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "unknown", "Waiting for Trust.", DateTimeOffset.UtcNow, false));
+        await using EnrollmentFixture fixture = CreateFixture(
+            controller,
+            new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("pending-trust-key", "pending-trust-udid"),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
+        OperationRecordDto completed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.Equal("succeeded", completed.Status);
+        Assert.NotNull(completed.DevicePairingRequestedAt);
+        Assert.Equal(1, controller.PairCalls);
+        Assert.True(controller.ProbeCalls >= 3);
+        Assert.Equal("accepted", Assert.Single(await fixture.KnownDevices.ListAsync()).InventoryState);
+    }
+
+    [Fact]
+    public async Task UntrustedPairResult_WaitsForTrustAndAcceptsWithoutPairingAgain()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var controller = FakeDeviceController.WithSingleUsb("pair-result-pending-udid", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pair-result-pending-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pair-result-pending-udid", DeviceConnection.Usb, "trusted", "Lockdown verified.", now, true));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "untrusted", "No valid pairing record is available yet.", DateTimeOffset.UtcNow, false));
+        await using EnrollmentFixture fixture = CreateFixture(
+            controller,
+            new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("pair-result-pending-key", "pair-result-pending-udid"),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
+        OperationRecordDto completed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.Equal("succeeded", completed.Status);
+        Assert.NotNull(completed.DevicePairingRequestedAt);
+        Assert.Equal(1, controller.PairCalls);
+        Assert.Equal("accepted", Assert.Single(await fixture.KnownDevices.ListAsync()).InventoryState);
+    }
+
+    [Fact]
+    public async Task ExplicitTrustDenialPairResult_FailsWithoutRepeatingPairing()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var controller = FakeDeviceController.WithSingleUsb("pair-result-denied-udid", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "pair-result-denied-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "untrusted", "Trust was denied on the iPhone.", DateTimeOffset.UtcNow, false));
+        await using EnrollmentFixture fixture = CreateFixture(
+            controller,
+            new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("pair-result-denied-key", "pair-result-denied-udid"),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
         OperationRecordDto failed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
-        Assert.Equal("recovery-required", failed.Status);
-        Assert.Equal("device-enrollment-recovery-required", failed.Error?.Code);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("device-lockdown-untrusted", failed.Error?.Code);
         Assert.Equal(1, controller.PairCalls);
         Assert.Empty(await fixture.KnownDevices.ListAsync());
     }
 
     [Fact]
-    public async Task NonUsbResultAfterPairRequest_IsRecoveryRequired()
+    public async Task ExplicitTrustDenialAfterPairing_FailsWithoutRepeatingPairing()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var controller = FakeDeviceController.WithSingleUsb("denied-trust-udid", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "denied-trust-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "denied-trust-udid", DeviceConnection.Usb, "untrusted", "Trust was declined on the iPhone.", now, false));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "unknown", "Waiting for Trust.", DateTimeOffset.UtcNow, false));
+        await using EnrollmentFixture fixture = CreateFixture(
+            controller,
+            new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("denied-trust-key", "denied-trust-udid"),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
+        OperationRecordDto failed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("device-lockdown-untrusted", failed.Error?.Code);
+        Assert.Equal(1, controller.PairCalls);
+        Assert.Empty(await fixture.KnownDevices.ListAsync());
+    }
+
+    [Fact]
+    public async Task NonUsbResultAfterPairRequest_RecoversWithoutPairingAgain()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         var controller = FakeDeviceController.WithSingleUsb("transport-changed", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "transport-changed", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "transport-changed", DeviceConnection.Usb, "trusted", "Lockdown verified after reconnect.", now, true));
         controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
             udid,
             DeviceConnection.Wifi,
@@ -426,10 +543,47 @@ public sealed class DeviceEnrollmentTests : IDisposable
         await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
 
         OperationRecordDto recovered = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
-        Assert.Equal("recovery-required", recovered.Status);
-        Assert.Equal("device-enrollment-recovery-required", recovered.Error?.Code);
+        Assert.Equal("succeeded", recovered.Status);
         Assert.Equal(1, controller.PairCalls);
-        Assert.Empty(await fixture.KnownDevices.ListAsync());
+        Assert.Equal("accepted", Assert.Single(await fixture.KnownDevices.ListAsync()).InventoryState);
+    }
+
+    [Fact]
+    public async Task UsbDisconnectAfterPairRequest_WaitsForReconnectAndAcceptsAutomatically()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DeviceInfo device = FakeDeviceController.WithSingleUsb("reconnect-udid", "untrusted", now).Devices.Single();
+        int listCalls = 0;
+        var controller = new FakeDeviceController
+        {
+            Devices = [device],
+            // StartAsync eligibility is call 1, ProcessAsync USB discovery is
+            // call 2, and the first post-pairing recovery read is call 3.
+            ListHandler = _ => Task.FromResult<IReadOnlyList<DeviceInfo>>(
+                Interlocked.Increment(ref listCalls) == 3 ? [] : [device]),
+        };
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            device.Udid, DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            device.Udid, DeviceConnection.Usb, "trusted", "Lockdown verified after reconnect.", now, true));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "unknown", "The USB connection changed after Trust.", DateTimeOffset.UtcNow, false));
+        await using EnrollmentFixture fixture = CreateFixture(
+            controller,
+            new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("reconnect-key", device.Udid),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
+        OperationRecordDto completed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.True(
+            string.Equals(completed.Status, "succeeded", StringComparison.Ordinal),
+            $"Expected success, got {completed.Status}: {completed.Error?.Code} {completed.Error?.Message}");
+        Assert.Equal(1, controller.PairCalls);
+        Assert.True(listCalls >= 4);
+        Assert.Equal("accepted", Assert.Single(await fixture.KnownDevices.ListAsync()).InventoryState);
     }
 
     [Fact]
@@ -458,6 +612,9 @@ public sealed class DeviceEnrollmentTests : IDisposable
         Assert.Equal("recovery-required", recovered.Status);
         Assert.Equal("device-enrollment-recovery-required", recovered.Error?.Code);
         Assert.Equal(1, controller.PairCalls);
+        Assert.Equal("succeeded", recovered.Stages.Single(stage => stage.Id == "request-pairing").Status);
+        Assert.Equal("succeeded", recovered.Stages.Single(stage => stage.Id == "await-user-trust").Status);
+        Assert.Equal("failed", recovered.Stages.Single(stage => stage.Id == "verify-lockdown").Status);
         Assert.Empty(await fixture.KnownDevices.ListAsync());
     }
 

@@ -7,7 +7,7 @@ import {
 } from './App'
 import { blockedFixtures, emptyFixtures, fixtures } from './data/sideportFixtures'
 import { runtimeEmptyData, type SideportReadModel } from './data/sideportTypes'
-import type { AddAppServices, AddIPhoneServices } from './add-flows/AddFlows'
+import type { AddAppServices, AddIPhoneServices, IPhoneSoundCue } from './add-flows/AddFlows'
 
 const meta = {
   title: 'Sideport/Admin Shell',
@@ -46,6 +46,23 @@ const tokenRequiredStatus: AdminDataStatus = {
   message: 'Protected API calls are returning 401. Save the browser session token in Settings.',
   canMutate: true,
 }
+
+const dragosFixtures: SideportReadModel = {
+  ...fixtures,
+  workspace: {
+    ...fixtures.workspace,
+    currentMember: {
+      id: 'u-owner',
+      name: 'Dragos',
+      email: 'dragos@example.test',
+      role: 'owner',
+      status: 'active',
+      source: 'demo',
+    },
+  },
+}
+
+const iPhoneSoundStory = fn((cue: IPhoneSoundCue) => cue)
 
 const workflowSteps = (completeThrough: 'server' | 'apple-signer' | 'device' | 'app' | 'install' | 'ready') => {
   const ids = ['server', 'apple-signer', 'device', 'app', 'install', 'ready'] as const
@@ -494,6 +511,14 @@ const enrollmentRecoveryServices: AddIPhoneServices = {
   retry: retryEnrollmentRecoveryStory,
   read: readEnrollmentRecoveryStory,
 }
+const retryEnrollmentRecoveryFailureStory = fn(async () => {
+  throw new Error('Sideport briefly lost the secure iPhone connection.')
+})
+const enrollmentRecoveryFailureServices: AddIPhoneServices = {
+  start: startEnrollmentRecoveryStory,
+  retry: retryEnrollmentRecoveryFailureStory,
+  read: async () => enrollmentRecoverySource,
+}
 
 const routeStory = (initialRoute: RouteId, name: string): Story => ({
   name,
@@ -540,11 +565,12 @@ export const OwnerAccountCanEnterPortalWithoutIPhone: Story = {
 }
 export const FirstRunConnectIPhoneActionable: Story = {
   name: 'First Run - missing iPhone is actionable and automatic',
-  args: { data: readyForDeviceOnboardingData, apiStatus: { ...deviceOnboardingStatus, mode: 'live' }, initialRoute: 'home', addIPhoneServices: onboardingAutoStartServices },
+  args: { data: readyForDeviceOnboardingData, apiStatus: { ...deviceOnboardingStatus, mode: 'live' }, initialRoute: 'home', addIPhoneServices: onboardingAutoStartServices, iPhoneSoundPlayer: iPhoneSoundStory, iPhoneAttentionDelayMs: 20 },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const page = within(canvasElement.ownerDocument.body)
     startOnboardingIPhoneStory.mockClear()
+    iPhoneSoundStory.mockClear()
     const panel = within(canvas.getByTestId('runtime-onboarding-panel-device'))
     await expect(panel.getByRole('heading', { name: 'Connect iPhone' })).toBeVisible()
     await expect(panel.getByText('Connect the iPhone now')).toBeVisible()
@@ -558,7 +584,11 @@ export const FirstRunConnectIPhoneActionable: Story = {
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await waitFor(() => expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1))
     await expect(within(dialog).getByRole('button', { name: 'Close Add iPhone' })).toHaveFocus()
-    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
+    await expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
+    await expect(within(dialog).getByText('Waiting for your iPhone…')).toBeVisible()
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('listening')
+    await waitFor(() => expect(within(dialog).getByText(/Still waiting/)).toBeVisible())
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('attention')
     await expect(within(dialog).queryByRole('button', { name: 'Connect iPhone' })).not.toBeInTheDocument()
     await new Promise((resolve) => window.setTimeout(resolve, 1_200))
     await expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1)
@@ -576,7 +606,7 @@ export const FirstRunConnectIPhoneResumesWithoutStartingAgain: Story = {
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await waitFor(() => expect(readResumedOnboardingIPhoneStory).toHaveBeenCalled())
     await expect(startResumedOnboardingIPhoneStory).not.toHaveBeenCalled()
-    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
+    await expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
   },
 }
 export const LiveOnboarding: Story = {
@@ -934,10 +964,11 @@ export const GlobalAddMenu: Story = {
 
 export const AddIPhoneAutomatic: Story = {
   name: 'Signed in - Add iPhone waits for Trust automatically',
-  args: { data: fixtures, apiStatus: demoStatus, initialRoute: 'devices' },
+  args: { data: dragosFixtures, apiStatus: demoStatus, initialRoute: 'devices', iPhoneSoundPlayer: iPhoneSoundStory },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const page = within(canvasElement.ownerDocument.body)
+    iPhoneSoundStory.mockClear()
     const globalTrigger = canvas.getByRole('button', { name: 'Add to Sideport' })
     await userEvent.click(globalTrigger)
     const addChoices = page.getByRole('group', { name: 'Add to Sideport choices' })
@@ -949,7 +980,9 @@ export const AddIPhoneAutomatic: Story = {
     await expect(within(dialog).queryByRole('button', { name: /Pair|I tapped Trust|Add to Sideport/ })).not.toBeInTheDocument()
 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Connect iPhone' }))
-    await waitFor(() => expect(within(dialog).getByText('iPhone added to Sideport')).toBeVisible(), { timeout: 4_000 })
+    await expect(within(dialog).getByText('Waiting for Dragos’s iPhone…')).toBeVisible()
+    await waitFor(() => expect(within(dialog).getByText('Dragos’s iPhone is ready')).toBeVisible(), { timeout: 4_000 })
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('detected')
     await expect(within(dialog).queryByRole('button', { name: /Pair|I tapped Trust|Add to Sideport/ })).not.toBeInTheDocument()
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(globalTrigger).toHaveFocus())
@@ -1051,16 +1084,20 @@ export const AddAppSourcesLoadIndependently: Story = {
 
 export const AddIPhoneRuntimeBound: Story = {
   name: 'Signed in - live iPhone enrollment polls to accepted',
-  args: { data: fixtures, apiStatus: tokenRequiredStatus, initialRoute: 'devices', addIPhoneServices: runtimeAddIPhoneServices },
+  args: { data: dragosFixtures, apiStatus: tokenRequiredStatus, initialRoute: 'devices', addIPhoneServices: runtimeAddIPhoneServices, iPhoneSoundPlayer: iPhoneSoundStory },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const page = within(canvasElement.ownerDocument.body)
+    iPhoneSoundStory.mockClear()
     await userEvent.click(canvas.getByRole('button', { name: 'Add to Sideport' }))
     await userEvent.click(within(page.getByRole('group', { name: 'Add to Sideport choices' })).getByRole('button', { name: /Add iPhone/ }))
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await userEvent.click(within(dialog).getByRole('button', { name: 'Connect iPhone' }))
-    await waitFor(() => expect(within(dialog).getByText('iPhone added to Sideport')).toBeVisible(), { timeout: 3_000 })
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Choose an app' }))
+    await expect(within(dialog).getByText('Waiting for Dragos’s iPhone…')).toBeVisible()
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('listening')
+    await waitFor(() => expect(within(dialog).getByText('Dragos’s iPhone is ready')).toBeVisible(), { timeout: 3_000 })
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('detected')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Continue' }))
     await expect(canvas.getByRole('heading', { name: 'Apps' })).toBeVisible()
     await expect(page.queryByRole('dialog', { name: 'Add an iPhone' })).not.toBeInTheDocument()
   },
@@ -1086,23 +1123,25 @@ export const AddIPhoneResumeAfterClose: Story = {
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Connect iPhone' }))
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Close' }))
     const resumedDialog = await openDialog()
-    await expect(within(resumedDialog).getByRole('button', { name: /Waiting for iPhone/ })).toBeDisabled()
-    await waitFor(() => expect(within(resumedDialog).getByText('iPhone added to Sideport')).toBeVisible(), { timeout: 3_000 })
+    await expect(within(resumedDialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
+    await waitFor(() => expect(within(resumedDialog).getByText(/iPhone is ready/)).toBeVisible(), { timeout: 3_000 })
   },
 }
 
 export const AddIPhoneRecoveryRetry: Story = {
-  name: 'Signed in - iPhone recovery verifies Trust without pairing again',
+  name: 'Signed in - iPhone recovery continues automatically with sound cues',
   args: {
     data: fixtures,
     apiStatus: { ...tokenRequiredStatus, baseUrl: 'storybook://device-enrollment-recovery' },
     initialRoute: 'devices',
     addIPhoneServices: enrollmentRecoveryServices,
+    iPhoneSoundPlayer: iPhoneSoundStory,
   },
   play: async ({ canvasElement }) => {
     startEnrollmentRecoveryStory.mockClear()
     retryEnrollmentRecoveryStory.mockClear()
     readEnrollmentRecoveryStory.mockClear()
+    iPhoneSoundStory.mockClear()
     const canvas = within(canvasElement)
     const page = within(canvasElement.ownerDocument.body)
     const openDialog = async () => {
@@ -1113,16 +1152,45 @@ export const AddIPhoneRecoveryRetry: Story = {
 
     const firstDialog = await openDialog()
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Connect iPhone' }))
-    await expect(await within(firstDialog).findByRole('button', { name: 'Check Trust and continue' })).toBeEnabled()
-    await expect(within(firstDialog).getByText(/will not ask iOS to pair again/)).toBeVisible()
+    const continueButton = await within(firstDialog).findByRole('button', { name: 'Continue' })
+    await expect(continueButton).toBeDisabled()
+    await expect(within(firstDialog).queryByRole('button', { name: 'Check Trust and continue' })).not.toBeInTheDocument()
+    await waitFor(() => expect(retryEnrollmentRecoveryStory).toHaveBeenCalledWith(enrollmentRecoverySource.operationId))
+    await expect(iPhoneSoundStory).toHaveBeenCalledWith('listening')
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Close' }))
 
     const resumedDialog = await openDialog()
-    const recover = within(resumedDialog).getByRole('button', { name: 'Check Trust and continue' })
-    await expect(recover).toBeEnabled()
-    await userEvent.click(recover)
+    await expect(within(resumedDialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
     await expect(startEnrollmentRecoveryStory).toHaveBeenCalledTimes(1)
-    await expect(retryEnrollmentRecoveryStory).toHaveBeenCalledWith(enrollmentRecoverySource.operationId)
+  },
+}
+
+export const AddIPhoneRecoveryRetryFailure: Story = {
+  name: 'Signed in - iPhone recovery retry failure stays verify-only and actionable',
+  args: {
+    data: fixtures,
+    apiStatus: { ...tokenRequiredStatus, baseUrl: 'storybook://device-enrollment-recovery-failure' },
+    initialRoute: 'devices',
+    addIPhoneServices: enrollmentRecoveryFailureServices,
+    iPhoneSoundPlayer: iPhoneSoundStory,
+  },
+  play: async ({ canvasElement }) => {
+    startEnrollmentRecoveryStory.mockClear()
+    retryEnrollmentRecoveryFailureStory.mockClear()
+    iPhoneSoundStory.mockClear()
+    const canvas = within(canvasElement)
+    const page = within(canvasElement.ownerDocument.body)
+    await userEvent.click(canvas.getByRole('button', { name: 'Add to Sideport' }))
+    await userEvent.click(within(page.getByRole('group', { name: 'Add to Sideport choices' })).getByRole('button', { name: /Add iPhone/ }))
+    const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Connect iPhone' }))
+    await waitFor(() => expect(retryEnrollmentRecoveryFailureStory).toHaveBeenCalledWith(enrollmentRecoverySource.operationId))
+    await expect(within(dialog).getByRole('alert')).toHaveTextContent('Sideport briefly lost the secure iPhone connection.')
+    await expect(within(dialog).getByRole('button', { name: 'Try checking again' })).toBeVisible()
+    await expect(within(dialog).queryByRole('button', { name: /pair/i })).not.toBeInTheDocument()
+    await expect(within(dialog).queryByRole('button', { name: /trust/i })).not.toBeInTheDocument()
+    await expect(startEnrollmentRecoveryStory).toHaveBeenCalledTimes(1)
   },
 }
 

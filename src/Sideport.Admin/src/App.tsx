@@ -44,7 +44,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import './App.css'
-import { AddAppDialog, AddIPhoneDialog, GlobalAddMenu, type AddAppCatalogItem, type AddAppServices, type AddIPhoneServices, type EnrollmentCandidate, type EnrollmentOperation, type GitHubCallbackResume } from './add-flows/AddFlows'
+import { AddAppDialog, AddIPhoneDialog, GlobalAddMenu, type AddAppCatalogItem, type AddAppServices, type AddIPhoneServices, type EnrollmentCandidate, type EnrollmentOperation, type GitHubCallbackResume, type IPhoneSoundPlayer } from './add-flows/AddFlows'
 import { cancelOperation, completePersonalAppleTwoFactor, completeReplacementAppleTwoFactor, completeSideportOnboarding, connectPersonalApple, connectReplacementAppleAccount, createGitHubCatalogConnection, cutoverPersonalAppleSigning, getGitHubCatalogConnection, getSideportOperation, getStoredSideportApiToken, importGitHubCatalogApp, inspectCatalogAppV2, installSideportCatalogApp, listCatalogImportRoots, listGitHubCatalogReleases, listGitHubCatalogSources, listReachableDevices, preflightPersonalAppleSigning, preflightSideportInstall, preflightSideportRefresh, reconcileSideportOperation, refreshSideportApp, registerPendingSideportApp, rerunOperation, retryOperation, runDeviceDiagnostics, saveSideportApiToken, selectPersonalAppleTeam, SideportApiError, signInPersonalApple, startDeviceEnrollment, updateSideportSchedulerSettings, uploadCatalogIpaV2, useSideportAdminData, type AdminDataStatus, type AppleAccountReplacementCandidateDto, type AppRegistrationDto, type CatalogAppV2Dto, type DeviceDiagnosticsDto, type InstallOperationPayload, type InstallPreflightPayload, type OnboardingCompletionPayload, type OperationPreflightDto, type OperationRecordDto, type PendingAppRegistrationPayload, type PersonalAppleSigningPreflightDto, type ReachableDeviceDto, type SchedulerStatusDto } from './api/sideportApi'
 import {
   runtimeEmptyData,
@@ -125,6 +125,8 @@ export interface SideportAdminAppProps {
   completeOnboardingService?: (payload: OnboardingCompletionPayload) => Promise<unknown>
   registerPendingAppService?: (payload: PendingAppRegistrationPayload) => Promise<AppRegistrationDto>
   schedulerSettingsService?: (enabled: boolean) => Promise<SchedulerStatusDto>
+  iPhoneSoundPlayer?: IPhoneSoundPlayer
+  iPhoneAttentionDelayMs?: number
   onApiTokenSaved?: () => void
 }
 
@@ -280,7 +282,7 @@ function operationFailure(record: OperationRecordDto): string | null {
   return record.error?.message ?? record.error?.detail ?? (record.status === 'failed' || record.status === 'blocked' ? 'Sideport could not start this install.' : null)
 }
 
-export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initialCommandOpen = false, initialSetupOpen = false, addIPhoneServices: injectedAddIPhoneServices, addAppServices: injectedAddAppServices, installAppService: injectedInstallAppService, preflightInstallService: injectedPreflightInstallService, readOperationService: injectedReadOperationService, reconcileOperationService: injectedReconcileOperationService, completeOnboardingService: injectedCompleteOnboardingService, registerPendingAppService: injectedRegisterPendingAppService, schedulerSettingsService: injectedSchedulerSettingsService, onApiTokenSaved }: SideportAdminAppProps) {
+export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initialCommandOpen = false, initialSetupOpen = false, addIPhoneServices: injectedAddIPhoneServices, addAppServices: injectedAddAppServices, installAppService: injectedInstallAppService, preflightInstallService: injectedPreflightInstallService, readOperationService: injectedReadOperationService, reconcileOperationService: injectedReconcileOperationService, completeOnboardingService: injectedCompleteOnboardingService, registerPendingAppService: injectedRegisterPendingAppService, schedulerSettingsService: injectedSchedulerSettingsService, iPhoneSoundPlayer, iPhoneAttentionDelayMs, onApiTokenSaved }: SideportAdminAppProps) {
   const queryClient = useQueryClient()
   const viewData = data ?? runtimeEmptyData
   const viewStatus = apiStatus ?? runtimeStatus
@@ -623,7 +625,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   const activeEnrollmentOperationId = viewStatus.onboarding?.workflow?.steps.find((step) => step.id === 'device')?.activeOperationId ?? null
 
   const addFlowDialogs = <>
-    <AddIPhoneDialog autoStart={addIPhoneAutoStart} canMutate={canAddIPhone} demoMode={viewStatus.mode === 'demo'} onAccepted={() => void refreshAdminData()} onContinue={continueAfterIPhone} onOpenChange={handleAddIPhoneOpenChange} open={addIPhoneOpen} persistenceKey={`${viewStatus.baseUrl}:device-enrollment`} resumeOperationId={activeEnrollmentOperationId} returnFocusRef={addFlowReturnFocusRef} services={injectedAddIPhoneServices ?? runtimeAddIPhoneServices} />
+    <AddIPhoneDialog attentionDelayMs={iPhoneAttentionDelayMs} autoStart={addIPhoneAutoStart} canMutate={canAddIPhone} demoMode={viewStatus.mode === 'demo'} memberName={viewData.workspace.currentMember?.name} onAccepted={() => void refreshAdminData()} onContinue={continueAfterIPhone} onOpenChange={handleAddIPhoneOpenChange} open={addIPhoneOpen} persistenceKey={`${viewStatus.baseUrl}:device-enrollment`} resumeOperationId={activeEnrollmentOperationId} returnFocusRef={addFlowReturnFocusRef} services={injectedAddIPhoneServices ?? runtimeAddIPhoneServices} soundPlayer={iPhoneSoundPlayer} />
     <AddAppDialog canImport={canImportCatalog} canManageGitHub={canManageGitHub} catalogApps={catalogApps} demoMode={viewStatus.mode === 'demo'} githubCallback={githubCallback} onChooseApp={chooseAppFromAddFlow} onOpenChange={handleAddAppOpenChange} open={addAppOpen} returnFocusRef={addFlowReturnFocusRef} services={injectedAddAppServices ?? runtimeAddAppServices} />
   </>
 

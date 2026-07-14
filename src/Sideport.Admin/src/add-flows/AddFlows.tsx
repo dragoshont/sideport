@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Smartphone,
+  Volume2,
   X,
 } from 'lucide-react'
 
@@ -104,6 +105,9 @@ export interface AddIPhoneServices {
   selectCandidate?: (candidate: EnrollmentCandidate) => Promise<EnrollmentOperation>
 }
 
+export type IPhoneSoundCue = 'listening' | 'detected' | 'attention'
+export type IPhoneSoundPlayer = (cue: IPhoneSoundCue) => void
+
 interface AddIPhoneDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -116,6 +120,9 @@ interface AddIPhoneDialogProps {
   resumeOperationId?: string | null
   persistenceKey?: string
   returnFocusRef?: RefObject<HTMLElement | null>
+  memberName?: string
+  soundPlayer?: IPhoneSoundPlayer
+  attentionDelayMs?: number
 }
 
 const ACTIVE_ENROLLMENT_STATUSES = new Set(['queued', 'waiting', 'running'])
@@ -159,15 +166,76 @@ function rememberEnrollmentOperationId(key: string | null, operationId: string |
   }
 }
 
-export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = false, canMutate = false, services, onAccepted, onContinue, resumeOperationId, persistenceKey, returnFocusRef }: AddIPhoneDialogProps) {
+function iPhoneOwnerLabel(memberName: string | undefined): string {
+  const name = memberName?.trim()
+  return name ? `${name}’s iPhone` : 'your iPhone'
+}
+
+export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = false, canMutate = false, services, onAccepted, onContinue, resumeOperationId, persistenceKey, returnFocusRef, memberName, soundPlayer, attentionDelayMs = 8_000 }: AddIPhoneDialogProps) {
   const [phase, setPhase] = useState<IPhonePhase>('idle')
   const [operation, setOperation] = useState<EnrollmentOperation | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [waitingLong, setWaitingLong] = useState(false)
+  const [recoveryRetryFailed, setRecoveryRetryFailed] = useState(false)
   const [pollRevision, setPollRevision] = useState(0)
   const acceptedNotifiedRef = useRef<string | null>(null)
   const autoStartHandledRef = useRef(false)
+  const autoRecoveryAttemptedRef = useRef<string | null>(null)
+  const detectedCuePlayedRef = useRef(false)
+  const attentionCuePlayedRef = useRef(false)
+  const soundSessionStartedRef = useRef(false)
+  const audioContextRef = useRef<AudioContext | null>(null)
   const storageKey = enrollmentStorageKey(persistenceKey)
+  const ownerLabel = iPhoneOwnerLabel(memberName)
+
+  const playCue = useCallback((cue: IPhoneSoundCue) => {
+    try {
+      if (soundPlayer) {
+        soundPlayer(cue)
+        return
+      }
+      const AudioContextClass = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AudioContextClass) return
+      const context = audioContextRef.current ?? new AudioContextClass()
+      audioContextRef.current = context
+      void context.resume()
+      const patterns: Record<IPhoneSoundCue, Array<{ frequency: number; offset: number; duration: number; volume: number }>> = {
+        listening: [
+          { frequency: 440, offset: 0, duration: 0.09, volume: 0.055 },
+          { frequency: 554, offset: 0.11, duration: 0.12, volume: 0.065 },
+        ],
+        detected: [
+          { frequency: 523, offset: 0, duration: 0.1, volume: 0.07 },
+          { frequency: 659, offset: 0.1, duration: 0.12, volume: 0.08 },
+          { frequency: 784, offset: 0.22, duration: 0.16, volume: 0.075 },
+        ],
+        attention: [
+          { frequency: 330, offset: 0, duration: 0.12, volume: 0.055 },
+          { frequency: 262, offset: 0.16, duration: 0.16, volume: 0.05 },
+        ],
+      }
+      for (const note of patterns[cue]) {
+        const oscillator = context.createOscillator()
+        const gain = context.createGain()
+        const start = context.currentTime + note.offset
+        oscillator.type = 'sine'
+        oscillator.frequency.setValueAtTime(note.frequency, start)
+        gain.gain.setValueAtTime(0.0001, start)
+        gain.gain.exponentialRampToValueAtTime(note.volume, start + 0.015)
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + note.duration)
+        oscillator.connect(gain).connect(context.destination)
+        oscillator.start(start)
+        oscillator.stop(start + note.duration + 0.02)
+      }
+    } catch {
+      // Audio is best effort; visual and server-verified state remain authoritative.
+    }
+  }, [soundPlayer])
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setWaitingLong(false)
+      setRecoveryRetryFailed(false)
+    }
     if (!nextOpen && !isResumableEnrollment(operation)) {
       setPhase('idle')
       setOperation(null)
@@ -178,7 +246,15 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   }
 
   useEffect(() => {
-    if (!open) autoStartHandledRef.current = false
+    if (!open) {
+      autoStartHandledRef.current = false
+      autoRecoveryAttemptedRef.current = null
+      soundSessionStartedRef.current = false
+      if (audioContextRef.current) {
+        void audioContextRef.current.close()
+        audioContextRef.current = null
+      }
+    }
   }, [open])
 
   useEffect(() => {
@@ -234,6 +310,51 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   }, [demoMode, open, operation, pollRevision, services, storageKey])
 
   useEffect(() => {
+    if (!open || demoMode || phase !== 'recovery' || !operation || !services?.retry || !canMutate) return
+    if (operation.error?.code !== 'device-enrollment-recovery-required') return
+    if (autoRecoveryAttemptedRef.current === operation.operationId) return
+    autoRecoveryAttemptedRef.current = operation.operationId
+    setError(null)
+    setRecoveryRetryFailed(false)
+    setPhase('waiting')
+    void services.retry(operation.operationId).then((next) => {
+      setOperation(next)
+      setPhase(enrollmentPhase(next))
+      setError(next.error?.message ?? null)
+      rememberEnrollmentOperationId(storageKey, isResumableEnrollment(next) ? next.operationId : null)
+    }).catch((reason) => {
+      setRecoveryRetryFailed(true)
+      setPhase('failed')
+      setError(reason instanceof Error ? reason.message : 'Sideport is still waiting to verify this iPhone safely.')
+    })
+  }, [canMutate, demoMode, open, operation, phase, services, storageKey])
+
+  useEffect(() => {
+    if (!open || phase !== 'waiting') return
+    const timeout = window.setTimeout(() => {
+      setWaitingLong(true)
+      if (soundSessionStartedRef.current && !attentionCuePlayedRef.current) {
+        attentionCuePlayedRef.current = true
+        playCue('attention')
+      }
+    }, attentionDelayMs)
+    return () => window.clearTimeout(timeout)
+  }, [attentionDelayMs, open, phase, playCue])
+
+  useEffect(() => {
+    if (!open) return
+    if (!soundSessionStartedRef.current) return
+    if (['trust', 'verifying', 'accepted'].includes(phase) && !detectedCuePlayedRef.current) {
+      detectedCuePlayedRef.current = true
+      playCue('detected')
+    }
+    if (['failed', 'recovery'].includes(phase) && !attentionCuePlayedRef.current) {
+      attentionCuePlayedRef.current = true
+      playCue('attention')
+    }
+  }, [open, phase, playCue])
+
+  useEffect(() => {
     if (phase !== 'accepted') return
     const key = operation?.operationId ?? 'demo'
     if (acceptedNotifiedRef.current === key) return
@@ -243,6 +364,12 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
 
   const beginEnrollment = useCallback(async () => {
     setError(null)
+    setWaitingLong(false)
+    setRecoveryRetryFailed(false)
+    detectedCuePlayedRef.current = false
+    attentionCuePlayedRef.current = false
+    soundSessionStartedRef.current = true
+    playCue('listening')
     if (demoMode) {
       setPhase('waiting')
       return
@@ -259,7 +386,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
       setPhase('failed')
       setError(reason instanceof Error ? reason.message : 'Sideport could not start the iPhone connection.')
     }
-  }, [canMutate, demoMode, services, storageKey])
+  }, [canMutate, demoMode, playCue, services, storageKey])
 
   const autoStartEnrollment = () => {
     // Radix invokes this once for each explicit dialog opening. Using that
@@ -273,22 +400,6 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     autoStartHandledRef.current = true
     if (resumableOperationId) return
     void beginEnrollment()
-  }
-
-  const retryEnrollment = async () => {
-    if (!operation || !services?.retry || !canMutate) return
-    setError(null)
-    setPhase('waiting')
-    try {
-      const next = await services.retry(operation.operationId)
-      setOperation(next)
-      setPhase(enrollmentPhase(next))
-      setError(next.error?.message ?? null)
-      rememberEnrollmentOperationId(storageKey, isResumableEnrollment(next) ? next.operationId : null)
-    } catch (reason) {
-      setPhase(operation.status === 'recovery-required' ? 'recovery' : 'failed')
-      setError(reason instanceof Error ? reason.message : 'Sideport could not safely continue this iPhone connection.')
-    }
   }
 
   const chooseCandidate = async (candidate: EnrollmentCandidate) => {
@@ -315,9 +426,26 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   }
 
   const activeIndex = phase === 'idle' || phase === 'waiting' || phase === 'selection' || phase === 'failed' || phase === 'recovery' ? 0 : phase === 'trust' ? 1 : phase === 'verifying' ? 2 : 3
-  const retryExistingOperation = Boolean(operation && (phase === 'recovery' || (phase === 'failed' && operation.retryable)))
+  const automaticTrustRecovery = phase === 'recovery' && operation?.error?.code === 'device-enrollment-recovery-required'
+  const connectionActive = ['waiting', 'trust', 'verifying'].includes(phase) || automaticTrustRecovery
+  const waitingTitle = phase === 'trust'
+    ? `${ownerLabel} found`
+    : phase === 'verifying'
+      ? 'Trust received'
+      : phase === 'recovery'
+        ? `Still checking ${ownerLabel}`
+        : `Waiting for ${ownerLabel}…`
+  const waitingMessage = phase === 'trust'
+    ? `Tap Trust on ${ownerLabel} and enter the iPhone passcode. Sideport will continue by itself.`
+    : phase === 'verifying'
+      ? `Keep ${ownerLabel} connected and unlocked while Sideport finishes the secure check.`
+      : phase === 'recovery'
+        ? `Keep ${ownerLabel} connected and unlocked. Sideport is checking the existing Trust request without pairing again.`
+        : waitingLong
+          ? 'Still waiting. Check that the iPhone is unlocked, charging, and connected with a data-capable USB cable.'
+          : 'Connect it with USB and keep it unlocked. Sideport will notice it and continue automatically.'
   const progress = [
-    { label: 'Connect', detail: phase === 'waiting' ? 'Waiting for iPhone' : 'USB' },
+    { label: 'Connect', detail: phase === 'waiting' ? 'Listening' : 'USB' },
     { label: 'Trust', detail: 'On iPhone' },
     { label: 'Ready', detail: 'Automatic' },
   ]
@@ -361,7 +489,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
           {phase === 'accepted' ? (
             <div className="add-flow-success" role="status">
               <CheckCircle2 size={22} />
-              <div><strong>iPhone added to Sideport</strong><span>Turn on Developer Mode and restart below, then continue directly to the approved app library.</span></div>
+              <div><strong>{ownerLabel} is ready</strong><span>Sideport verified Trust and added the iPhone automatically. Continue to the approved app library when you’re ready.</span></div>
             </div>
           ) : phase === 'selection' && operation?.candidateDevices?.length ? (
             <div className="add-flow-candidates" role="group" aria-label="Connected iPhones">
@@ -376,9 +504,10 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
               ))}
               {!demoMode && !services?.selectCandidate && <p className="data-boundary-note">Sideport cannot safely expand these shortened device numbers. Leave only one new iPhone connected, close this window, then start again.</p>}
             </div>
-          ) : phase === 'recovery' ? (
-            <div className="add-flow-guide">
-              <div><span><ShieldCheck size={17} /></span><div><strong>Check the existing Trust request</strong><small>Reconnect and unlock this iPhone. Sideport will verify Trust first and will not ask iOS to pair again.</small></div></div>
+          ) : connectionActive ? (
+            <div aria-atomic="true" aria-live="polite" className={`add-flow-waiting ${phase === 'waiting' && waitingLong || phase === 'recovery' ? 'attention' : ''}`} role="status">
+              <span className="add-flow-waiting-icon"><Smartphone aria-hidden="true" size={28} /></span>
+              <div><strong>{waitingTitle}</strong><span>{waitingMessage}</span></div>
             </div>
           ) : (
             <div className="add-flow-guide">
@@ -397,24 +526,37 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
             <p>USB is used for the first trusted connection and install. After pairing, Sideport can also find the iPhone over the same Wi-Fi network, with USB as the fallback.</p>
           </details>
 
-          {error && <p className="mutation-message error" role="alert">{error}</p>}
+          <p className="add-flow-sound-note"><Volume2 aria-hidden="true" size={16} /> Sideport uses gentle sound cues for listening, detection, and attention when browser audio is available.</p>
+
+          {error && (phase === 'failed' || phase === 'selection' || phase === 'recovery' && !automaticTrustRecovery) && <p className="mutation-message error" role="alert">{error}</p>}
           {!demoMode && (!services || !canMutate) && <p className="mutation-message">Sign in to a protected Sideport session before adding an iPhone.</p>}
           <p aria-atomic="true" aria-live="polite" className="visually-hidden">
-            {phase === 'waiting' ? 'Waiting for an unlocked iPhone.' : phase === 'trust' ? 'iPhone found. Tap Trust This Computer and enter the passcode.' : phase === 'recovery' ? 'Reconnect the iPhone so Sideport can verify the existing Trust request without pairing again.' : phase === 'accepted' ? 'iPhone added to Sideport.' : ''}
+            {phase === 'waiting' ? `Waiting for ${ownerLabel}.` : phase === 'trust' ? `${ownerLabel} found. Tap Trust This Computer and enter the passcode.` : phase === 'recovery' ? `Sideport is checking the existing Trust request for ${ownerLabel} automatically.` : phase === 'accepted' ? `${ownerLabel} added to Sideport.` : ''}
           </p>
 
           <div className="dialog-actions add-flow-actions">
             <Dialog.Close asChild><button className="ghost-action add-flow-button" type="button">Close</button></Dialog.Close>
-            {phase === 'accepted' && onContinue && <button className="primary-action add-flow-button" onClick={onContinue} type="button"><Package size={17} /> Choose an app</button>}
-            {phase !== 'accepted' && phase !== 'selection' && (
+            {phase === 'accepted' && onContinue && <button className="primary-action add-flow-button" onClick={onContinue} type="button">Continue <ChevronRight size={17} /></button>}
+            {phase !== 'accepted' && phase !== 'selection' && phase !== 'idle' && phase !== 'failed' && (
+              <button className="primary-action add-flow-button" disabled type="button">Continue <ChevronRight size={17} /></button>
+            )}
+            {(phase === 'idle' || phase === 'failed') && (
               <button
                 className="primary-action add-flow-button"
                 data-testid="connect-iphone-intent"
-                disabled={(!demoMode && (!services || !canMutate || (retryExistingOperation && !services.retry))) || !['idle', 'failed', 'recovery'].includes(phase)}
-                onClick={() => void (retryExistingOperation ? retryEnrollment() : beginEnrollment())}
+                disabled={!demoMode && (!services || !canMutate)}
+                onClick={() => {
+                  if (recoveryRetryFailed && operation) {
+                    autoRecoveryAttemptedRef.current = null
+                    setRecoveryRetryFailed(false)
+                    setPhase('recovery')
+                    return
+                  }
+                  void beginEnrollment()
+                }}
                 type="button"
               >
-                <Cable size={17} /> {phase === 'recovery' ? 'Check Trust and continue' : phase === 'idle' || phase === 'failed' ? phase === 'failed' ? 'Try again' : 'Connect iPhone' : phase === 'trust' ? 'Waiting for Trust…' : phase === 'verifying' ? 'Adding iPhone…' : 'Waiting for iPhone…'}
+                <Cable size={17} /> {recoveryRetryFailed ? 'Try checking again' : phase === 'failed' ? 'Try again' : 'Connect iPhone'}
               </button>
             )}
           </div>
