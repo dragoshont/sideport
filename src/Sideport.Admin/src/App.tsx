@@ -291,6 +291,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   const [selectedDeviceUdid, setSelectedDeviceUdid] = useState(viewData.devices[0]?.udid ?? '')
   const [commandOpen, setCommandOpen] = useState(initialCommandOpen)
   const [addIPhoneOpen, setAddIPhoneOpen] = useState(false)
+  const [addIPhoneAutoStart, setAddIPhoneAutoStart] = useState(false)
   const [githubCallback, setGitHubCallback] = useState<GitHubCallbackResume | null>(() => githubCallbackFromLocation())
   const [addAppOpen, setAddAppOpen] = useState(Boolean(githubCallback))
   const [installRequestPending, setInstallRequestPending] = useState(false)
@@ -334,6 +335,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   }
   const continueAfterIPhone = () => {
     setAddIPhoneOpen(false)
+    setAddIPhoneAutoStart(false)
     setRoute('apps')
     void refreshAdminData()
   }
@@ -345,7 +347,18 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   const openAddIPhone = () => {
     rememberAddFlowTrigger()
     setAddAppOpen(false)
+    setAddIPhoneAutoStart(false)
     setAddIPhoneOpen(true)
+  }
+  const startOnboardingIPhone = () => {
+    rememberAddFlowTrigger()
+    setAddAppOpen(false)
+    setAddIPhoneAutoStart(true)
+    setAddIPhoneOpen(true)
+  }
+  const handleAddIPhoneOpenChange = (nextOpen: boolean) => {
+    setAddIPhoneOpen(nextOpen)
+    if (!nextOpen) setAddIPhoneAutoStart(false)
   }
   const openAddApp = () => {
     rememberAddFlowTrigger()
@@ -609,6 +622,11 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
 
   const activeEnrollmentOperationId = viewStatus.onboarding?.workflow?.steps.find((step) => step.id === 'device')?.activeOperationId ?? null
 
+  const addFlowDialogs = <>
+    <AddIPhoneDialog autoStart={addIPhoneAutoStart} canMutate={canAddIPhone} demoMode={viewStatus.mode === 'demo'} onAccepted={() => void refreshAdminData()} onContinue={continueAfterIPhone} onOpenChange={handleAddIPhoneOpenChange} open={addIPhoneOpen} persistenceKey={`${viewStatus.baseUrl}:device-enrollment`} resumeOperationId={activeEnrollmentOperationId} returnFocusRef={addFlowReturnFocusRef} services={injectedAddIPhoneServices ?? runtimeAddIPhoneServices} />
+    <AddAppDialog canImport={canImportCatalog} canManageGitHub={canManageGitHub} catalogApps={catalogApps} demoMode={viewStatus.mode === 'demo'} githubCallback={githubCallback} onChooseApp={chooseAppFromAddFlow} onOpenChange={handleAddAppOpenChange} open={addAppOpen} returnFocusRef={addFlowReturnFocusRef} services={injectedAddAppServices ?? runtimeAddAppServices} />
+  </>
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -622,7 +640,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
 
   const setupIncomplete = viewStatus.onboarding !== undefined && viewStatus.onboarding.setupState !== 'complete'
   if (setupIncomplete && setupOpen) {
-    return <RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={openAddIPhone} onExit={() => setSetupOpen(false)} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />
+    return <><RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={startOnboardingIPhone} onExit={() => setSetupOpen(false)} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />{addFlowDialogs}</>
   }
 
   return (
@@ -674,8 +692,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
         </main>
       </div>
       <CommandMenu data={viewData} onAddApp={canImportCatalog ? openAddApp : undefined} onAddIPhone={openAddIPhone} onNavigate={setRoute} onOpenChange={setCommandOpen} onOpenDevice={openDevice} open={commandOpen} />
-      <AddIPhoneDialog canMutate={canAddIPhone} demoMode={viewStatus.mode === 'demo'} onAccepted={() => void refreshAdminData()} onContinue={continueAfterIPhone} onOpenChange={setAddIPhoneOpen} open={addIPhoneOpen} persistenceKey={`${viewStatus.baseUrl}:device-enrollment`} resumeOperationId={activeEnrollmentOperationId} returnFocusRef={addFlowReturnFocusRef} services={injectedAddIPhoneServices ?? runtimeAddIPhoneServices} />
-      <AddAppDialog canImport={canImportCatalog} canManageGitHub={canManageGitHub} catalogApps={catalogApps} demoMode={viewStatus.mode === 'demo'} githubCallback={githubCallback} onChooseApp={chooseAppFromAddFlow} onOpenChange={handleAddAppOpenChange} open={addAppOpen} returnFocusRef={addFlowReturnFocusRef} services={injectedAddAppServices ?? runtimeAddAppServices} />
+      {addFlowDialogs}
     </div>
   )
 }

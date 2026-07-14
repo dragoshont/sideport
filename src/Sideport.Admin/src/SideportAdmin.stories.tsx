@@ -432,6 +432,37 @@ const runtimeAddIPhoneServices: AddIPhoneServices = {
   read: async () => ({ operationId: 'op-enroll-story', status: 'succeeded', stages: [{ id: 'accept-device', status: 'succeeded', message: 'iPhone added.' }], result: { deviceEnrollment: { selectedDeviceUdid: '000081-story', inventoryState: 'accepted' } } }),
 }
 
+const startOnboardingIPhoneStory = fn(async () => ({ operationId: 'op-onboarding-enroll-story', status: 'waiting', stages: [{ id: 'wait-for-usb', status: 'waiting', message: 'Waiting for iPhone.' }] }))
+const onboardingAutoStartServices: AddIPhoneServices = {
+  start: startOnboardingIPhoneStory,
+  read: async () => ({ operationId: 'op-onboarding-enroll-story', status: 'waiting', stages: [{ id: 'wait-for-usb', status: 'waiting', message: 'Waiting for iPhone.' }] }),
+}
+const startResumedOnboardingIPhoneStory = fn(async () => ({ operationId: 'unexpected-new-operation', status: 'waiting', stages: [] }))
+const readResumedOnboardingIPhoneStory = fn(async () => ({ operationId: 'op-onboarding-enroll-resume', status: 'waiting', stages: [{ id: 'wait-for-usb', status: 'waiting', message: 'Still waiting for iPhone.' }] }))
+const onboardingResumeServices: AddIPhoneServices = {
+  start: startResumedOnboardingIPhoneStory,
+  read: readResumedOnboardingIPhoneStory,
+}
+
+const deviceEnrollmentInProgressStatus: AdminDataStatus = {
+  ...deviceOnboardingStatus,
+  mode: 'live',
+  onboarding: {
+    ...deviceOnboardingStatus.onboarding!,
+    workflow: {
+      ...deviceOnboardingStatus.onboarding!.workflow!,
+      nextAction: null,
+      steps: deviceOnboardingStatus.onboarding!.workflow!.steps.map((step) => step.id === 'device' ? {
+        ...step,
+        state: 'in-progress' as const,
+        activeOperationId: 'op-onboarding-enroll-resume',
+        reason: 'Waiting for iPhone over USB.',
+        nextAction: undefined,
+      } : step),
+    },
+  },
+}
+
 const enrollmentRecoverySource = {
   operationId: 'op-enroll-recovery-source',
   status: 'recovery-required',
@@ -509,9 +540,11 @@ export const OwnerAccountCanEnterPortalWithoutIPhone: Story = {
 }
 export const FirstRunConnectIPhoneActionable: Story = {
   name: 'First Run - missing iPhone is actionable and automatic',
-  args: { data: readyForDeviceOnboardingData, apiStatus: deviceOnboardingStatus, initialRoute: 'home' },
+  args: { data: readyForDeviceOnboardingData, apiStatus: { ...deviceOnboardingStatus, mode: 'live' }, initialRoute: 'home', addIPhoneServices: onboardingAutoStartServices },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
+    const page = within(canvasElement.ownerDocument.body)
+    startOnboardingIPhoneStory.mockClear()
     const panel = within(canvas.getByTestId('runtime-onboarding-panel-device'))
     await expect(panel.getByRole('heading', { name: 'Connect iPhone' })).toBeVisible()
     await expect(panel.getByText('Connect the iPhone now')).toBeVisible()
@@ -521,6 +554,29 @@ export const FirstRunConnectIPhoneActionable: Story = {
     await expect(panel.getByRole('button', { name: 'Start connecting' })).toBeEnabled()
     await expect(panel.queryByRole('button', { name: /Pair|I tapped Trust|Add to Sideport/ })).not.toBeInTheDocument()
     await expect(canvas.getByText('2 of 6 complete')).toBeVisible()
+    await userEvent.click(panel.getByRole('button', { name: 'Start connecting' }))
+    const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
+    await waitFor(() => expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1))
+    await expect(within(dialog).getByRole('button', { name: 'Close Add iPhone' })).toHaveFocus()
+    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
+    await expect(within(dialog).queryByRole('button', { name: 'Connect iPhone' })).not.toBeInTheDocument()
+    await new Promise((resolve) => window.setTimeout(resolve, 1_200))
+    await expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1)
+  },
+}
+export const FirstRunConnectIPhoneResumesWithoutStartingAgain: Story = {
+  name: 'First Run - active iPhone connection resumes without another start',
+  args: { data: readyForDeviceOnboardingData, apiStatus: deviceEnrollmentInProgressStatus, initialRoute: 'home', addIPhoneServices: onboardingResumeServices },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const page = within(canvasElement.ownerDocument.body)
+    startResumedOnboardingIPhoneStory.mockClear()
+    readResumedOnboardingIPhoneStory.mockClear()
+    await userEvent.click(within(canvas.getByTestId('runtime-onboarding-panel-device')).getByRole('button', { name: 'Show connection status' }))
+    const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
+    await waitFor(() => expect(readResumedOnboardingIPhoneStory).toHaveBeenCalled())
+    await expect(startResumedOnboardingIPhoneStory).not.toHaveBeenCalled()
+    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
   },
 }
 export const LiveOnboarding: Story = {
