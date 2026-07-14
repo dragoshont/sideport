@@ -70,8 +70,35 @@ public sealed class AuthentikEnrollmentTests
         Assert.StartsWith("sideport-", parsed.RootElement.GetProperty("name").GetString(), StringComparison.Ordinal);
         Assert.True(parsed.RootElement.GetProperty("single_use").GetBoolean());
         Assert.Equal("2026-07-13T00:45:00Z", parsed.RootElement.GetProperty("expires").GetString());
+        string internalUsername = parsed.RootElement.GetProperty("fixed_data").GetProperty("username").GetString()!;
+        Assert.StartsWith("sideport-", internalUsername, StringComparison.Ordinal);
+        Assert.NotEqual("mara@example.test", internalUsername);
+        Assert.Equal(parsed.RootElement.GetProperty("name").GetString(), internalUsername);
         Assert.Equal("mara@example.test", parsed.RootElement.GetProperty("fixed_data").GetProperty("email").GetString());
         Assert.Equal("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", parsed.RootElement.GetProperty("flow").GetString());
+    }
+
+    [Fact]
+    public void EnrollmentName_IsStableForRetriesAndDistinctAcrossInvitations()
+    {
+        string first = AuthentikEnrollmentAdapter.EnrollmentNameFor("owner-passkey-request-0001");
+        string replay = AuthentikEnrollmentAdapter.EnrollmentNameFor("owner-passkey-request-0001");
+        string second = AuthentikEnrollmentAdapter.EnrollmentNameFor("owner-passkey-request-0002");
+
+        Assert.Equal(first, replay);
+        Assert.NotEqual(first, second);
+        Assert.Matches("^sideport-[0-9a-f]{24}$", first);
+    }
+
+    [Fact]
+    public void CheckedInEnrollmentBlueprint_HidesInfrastructureUsername()
+    {
+        string root = FindRepoRoot();
+        string blueprint = File.ReadAllText(Path.Combine(root, "deploy", "authentik", "sideport-blueprint.yaml"));
+
+        Assert.DoesNotContain("sideport-enrollment-username", blueprint, StringComparison.Ordinal);
+        Assert.DoesNotContain("field_key: username", blueprint, StringComparison.Ordinal);
+        Assert.Contains("fields: [!KeyOf sideport-name, !KeyOf sideport-email]", blueprint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -151,5 +178,13 @@ public sealed class AuthentikEnrollmentTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sideport.slnx")))
+            directory = directory.Parent;
+        return directory?.FullName ?? throw new InvalidOperationException("Sideport repo root not found.");
     }
 }

@@ -16,10 +16,6 @@ entries:
     model: authentik_stages_invitation.invitationstage
     identifiers: { name: sideport-invitation-only }
     attrs: { continue_flow_without_invitation: false }
-  - id: sideport-username
-    model: authentik_stages_prompt.prompt
-    identifiers: { name: sideport-enrollment-username }
-    attrs: { field_key: username, label: Email or username, type: username, required: true, placeholder: name@example.com, order: 0 }
   - id: sideport-name
     model: authentik_stages_prompt.prompt
     identifiers: { name: sideport-enrollment-name }
@@ -32,7 +28,7 @@ entries:
     model: authentik_stages_prompt.promptstage
     identifiers: { name: sideport-enrollment-details }
     attrs:
-      fields: [!KeyOf sideport-username, !KeyOf sideport-name, !KeyOf sideport-email]
+      fields: [!KeyOf sideport-name, !KeyOf sideport-email]
   - id: sideport-user-write
     model: authentik_stages_user_write.userwritestage
     identifiers: { name: sideport-enrollment-user-write }
