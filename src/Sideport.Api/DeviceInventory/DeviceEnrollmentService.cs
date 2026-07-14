@@ -652,13 +652,22 @@ public sealed class DeviceEnrollmentService
         }
         if (trustState == "untrusted")
         {
-            await FailAsync(
+            if (IsExplicitTrustDenial(result.TrustReason))
+            {
+                await FailAsync(
+                    pairingRecord,
+                    "failed",
+                    "await-user-trust",
+                    new OperationIssueDto("device-lockdown-untrusted", result.TrustReason ?? "Trust was declined on the iPhone."),
+                    retryable: true,
+                    ct: ct).ConfigureAwait(false);
+                return;
+            }
+            await MarkRecoveryWaitingAsync(
                 pairingRecord,
-                "failed",
-                "await-user-trust",
-                new OperationIssueDto("device-lockdown-untrusted", result.TrustReason ?? "Trust was not granted on the iPhone."),
-                retryable: true,
-                ct: ct).ConfigureAwait(false);
+                "Tap Trust on the iPhone if asked. Sideport will continue automatically.",
+                ct).ConfigureAwait(false);
+            await ContinueRecoveryUntilTerminalAsync(pairingRecord, expiresAt, ct).ConfigureAwait(false);
             return;
         }
         if (trustState != "trusted" || !result.UsableForInstall)
@@ -773,14 +782,22 @@ public sealed class DeviceEnrollmentService
         }
         if (trustState == "untrusted")
         {
-            await FailAsync(
+            if (IsExplicitTrustDenial(probe.TrustReason))
+            {
+                await FailAsync(
+                    record,
+                    "failed",
+                    "verify-lockdown",
+                    new OperationIssueDto("device-lockdown-untrusted", probe.TrustReason ?? "Trust was declined on the iPhone."),
+                    retryable: true,
+                    ct: ct).ConfigureAwait(false);
+                return true;
+            }
+            await MarkRecoveryWaitingAsync(
                 record,
-                "failed",
-                "verify-lockdown",
-                new OperationIssueDto("device-lockdown-untrusted", probe.TrustReason ?? "The iPhone is definitely not paired."),
-                retryable: true,
-                ct: ct).ConfigureAwait(false);
-            return true;
+                "Tap Trust on the iPhone if asked. Sideport will continue automatically.",
+                ct).ConfigureAwait(false);
+            return false;
         }
         if (trustState != "trusted" || !probe.UsableForInstall || probe.Connection != DeviceConnection.Usb)
         {
@@ -793,7 +810,7 @@ public sealed class DeviceEnrollmentService
             return false;
         }
 
-        OperationRecordDto? recovered = await MarkAlreadyTrustedAsync(record, ct).ConfigureAwait(false);
+        OperationRecordDto? recovered = await MarkRecoveredTrustAsync(record, ct).ConfigureAwait(false);
         if (recovered is not null && IsActiveEnrollment(recovered))
             await AcceptVerifiedAsync(recovered, selected, probe, ct).ConfigureAwait(false);
         return true;
@@ -881,7 +898,8 @@ public sealed class DeviceEnrollmentService
         if (trustState != "trusted" || !probe.UsableForInstall || probe.Connection != DeviceConnection.Usb)
         {
             bool afterPairRequest = PairingWasRequested(verifying);
-            if (afterPairRequest && trustState != "untrusted")
+            if (afterPairRequest &&
+                (trustState != "untrusted" || !IsExplicitTrustDenial(probe.TrustReason)))
             {
                 await MarkRecoveryWaitingAsync(
                     verifying,
@@ -974,6 +992,19 @@ public sealed class DeviceEnrollmentService
         {
             if (!IsActiveEnrollment(existing))
                 return null;
+            OperationStageDto[] stages = UpdateStage(
+                existing.Stages,
+                "request-pairing",
+                "succeeded",
+                now,
+                "Pairing was requested once; Sideport will not request it again.");
+            stages = UpdateStage(
+                stages,
+                "await-user-trust",
+                "succeeded",
+                now,
+                "The Trust response moved to automatic verification.");
+            stages = UpdateStage(stages, "verify-lockdown", "waiting", now, message);
             return existing with
             {
                 Status = "waiting",
@@ -982,8 +1013,21 @@ public sealed class DeviceEnrollmentService
                 Error = null,
                 Retryable = false,
                 Cancelable = false,
-                Stages = UpdateStage(existing.Stages, "verify-lockdown", "waiting", now, message),
+                Stages = stages,
             };
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task<OperationRecordDto?> MarkRecoveredTrustAsync(OperationRecordDto record, CancellationToken ct)
+    {
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        return await _operations.TransitionAsync(record.OperationId, existing =>
+        {
+            if (!IsActiveEnrollment(existing))
+                return null;
+            OperationStageDto[] stages = UpdateStage(existing.Stages, "request-pairing", "succeeded", now, "Pairing was requested once.");
+            stages = UpdateStage(stages, "await-user-trust", "succeeded", now, "Trust confirmed during automatic recovery.");
+            return existing with { Status = "running", UpdatedAt = now, Stages = stages, Cancelable = false };
         }, ct).ConfigureAwait(false);
     }
 
@@ -1236,6 +1280,11 @@ public sealed class DeviceEnrollmentService
 
     private static OperationIssueDto RecoveryIssue(string message) =>
         new("device-enrollment-recovery-required", message);
+
+    private static bool IsExplicitTrustDenial(string? reason) =>
+        !string.IsNullOrWhiteSpace(reason) &&
+        (reason.Contains("declined", StringComparison.OrdinalIgnoreCase) ||
+         reason.Contains("denied", StringComparison.OrdinalIgnoreCase));
 
     private static string NormalizeTrustState(string? state) => state?.Trim().ToLowerInvariant() switch
     {

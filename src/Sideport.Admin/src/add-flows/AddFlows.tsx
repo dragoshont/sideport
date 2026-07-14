@@ -176,6 +176,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   const [operation, setOperation] = useState<EnrollmentOperation | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [waitingLong, setWaitingLong] = useState(false)
+  const [recoveryRetryFailed, setRecoveryRetryFailed] = useState(false)
   const [pollRevision, setPollRevision] = useState(0)
   const acceptedNotifiedRef = useRef<string | null>(null)
   const autoStartHandledRef = useRef(false)
@@ -188,11 +189,11 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   const ownerLabel = iPhoneOwnerLabel(memberName)
 
   const playCue = useCallback((cue: IPhoneSoundCue) => {
-    if (soundPlayer) {
-      soundPlayer(cue)
-      return
-    }
     try {
+      if (soundPlayer) {
+        soundPlayer(cue)
+        return
+      }
       const AudioContextClass = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!AudioContextClass) return
       const context = audioContextRef.current ?? new AudioContextClass()
@@ -231,7 +232,10 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     }
   }, [soundPlayer])
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) setWaitingLong(false)
+    if (!nextOpen) {
+      setWaitingLong(false)
+      setRecoveryRetryFailed(false)
+    }
     if (!nextOpen && !isResumableEnrollment(operation)) {
       setPhase('idle')
       setOperation(null)
@@ -311,6 +315,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     if (autoRecoveryAttemptedRef.current === operation.operationId) return
     autoRecoveryAttemptedRef.current = operation.operationId
     setError(null)
+    setRecoveryRetryFailed(false)
     setPhase('waiting')
     void services.retry(operation.operationId).then((next) => {
       setOperation(next)
@@ -318,7 +323,8 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
       setError(next.error?.message ?? null)
       rememberEnrollmentOperationId(storageKey, isResumableEnrollment(next) ? next.operationId : null)
     }).catch((reason) => {
-      setPhase('recovery')
+      setRecoveryRetryFailed(true)
+      setPhase('failed')
       setError(reason instanceof Error ? reason.message : 'Sideport is still waiting to verify this iPhone safely.')
     })
   }, [canMutate, demoMode, open, operation, phase, services, storageKey])
@@ -359,6 +365,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   const beginEnrollment = useCallback(async () => {
     setError(null)
     setWaitingLong(false)
+    setRecoveryRetryFailed(false)
     detectedCuePlayedRef.current = false
     attentionCuePlayedRef.current = false
     soundSessionStartedRef.current = true
@@ -538,10 +545,18 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
                 className="primary-action add-flow-button"
                 data-testid="connect-iphone-intent"
                 disabled={!demoMode && (!services || !canMutate)}
-                onClick={() => void beginEnrollment()}
+                onClick={() => {
+                  if (recoveryRetryFailed && operation) {
+                    autoRecoveryAttemptedRef.current = null
+                    setRecoveryRetryFailed(false)
+                    setPhase('recovery')
+                    return
+                  }
+                  void beginEnrollment()
+                }}
                 type="button"
               >
-                <Cable size={17} /> {phase === 'failed' ? 'Try again' : 'Connect iPhone'}
+                <Cable size={17} /> {recoveryRetryFailed ? 'Try checking again' : phase === 'failed' ? 'Try again' : 'Connect iPhone'}
               </button>
             )}
           </div>
