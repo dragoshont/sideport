@@ -19,17 +19,17 @@ non-live until its Phase 9 implementation passes.
 
 ## Contract Rules
 
-- Every `/api/*` endpoint is protected by bearer token or authenticated OIDC
+- Every `/api/*` endpoint is protected by bearer token or authenticated interactive
   session when either auth mode is configured, except the explicitly planned
   token-authenticated `POST /api/workspace/invitations/handoff` and
   `POST /api/workspace/owner-claims/handoff` exchanges. Those two pre-login
   endpoints accept only their high-entropy fragment token in a bounded JSON
   body over effective HTTPS, are rate-limited/no-store, and grant no membership;
   the corresponding `GET` preview and `POST` acceptance endpoints require an
-  authenticated OIDC session. `/healthz` and `/readyz` stay open for probes.
+  passkey/OIDC session. `/healthz` and `/readyz` stay open for probes.
 - Secret values never appear in routine API responses, logs, operation records,
   server-observed URL paths or query strings, analytics, or receipts. The
-  planned invitation and Owner-claim create endpoints are the narrow exception:
+  invitation and Owner-claim create endpoints are a narrow exception:
   an authorized Owner/recovery caller receives the new raw token once inside the
   `#fragment` of a no-store share URL. A URL fragment remains browser-local and
   is never sent in the HTTP request target or copied into OIDC state. The planned
@@ -38,7 +38,10 @@ non-live until its Phase 9 implementation passes.
   server-custodied after Apple authentication.
   API keys are accepted only in their documented Authorization header and are
   never returned to browser code, copied into domain request bodies, or
-  persisted in domain/audit records. Private keys and anisette identity
+  persisted in domain/audit records. A fresh native-passkey deployment also
+  writes its fragment-only Owner setup URL once directly to container stderr;
+  it is not routed through the in-process log store, persisted, or emitted again
+  after restart. Private keys and anisette identity
   material never cross the API boundary.
 - Mutating endpoints must return structured failure reasons. A successful HTTP
   response means the requested state transition or operation record was accepted,
@@ -71,8 +74,8 @@ non-live until its Phase 9 implementation passes.
 | `GET` | `/healthz` | Process liveness | live | Open probe. |
 | `GET` | `/readyz` | Anisette + signer readiness | live | Open probe. |
 | `GET` | `/api/about` | Service metadata | live | Protected like other `/api/*`. |
-| `GET` | `/api/me` | Current API identity mode | live | OIDC user or bearer-token client. |
-| `GET` | `/api/authentication/options` | Public sign-in presentation and enrollment capability | live | Provider ID/labels are deployment-configurable; passkey enrollment is advertised only when the Authentik adapter is configured. |
+| `GET` | `/api/me` | Current API identity mode | live | Native passkey user, OIDC user, or bearer-token client. |
+| `GET` | `/api/authentication/options` | Public sign-in presentation and enrollment capability | live | Reports `passkey|oidc|none`; actions are advertised only when the active backend can perform them. |
 | `GET` | `/api/anisette/info` | Anisette client info probe | live | No raw anisette secrets. |
 | `GET` | `/api/logs?limit=` | In-process API log tail | live | Ring buffer, not durable operation history. |
 | `GET` | `/api/apple-access/status` | App Store Connect read-only probe | live | Optional paid-team path. |
@@ -125,26 +128,51 @@ required before it is called production-ready.
 
 ### Identity provider and passkey ownership
 
-Sideport is an OIDC relying party, not an account or WebAuthn authority. A
-deployment may configure `Sideport:Oidc:ProviderId`, `ProviderLabel`, and
-`LoginLabel` to describe its standards-compliant OIDC provider without changing
-the immutable workspace identity key: the validated OIDC issuer plus subject.
+The Sideport identity and enrollment HTTP contract is provider-neutral. Native
+mode is a WebAuthn relying party and persists Sideport-owned passkeys. OIDC mode
+is a generic relying party; Authentik is one optional provider and enrollment
+adapter. Both modes ask a new person only for display name and contact email,
+use an opaque internal subject instead of email as infrastructure identity, and
+grant membership only through a valid Owner/invitation handoff.
 
-The Sideport identity and enrollment HTTP contract is provider-neutral. The
-currently implemented provisioning adapter is Authentik. When
-its base URL, least-privilege API token, and enrollment flow are configured,
-`GET /api/authentication/options` reports `enrollmentEnabled=true` and the
-invitation handoff offers **Create passkey** before the existing-account OIDC
-login. Authentik owns the discoverable credential, user verification, recovery,
-and cross-platform passkey ceremony. Sideport creates only the short-lived
-provider invitation, supplies a deterministic opaque 96-bit SHA-256-derived
-internal username from the invitation request key, and returns the browser to
-`/invite`. The person supplies
-only a display name and contact email; email is never reused as the Authentik
-username. Membership is still
-granted only after the resulting validated OIDC session explicitly accepts the
-Sideport invitation. A different OIDC provider works for existing-account login
-without claiming generic account provisioning or passkey enrollment.
+#### Interactive identity modes
+
+`Sideport:Identity:Mode` selects exactly one interactive backend:
+
+- `passkey`: Sideport-native WebAuthn/passkey using ASP.NET Core Identity. It
+  has no OIDC or Authentik dependency and stores users/passkeys transactionally
+  in `/var/lib/sideport/identity.db`.
+- `oidc`: generic OpenID Connect using Authority, ClientId, and ClientSecret.
+  Authentik is one optional provider and may additionally own provider-side
+  passkey enrollment.
+
+Both backends produce the same internal interactive identity contract: a
+validated issuer, stable subject, display name/email presentation, authentication
+method (`passkey|oidc`), and the current workspace security epoch. Workspace
+membership, invitations, Owner claims, RBAC, CSRF, logout, audit, recovery, and
+operation authorization do not branch on the provider. Native identity uses
+issuer `urn:sideport:native-passkey` and a random durable Identity user ID as
+subject. OIDC uses the validated token issuer and `sub`.
+
+The first release does not link native and OIDC accounts and does not run both
+interactive backends simultaneously. Switching modes requires an explicit
+workspace reset or a separately designed Owner recovery/migration flow.
+
+Native passkey creation is allowed only from a valid pending Owner/invitation
+handoff. The server returns WebAuthn creation options, validates the browser's
+attestation with required user verification, creates the Identity user only
+after successful attestation, persists the credential/sign counter, and signs
+the browser into the existing Sideport session cookie. Passkey assertion login
+uses discoverable credentials and updates the stored sign counter before the
+cookie is issued. Native endpoints are same-origin, no-store, rate-limited, and
+absent outside `passkey` mode.
+
+On a fresh native-passkey installation, Sideport creates one pending Owner claim
+only when no workspace or pending claim exists and logs its fragment-only setup
+URL once. The long-lived recovery bearer remains server-side recovery authority;
+it is never entered in the browser. The plaintext setup URL is not persisted or
+re-logged. If lost or expired, a trusted operator revokes/regenerates it through
+the existing recovery-bearer command/API.
 
 The same enrollment capability is available from a pending Owner-claim handoff
 at `POST /api/workspace/owner-claims/enrollment`. It validates only the opaque

@@ -17,6 +17,13 @@ export SIDEPORT_PUBLIC_ORIGIN="http://127.0.0.1:8080/"
 ./deploy/apple-container/sideport-container.sh start
 ```
 
+Native Sideport passkeys are used by default. After `start`, run
+`container logs sideport` and open the one-time **Sideport Owner setup** link.
+The link is printed only on the first start of an empty state volume and is not
+stored in plaintext. Set `SIDEPORT_IDENTITY_MODE=oidc` plus the generic OIDC
+authority, client ID, and client secret variables only when an external identity
+provider is desired.
+
 Back up both named volumes before upgrades. The launcher never prints secret
 values. `dry-run` is safe on a host without the Apple runtime and documents the
 effective topology.

@@ -103,7 +103,10 @@ internal enum WorkspaceReceiptKind
     RestoreRecovery,
 }
 
-internal sealed record WorkspaceIdentityKey(string Issuer, string Subject);
+internal sealed record WorkspaceIdentityKey(string Issuer, string Subject)
+{
+    internal const string NativePasskeyIssuer = "urn:sideport:native-passkey";
+}
 
 internal sealed record WorkspaceActorRecord(WorkspaceActorKind Kind, string? MemberId)
 {

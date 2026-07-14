@@ -20,6 +20,12 @@ services:
     environment:
       Sideport__Anisette__Url: "http://anisette:6969/"
       Sideport__Api__AuthToken: "${SIDEPORT_API_TOKEN:?set SIDEPORT_API_TOKEN in deploy/sideport.env}"
+      Sideport__Identity__Mode: "${SIDEPORT_IDENTITY_MODE:-passkey}"
+      Sideport__Oidc__Authority: "${SIDEPORT_OIDC_AUTHORITY:-}"
+      Sideport__Oidc__ClientId: "${SIDEPORT_OIDC_CLIENT_ID:-}"
+      Sideport__Oidc__ClientSecret: "${SIDEPORT_OIDC_CLIENT_SECRET:-}"
+      Sideport__Identity__ProviderLabel: "${SIDEPORT_IDENTITY_PROVIDER_LABEL:-Your account}"
+      Sideport__Identity__LoginLabel: "${SIDEPORT_IDENTITY_LOGIN_LABEL:-Continue to sign in}"
       Sideport__Apple__DeviceId: "${SIDEPORT_DEVICE_ID:?set SIDEPORT_DEVICE_ID in deploy/sideport.env}"
       Sideport__Apple__CredentialSource: "managed"
       Sideport__Apple__AllowInsecureCredentialEntryOnLoopback: "true"

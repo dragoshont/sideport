@@ -31,15 +31,21 @@ entry. Sign in (or provide the bearer token), then Sideport guides Apple sign-in
 iPhone Trust over USB, app selection, install, and automatic refresh enablement
 inside the UI. Apple credentials do not belong in the Kubernetes Secret.
 
-## Authentik and passkeys
+## Identity modes
 
-The example now shows the required Sideport OIDC relying-party values, exact
-forwarded-header trust, and the optional new-account enrollment adapter. Replace
-every example hostname, flow UUID, client ID, and proxy CIDR before rendering a
-real overlay. Keep the OIDC client secret and Authentik API token in your secret
-manager.
+The base example uses `Sideport__Identity__Mode=passkey`, so Authentik is not
+required. On the first start of an empty PVC, read the one-time setup link with
+`kubectl -n sideport logs deploy/sideport -c sideport`; open it directly and
+create the Owner passkey. The URL is not persisted in plaintext and is not
+printed again after restart.
 
-Apply [`../authentik/sideport-blueprint.yaml`](../authentik/sideport-blueprint.yaml)
+To use external identity, set `Sideport__Identity__Mode=oidc` in a reviewed
+overlay and provide a generic OIDC Authority, ClientId, and ClientSecret.
+Replace every example hostname, client ID, and proxy CIDR before rendering a
+real overlay. Keep the OIDC client secret in your secret manager.
+
+Authentik is one optional OIDC provider. Apply
+[`../authentik/sideport-blueprint.yaml`](../authentik/sideport-blueprint.yaml)
 to Authentik only through your normal reviewed Authentik/GitOps process. It
 creates an invitation-only external-user flow that requires a passkey before
 login completion. Sideport never stores or reads that passkey. Existing users

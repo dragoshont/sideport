@@ -3,11 +3,12 @@ using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Antiforgery;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Sideport.Api.AppleAccess;
 using Sideport.Api.Authentik;
 using Sideport.Api.Catalog;
@@ -15,6 +16,7 @@ using Sideport.Api.DeviceInventory;
 using Sideport.Api.Diagnostics;
 using Sideport.Api.DiagnosticsIssues;
 using Sideport.Api.GitHubCatalog;
+using Sideport.Api.Identity;
 using Sideport.Api.Onboarding;
 using Sideport.Api.Operations;
 using Sideport.Api.WorkspaceAccess;
@@ -144,7 +146,14 @@ var apiToken = builder.Configuration["Sideport:Api:AuthToken"]
 // unaffected. When true, the browser UI is gated behind OpenID Connect and the
 // authenticated session cookie additionally authorizes /api/* (the bearer token
 // stays valid for machine clients).
-var oidcEnabled = builder.Configuration.GetValue("Sideport:Oidc:Enabled", false);
+var legacyOidcEnabled = builder.Configuration.GetValue("Sideport:Oidc:Enabled", false);
+string identityMode = (builder.Configuration["Sideport:Identity:Mode"] ??
+    (legacyOidcEnabled ? "oidc" : "none")).Trim().ToLowerInvariant();
+if (identityMode is not ("none" or "passkey" or "oidc"))
+    throw new InvalidOperationException("Sideport:Identity:Mode must be none, passkey, or oidc.");
+bool nativePasskeyEnabled = identityMode == "passkey";
+bool oidcEnabled = identityMode == "oidc";
+bool interactiveIdentityEnabled = nativePasskeyEnabled || oidcEnabled;
 var oidcAuthority = builder.Configuration["Sideport:Oidc:Authority"];
 var oidcClientId = builder.Configuration["Sideport:Oidc:ClientId"];
 var oidcClientSecret = builder.Configuration["Sideport:Oidc:ClientSecret"];
@@ -167,15 +176,20 @@ var authentikEnrollmentOptions = new AuthentikEnrollmentOptions(
     authentikEnrollmentFlowId,
     TimeSpan.FromMinutes(authentikInvitationMinutes));
 string identityProviderId = builder.Configuration["Sideport:Identity:ProviderId"]
-    ?? builder.Configuration["Sideport:Oidc:ProviderId"] ?? "oidc";
+    ?? builder.Configuration["Sideport:Oidc:ProviderId"]
+    ?? (nativePasskeyEnabled ? "sideport-passkey" : "oidc");
 string identityProviderLabel = builder.Configuration["Sideport:Identity:ProviderLabel"]
-    ?? builder.Configuration["Sideport:Oidc:ProviderLabel"] ?? "Your account";
+    ?? builder.Configuration["Sideport:Oidc:ProviderLabel"]
+    ?? (nativePasskeyEnabled ? "Sideport passkey" : "Your account");
 string identityLoginLabel = builder.Configuration["Sideport:Identity:LoginLabel"]
-    ?? builder.Configuration["Sideport:Oidc:LoginLabel"] ?? "Continue to sign in";
+    ?? builder.Configuration["Sideport:Oidc:LoginLabel"]
+    ?? (nativePasskeyEnabled ? "Sign in with a passkey" : "Continue to sign in");
 string identityEnrollmentLabel = builder.Configuration["Sideport:Identity:EnrollmentLabel"] ?? "Create passkey";
 string identityPreferredMethod = builder.Configuration["Sideport:Identity:PreferredMethod"] ??
-    (authentikEnrollmentOptions.Enabled ? "passkey" : "login");
-string? identityEnrollmentProviderId = authentikEnrollmentOptions.Enabled ? "authentik" : null;
+    (nativePasskeyEnabled || authentikEnrollmentOptions.Enabled ? "passkey" : "login");
+string? identityEnrollmentProviderId = nativePasskeyEnabled
+    ? "sideport"
+    : authentikEnrollmentOptions.Enabled ? "authentik" : null;
 IPAddress[] trustedProxies = ReadConfigurationList(builder.Configuration, "Sideport:ReverseProxy:KnownProxies")
     .Select(ParseTrustedProxy)
     .ToArray();
@@ -339,7 +353,7 @@ builder.Services.AddSingleton(new FirstInstallOptions(runScheduler));
 builder.Services.AddSingleton(new SystemStatusOptions(
     stateDirectory,
     orchestratorOptions.WorkDirectory,
-    MutationProtected: !string.IsNullOrWhiteSpace(apiToken) || oidcEnabled));
+    MutationProtected: !string.IsNullOrWhiteSpace(apiToken) || interactiveIdentityEnabled));
 builder.Services.AddSingleton<SystemStatusService>();
 builder.Services.AddSingleton<SchedulerStatusService>();
 builder.Services.AddSingleton<OperationQueue>();
@@ -356,6 +370,14 @@ builder.Services.AddHostedService<DeviceEnrollmentWorker>();
 builder.Services.AddSingleton(_ => new DiagnosticIssueStore(Path.Combine(stateDirectory, "diagnostic-issues.json")));
 builder.Services.AddSingleton<DiagnosticIssueService>();
 builder.Services.AddSingleton(new WorkspaceAccessStore(stateDirectory));
+if (nativePasskeyEnabled)
+{
+    builder.Services.AddSingleton<IOwnerSetupLinkSink, ConsoleOwnerSetupLinkSink>();
+    builder.Services.AddSingleton(sp => new OwnerSetupLinkBootstrapper(
+        sp.GetRequiredService<WorkspaceAccessStore>(),
+        publicOrigin,
+        sp.GetRequiredService<IOwnerSetupLinkSink>()));
+}
 builder.Services.AddSingleton<IGitHubSetupActorAuthorizer>(sp =>
     new WorkspaceGitHubSetupActorAuthorizer(
         sp.GetRequiredService<WorkspaceAccessStore>(),
@@ -371,13 +393,13 @@ builder.Services.AddHttpClient<AuthentikEnrollmentAdapter>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 builder.Services.AddSingleton<IIdentityEnrollmentAdapter>(sp =>
-    authentikEnrollmentOptions.Enabled
+    oidcEnabled && authentikEnrollmentOptions.Enabled
         ? sp.GetRequiredService<AuthentikEnrollmentAdapter>()
         : DisabledIdentityEnrollmentAdapter.Instance);
 builder.Services.AddSingleton(sp => new WorkspaceRequestPrincipalResolver(
     sp.GetRequiredService<WorkspaceAccessStore>(),
     apiToken,
-    oidcEnabled));
+    interactiveIdentityEnabled));
 builder.Services.AddSingleton(sp => new WorkspaceImpactService(
     sp.GetRequiredService<WorkspaceAccessStore>(),
     sp.GetRequiredService<KnownDeviceStore>(),
@@ -399,69 +421,98 @@ builder.Services.AddSingleton<SigningCutoverService>();
 builder.Services.AddSingleton<SignerAuthorityGate>();
 builder.Services.AddSingleton<AppleAccountReplacementCandidateService>();
 
-// --- OIDC + cookie auth (only when enabled, so tests/local dev are unchanged) ---
-if (oidcEnabled)
+// --- Provider-neutral interactive identity + cookie auth -------------------
+if (interactiveIdentityEnabled)
 {
-    if (string.IsNullOrWhiteSpace(oidcAuthority) ||
+    if (oidcEnabled && (string.IsNullOrWhiteSpace(oidcAuthority) ||
         string.IsNullOrWhiteSpace(oidcClientId) ||
-        string.IsNullOrWhiteSpace(oidcClientSecret))
+        string.IsNullOrWhiteSpace(oidcClientSecret)))
     {
         throw new InvalidOperationException(
-            "Sideport:Oidc:Enabled is true but Sideport:Oidc:Authority/ClientId/ClientSecret are not all set.");
+            "Sideport:Identity:Mode is oidc but Sideport:Oidc:Authority/ClientId/ClientSecret are not all set.");
     }
 
-    builder.Services
-        .AddAuthentication(options =>
+    AuthenticationBuilder authentication = builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultScheme = SideportIdentityConstants.CookieScheme;
+        options.DefaultChallengeScheme = oidcEnabled
+            ? OpenIdConnectDefaults.AuthenticationScheme
+            : SideportIdentityConstants.CookieScheme;
+    });
+    IdentityCookiesBuilder cookies = authentication.AddIdentityCookies();
+    cookies.ApplicationCookie!.Configure(options =>
+    {
+        options.Cookie.Name = "sideport.session";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.SlidingExpiration = true;
+        options.LoginPath = "/login";
+        options.Events.OnValidatePrincipal = async context =>
         {
-            options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-            options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
-        })
-        .AddCookie(options =>
-        {
-            options.Cookie.Name = "sideport.session";
-            options.Cookie.HttpOnly = true;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-            options.Cookie.SameSite = SameSiteMode.Lax;
-            options.ExpireTimeSpan = TimeSpan.FromHours(8);
-            options.SlidingExpiration = true;
-            options.Events.OnValidatePrincipal = async context =>
+            string? method = context.Principal?.FindFirst(SideportIdentityConstants.AuthenticationMethodClaimType)?.Value;
+            if (string.Equals(method, SideportIdentityConstants.NativeMethod, StringComparison.Ordinal))
             {
-                var identity = context.Principal?.Identity as ClaimsIdentity;
-                string? issuer = identity?.FindFirst(WorkspaceRequestPrincipalResolver.ValidatedIssuerClaimType)?.Value;
-                string? subject = identity?.FindFirst("sub")?.Value;
-                if (string.IsNullOrWhiteSpace(issuer) || string.IsNullOrWhiteSpace(subject))
-                {
-                    context.RejectPrincipal();
+                await SecurityStampValidator.ValidatePrincipalAsync(context).ConfigureAwait(false);
+                if (context.Principal is null)
                     return;
-                }
+            }
 
-                try
+            var identity = context.Principal?.Identity as ClaimsIdentity;
+            string? issuer = identity?.FindFirst(WorkspaceRequestPrincipalResolver.ValidatedIssuerClaimType)?.Value;
+            string? subject = identity?.FindFirst("sub")?.Value;
+            if (string.IsNullOrWhiteSpace(issuer) || string.IsNullOrWhiteSpace(subject))
+            {
+                context.RejectPrincipal();
+                return;
+            }
+
+            try
+            {
+                WorkspaceAccessDocument? workspace = await context.HttpContext.RequestServices
+                    .GetRequiredService<WorkspaceAccessStore>()
+                    .ReadAsync(context.HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
+                if (workspace?.Workspace.State == WorkspaceLifecycleState.Active)
                 {
-                    WorkspaceAccessDocument? workspace = await context.HttpContext.RequestServices
-                        .GetRequiredService<WorkspaceAccessStore>()
-                        .ReadAsync(context.HttpContext.RequestAborted)
-                        .ConfigureAwait(false);
-                    if (workspace?.Workspace.State == WorkspaceLifecycleState.Active)
-                    {
-                        string? epoch = identity!.FindFirst(WorkspaceRequestPrincipalResolver.SecurityEpochClaimType)?.Value;
-                        if (!string.Equals(epoch, workspace.Workspace.SecurityEpoch, StringComparison.Ordinal))
-                            context.RejectPrincipal();
-                    }
+                    string? epoch = identity!.FindFirst(WorkspaceRequestPrincipalResolver.SecurityEpochClaimType)?.Value;
+                    if (!string.Equals(epoch, workspace.Workspace.SecurityEpoch, StringComparison.Ordinal))
+                        context.RejectPrincipal();
                 }
-                catch (WorkspaceAccessException)
-                {
-                    // Keep the cryptographically valid cookie identity intact.
-                    // WorkspaceApiSecurity resolves the store again and returns
-                    // a structured fail-closed 503 instead of misreporting a
-                    // durable-store failure as an unauthenticated 401.
-                }
-            };
-        })
-        .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
+            }
+            catch (WorkspaceAccessException)
+            {
+                // Preserve a cryptographically valid identity. Workspace API
+                // authorization resolves the store again and fails closed with 503.
+            }
+        };
+    });
+    cookies.TwoFactorUserIdCookie!.Configure(options =>
+    {
+        options.Cookie.Name = "sideport.passkey-ceremony";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(5);
+    });
+
+    if (nativePasskeyEnabled)
+    {
+        string identityDatabasePath = Path.Combine(stateDirectory, "identity.db");
+        builder.Services.AddSideportNativePasskeys(
+            identityDatabasePath,
+            publicOrigin.Host);
+    }
+
+    if (oidcEnabled)
+    {
+        authentication.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
         {
             options.Authority = oidcAuthority;
             options.ClientId = oidcClientId;
             options.ClientSecret = oidcClientSecret;
+            options.SignInScheme = SideportIdentityConstants.CookieScheme;
             options.ResponseType = "code";
             options.UsePkce = true;
             options.SaveTokens = false;
@@ -489,9 +540,10 @@ if (oidcEnabled)
                     identity.RemoveClaim(claim);
                 foreach (Claim claim in identity.FindAll(WorkspaceRequestPrincipalResolver.SecurityEpochClaimType).ToArray())
                     identity.RemoveClaim(claim);
-                identity.AddClaim(new Claim(
-                    WorkspaceRequestPrincipalResolver.ValidatedIssuerClaimType,
-                    issuer));
+                foreach (Claim claim in identity.FindAll(SideportIdentityConstants.AuthenticationMethodClaimType).ToArray())
+                    identity.RemoveClaim(claim);
+                identity.AddClaim(new Claim(WorkspaceRequestPrincipalResolver.ValidatedIssuerClaimType, issuer));
+                identity.AddClaim(new Claim(SideportIdentityConstants.AuthenticationMethodClaimType, SideportIdentityConstants.OidcMethod));
 
                 try
                 {
@@ -512,11 +564,21 @@ if (oidcEnabled)
                 }
             };
         });
+    }
 
     builder.Services.AddAuthorization();
 }
 
 var app = builder.Build();
+if (nativePasskeyEnabled)
+{
+    await using AsyncServiceScope identityScope = app.Services.CreateAsyncScope();
+    SideportIdentityDbContext identityDatabase = identityScope.ServiceProvider
+        .GetRequiredService<SideportIdentityDbContext>();
+    await identityDatabase.Database.EnsureCreatedAsync().ConfigureAwait(false);
+    await app.Services.GetRequiredService<OwnerSetupLinkBootstrapper>()
+        .EnsureAsync().ConfigureAwait(false);
+}
 SchedulerSettingsStore schedulerSettingsStore = app.Services.GetRequiredService<SchedulerSettingsStore>();
 try
 {
@@ -554,7 +616,8 @@ if (useForwardedHeaders)
 app.Use(async (context, next) =>
 {
     bool privateLinkShell = context.Request.Path.Equals("/invite", StringComparison.OrdinalIgnoreCase) ||
-        context.Request.Path.Equals("/owner-claim", StringComparison.OrdinalIgnoreCase);
+        context.Request.Path.Equals("/owner-claim", StringComparison.OrdinalIgnoreCase) ||
+        context.Request.Path.Equals("/login", StringComparison.OrdinalIgnoreCase);
     context.Response.Headers["Content-Security-Policy"] = privateLinkShell
         ? "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; " +
           "style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
@@ -598,10 +661,10 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// OIDC pipeline (when enabled): forwarded headers -> auth -> gate the UI shell so
-// the SPA is only served to an authenticated session; everything else 302s to
-// Authentik. Must run before the static-file middleware below.
-if (oidcEnabled)
+// Interactive identity pipeline: forwarded headers -> auth -> gate the UI shell
+// so the SPA is served only to an authenticated native-passkey or OIDC session.
+// Must run before the static-file middleware below.
+if (interactiveIdentityEnabled)
 {
     app.UseAuthentication();
     app.UseAuthorization();
@@ -616,7 +679,8 @@ if (oidcEnabled)
             HttpMethods.IsHead(context.Request.Method);
         bool isPrivateLinkShell = isSafeNavigation &&
             (path.Equals("/invite", StringComparison.OrdinalIgnoreCase) ||
-             path.Equals("/owner-claim", StringComparison.OrdinalIgnoreCase));
+             path.Equals("/owner-claim", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/login", StringComparison.OrdinalIgnoreCase));
         bool isPublicAdminAsset = isSafeNavigation && hasAdminBundle &&
             IsPublicAdminAsset(path, app.Environment.WebRootFileProvider);
         bool isAuthRoute = path.Equals("/signin-oidc", StringComparison.OrdinalIgnoreCase)
@@ -635,7 +699,9 @@ if (oidcEnabled)
             context.User?.Identity?.IsAuthenticated != true)
         {
             await context.ChallengeAsync(
-                OpenIdConnectDefaults.AuthenticationScheme,
+                oidcEnabled
+                    ? OpenIdConnectDefaults.AuthenticationScheme
+                    : SideportIdentityConstants.CookieScheme,
                 new AuthenticationProperties { RedirectUri = path + context.Request.QueryString });
             return;
         }
@@ -650,11 +716,11 @@ if (hasAdminBundle)
     app.UseStaticFiles();
 }
 
-if (string.IsNullOrEmpty(apiToken) && !oidcEnabled)
+if (string.IsNullOrEmpty(apiToken) && !interactiveIdentityEnabled)
 {
     app.Logger.LogWarning(
         "Sideport authentication is not configured — the /api read surface is open and all mutations are disabled. " +
-        "Configure Sideport:Api:AuthToken or OIDC before onboarding or operating Sideport.");
+        "Configure Sideport:Api:AuthToken or an interactive identity mode before onboarding or operating Sideport.");
 }
 
 // --- Request log + bearer auth for /api/* (probes + root stay open) ---------
@@ -851,7 +917,7 @@ app.MapWorkspaceAccessEndpoints(
         RecoveryProofConfigured: !string.IsNullOrWhiteSpace(apiToken)),
     new IdentityAuthenticationOptions(
         oidcEnabled,
-        authentikEnrollmentOptions.Enabled,
+        nativePasskeyEnabled || (oidcEnabled && authentikEnrollmentOptions.Enabled),
         new Uri(publicOrigin, "/login?returnUrl=%2F"),
         authentikRecoveryUrl,
         identityProviderId,
@@ -859,9 +925,12 @@ app.MapWorkspaceAccessEndpoints(
         identityLoginLabel,
         identityEnrollmentLabel,
         identityPreferredMethod,
-        identityEnrollmentProviderId));
+        identityEnrollmentProviderId,
+        identityMode,
+        nativePasskeyEnabled));
 
-// Interactive login/logout (only meaningful when OIDC is enabled).
+// Generic OIDC login challenge. Native passkey login is rendered by the public
+// /login SPA surface and calls the native passkey endpoints directly.
 if (oidcEnabled)
 {
     app.MapGet("/login", (string? returnUrl) =>
@@ -880,9 +949,13 @@ if (oidcEnabled)
             [OpenIdConnectDefaults.AuthenticationScheme]);
     });
 
-    // RP-initiated logout mutates the local session, so it requires an
-    // authenticated, exact-origin request and the ASP.NET antiforgery token.
-    // The OIDC handler still owns its state-validated GET callback.
+}
+
+if (interactiveIdentityEnabled)
+{
+    // Logout mutates the local session, so it requires an authenticated,
+    // exact-origin request and the ASP.NET antiforgery token. OIDC additionally
+    // receives its state-validated sign-out callback.
     app.MapPost("/logout", async (HttpContext context, IAntiforgery antiforgery) =>
     {
         if (!AppleCredentialOriginPolicy.IsSameOrigin(context.Request))
@@ -897,9 +970,10 @@ if (oidcEnabled)
             return OriginOrAntiforgery();
         }
 
-        return Results.SignOut(
-            new AuthenticationProperties { RedirectUri = "/" },
-            [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]);
+        string[] schemes = oidcEnabled
+            ? [SideportIdentityConstants.CookieScheme, OpenIdConnectDefaults.AuthenticationScheme]
+            : [SideportIdentityConstants.CookieScheme];
+        return Results.SignOut(new AuthenticationProperties { RedirectUri = "/" }, schemes);
     }).RequireAuthorization();
 }
 

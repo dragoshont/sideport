@@ -1688,6 +1688,50 @@
   line-height: 1.45;
 }
 
+.spc-identity-form {
+  display: grid;
+  gap: 14px;
+  width: min(440px, 100%);
+  text-align: left;
+}
+
+.spc-identity-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--spc-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.spc-identity-form input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  color: var(--spc-text);
+  border: 1px solid var(--spc-border-strong);
+  border-radius: 10px;
+  outline: none;
+  background: var(--spc-surface);
+}
+
+.spc-identity-form input:focus-visible {
+  border-color: var(--spc-accent);
+  box-shadow: 0 0 0 3px var(--spc-accent-soft);
+}
+
+.spc-text-button {
+  width: fit-content;
+  padding: 4px 2px;
+  color: var(--spc-accent);
+  border: 0;
+  background: transparent;
+  font-weight: 650;
+}
+
+.spc-text-button:hover {
+  text-decoration: underline;
+}
+
 .spc-fine-print {
   max-width: 540px;
   font-size: 12px;

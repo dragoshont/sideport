@@ -25,7 +25,9 @@ internal sealed record IdentityAuthenticationOptions(
     string LoginLabel = "Continue to sign in",
     string EnrollmentLabel = "Create passkey",
     string PreferredMethod = "login",
-    string? EnrollmentProviderId = null);
+    string? EnrollmentProviderId = null,
+    string Mode = "oidc",
+    bool NativePasskeyEnabled = false);
 
 internal sealed record IdentityEnrollmentRequest(
     string? DisplayName,

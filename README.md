@@ -514,7 +514,7 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `SIDEPORT_DEVICE_ID` | ✅ | — | Your iPhone's UDID. Sideport refuses to start without it. |
+| `SIDEPORT_DEVICE_ID` | ✅ | — | Stable UUID for this Sideport Apple client identity (not an iPhone UDID). Generate once with `uuidgen` and preserve it with backups. |
 | `Sideport__Anisette__Url` | ✅ | `http://anisette:6969/` | Where the anisette helper lives. |
 | `SIDEPORT_APPLE_PW_<APPLEID>` | ✅ | — | Apple password. Encode the Apple ID in the name: `you@example.com` → `SIDEPORT_APPLE_PW_YOU_EXAMPLE_COM`. |
 | `USBMUXD_SOCKET_ADDRESS` | recommended | system default | How to reach the iPhone. Set to `unix:/var/run/usbmuxd` when you mount the host socket. |
@@ -524,11 +524,12 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `Sideport__Scheduler__Enabled` | — | `true` | Turn the automatic 7-day refresh loop on/off. |
 | `Sideport__Scheduler__ResignInterval` | — | *(unset)* | Re-sign each app on a fixed cadence (e.g. `1.00:00:00` = daily) to keep a fresh margin well before the 7-day profile expiry, instead of only just before it. Unset = refresh near expiry only. The signing certificate is reused either way, so this does **not** make you re-trust the developer more often. |
 | `Sideport__Catalog__SeedCertClockPath` | — | *(unset)* | Optional path to a Cert Clock IPA to expose as a configured catalog seed. Fresh installations have an empty catalog when this is unset. |
-| `Sideport__Oidc__Enabled` | — | `false` | Gate the **admin web UI** behind OpenID Connect login (e.g. Authentik). When off, the UI is open and `/api/*` uses the bearer token only. |
+| `Sideport__Identity__Mode` | — | `none` in the app; deployment examples use `passkey` | Interactive identity backend: `passkey`, `oidc`, or `none`. Exactly one is active. |
+| `Sideport__Oidc__Enabled` | — | `false` | Backward-compatible legacy switch. Prefer `Sideport__Identity__Mode=oidc`. |
 | `Sideport__Oidc__Authority` | when OIDC on | — | OIDC issuer URL, e.g. `https://auth.example.com/application/o/sideport/`. |
 | `Sideport__Oidc__ClientId` | when OIDC on | — | OIDC client ID for the Sideport application. |
 | `Sideport__Oidc__ClientSecret` | when OIDC on | — | OIDC client secret (keep in your secret store, never in the image). |
-| `Sideport__Identity__ProviderId` | — | `oidc` | Provider-neutral identity adapter ID exposed by authentication options. |
+| `Sideport__Identity__ProviderId` | — | mode-derived | Provider-neutral identity adapter ID exposed by authentication options. |
 | `Sideport__Identity__ProviderLabel` | — | `Your account` | User-facing account label; it need not name the underlying IdP. |
 | `Sideport__Identity__PreferredMethod` | — | `passkey` when enrollment is configured | Preferred UI method: `passkey` or `login`. |
 | `Sideport__Identity__EnrollmentLabel` | — | `Create passkey` | Primary enrollment action label. |
@@ -541,15 +542,21 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `Sideport__Authentik__EnrollmentFlowSlug` | — | `sideport-enrollment` | Authentik flow slug for invitation-only passkey enrollment. |
 | `Sideport__Authentik__EnrollmentFlowId` | passkey enrollment only | — | Exact Authentik flow UUID to bind newly created invitations. |
 
+With `Sideport__Identity__Mode=passkey`, Sideport owns the WebAuthn ceremony and
+stores passkeys in `/var/lib/sideport/identity.db`. A fresh empty deployment
+prints one private **Sideport Owner setup** URL to container logs. Open that URL;
+the browser asks only for Name and Email, then the device creates the passkey.
+The link is not persisted in plaintext or printed again after restart.
+
 When OIDC is enabled the browser UI requires an interactive login and the
 authenticated session cookie also authorizes `/api/*`, so the bearer token stays
 valid for scripts/automation. The app expects the reverse proxy to forward
 `X-Forwarded-Proto`/`Host` (it honours them so the `redirect_uri` is `https`).
 Register `https://<host>/signin-oidc` as the redirect URI (and
 `https://<host>/signout-callback-oidc` for logout) on the provider.
-OIDC login is provider-neutral. The optional passkey enrollment action currently
-uses Authentik; without that adapter, invitations show only the configured
-existing-account login.
+OIDC login is provider-neutral. Authentik is optional; its enrollment adapter
+may add provider-owned passkey creation, while any standards-compliant OIDC
+provider can supply existing-account login.
 
 | Method & path | Auth | Purpose |
 |---|---|---|

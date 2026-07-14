@@ -9,10 +9,18 @@ public sealed class WorkspaceApiPolicyTests
     {
         yield return Case("GET", "/api/about", WorkspaceApiAccess.ActiveMember);
         yield return Case("GET", "/api/authentication/options", WorkspaceApiAccess.Public);
+        yield return Case("GET", "/api/workspace/invitations/handoff/session", WorkspaceApiAccess.Public);
+        yield return Case("GET", "/api/workspace/owner-claims/handoff/session", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/authentication/native-passkey/options", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/authentication/native-passkey/complete", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/invitations/handoff", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/invitations/enrollment", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/workspace/invitations/native-passkey/options", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/workspace/invitations/native-passkey/complete", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/owner-claims/enrollment", WorkspaceApiAccess.Public);
         yield return Case("POST", "/api/workspace/owner-claims/handoff", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/workspace/owner-claims/native-passkey/options", WorkspaceApiAccess.Public);
+        yield return Case("POST", "/api/workspace/owner-claims/native-passkey/complete", WorkspaceApiAccess.Public);
 
         yield return Case("GET", "/api/me", WorkspaceApiAccess.Identity);
         yield return Case("GET", "/api/workspace/invitations/handoff", WorkspaceApiAccess.Identity);

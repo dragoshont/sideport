@@ -62,7 +62,9 @@ public sealed class WorkspaceAccessHttpTests
         Assert.Equal("company-sso", String(body, "provider"));
         Assert.Equal("Company account", String(body, "providerLabel"));
         Assert.Equal("Continue with Company SSO", String(body, "loginLabel"));
+        Assert.Equal("oidc", String(body, "mode"));
         Assert.True(Bool(body, "oidcEnabled"));
+        Assert.False(Bool(body, "nativePasskeyEnabled"));
         Assert.False(Bool(body, "enrollmentEnabled"));
         Assert.Null(body["passkeyOwner"]);
     }
