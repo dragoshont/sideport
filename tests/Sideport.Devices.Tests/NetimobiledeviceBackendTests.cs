@@ -87,10 +87,14 @@ public class NetimobiledeviceBackendTests
     }
 
     [Fact]
-    public void ClassifyTrustFailure_FatalPairing_IsTransportFailureNotMissingTrust()
+    public void ClassifyTrustFailure_FatalPairing_RequiresRepair()
     {
+        (string state, string reason) = NetimobiledeviceBackend.ClassifyTrustFailure(new FatalPairingException());
+
+        Assert.Equal("error", state);
+        Assert.Contains("repaired", reason);
         Assert.Equal(
-            DevicePairingDisposition.TransportUnavailable,
+            DevicePairingDisposition.RepairRequired,
             NetimobiledeviceBackend.ClassifyTrustFailureDisposition(new FatalPairingException()));
     }
 

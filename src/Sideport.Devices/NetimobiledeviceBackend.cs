@@ -395,8 +395,10 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         {
             LockdownError: LockdownError.PasswordProtected or LockdownError.EscrowLocked,
         } => ("locked", "The iPhone is locked. Unlock it and try again."),
-        NotPairedException or FatalPairingException =>
+        NotPairedException =>
             ("untrusted", "No valid pairing record is available for this iPhone."),
+        FatalPairingException =>
+            ("error", "The saved pairing record is damaged and must be repaired before Sideport can continue."),
         LockdownException
         {
             LockdownError: LockdownError.PairingFailed
@@ -418,7 +420,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         } => DevicePairingDisposition.Locked,
         LockdownException { LockdownError: LockdownError.UserDeniedPairing } => DevicePairingDisposition.Denied,
         NotPairedException => DevicePairingDisposition.AwaitingTrust,
-        FatalPairingException => DevicePairingDisposition.TransportUnavailable,
+        FatalPairingException => DevicePairingDisposition.RepairRequired,
         LockdownException
         {
             LockdownError: LockdownError.MissingHostId or LockdownError.MissingPairRecord,

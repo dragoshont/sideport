@@ -142,14 +142,29 @@ public sealed class NetimobiledeviceController : IDeviceController
 
         if (!string.Equals(current.TrustState, "untrusted", StringComparison.Ordinal))
         {
+            DevicePairingDisposition disposition = current.Disposition == DevicePairingDisposition.Unknown
+                ? DevicePairingDisposition.TransportUnavailable
+                : current.Disposition;
+            return new DevicePairingResult(
+                current.Udid,
+                current.Connection,
+                current.TrustState,
+                current.TrustReason ?? "Sideport could not verify the iPhone before pairing.",
+                current.LockdownCheckedAt,
+                UsableForInstall: false,
+                disposition);
+        }
+
+        if (current.Disposition == DevicePairingDisposition.RepairRequired)
+        {
             return new DevicePairingResult(
                 current.Udid,
                 current.Connection,
                 "error",
-                current.TrustReason ?? "Sideport could not verify the iPhone before pairing.",
+                current.TrustReason ?? "The saved pairing record is damaged and must be repaired before pairing can continue.",
                 current.LockdownCheckedAt,
                 UsableForInstall: false,
-                DevicePairingDisposition.TransportUnavailable);
+                DevicePairingDisposition.RepairRequired);
         }
 
         if (_pairingOwner == DevicePairingOwner.Host)

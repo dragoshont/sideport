@@ -253,6 +253,26 @@ public class NetimobiledeviceControllerTests
     }
 
     [Fact]
+    public async Task Pair_UntrustedButRepairRequired_DoesNotAttemptBlindRepair()
+    {
+        _backend.TrustByUdid["UDID-1"] = new DeviceTrustProbe(
+            "UDID-1",
+            DeviceConnection.Usb,
+            "untrusted",
+            "The saved pairing record is damaged and must be repaired before Sideport can continue.",
+            DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+            UsableForInstall: false,
+            DevicePairingDisposition.RepairRequired);
+
+        DevicePairingResult result = await Build().PairAsync("UDID-1");
+
+        Assert.Equal("error", result.TrustState);
+        Assert.Equal(DevicePairingDisposition.RepairRequired, result.Disposition);
+        Assert.Equal(1, _backend.ProbeTrustCalls);
+        Assert.Equal(0, _backend.PairCalls);
+    }
+
+    [Fact]
     public async Task Pair_AlreadyTrustedUsb_SkipsPairRequest()
     {
         ScriptTrust("UDID-1", DeviceConnection.Usb, "trusted", usableForInstall: true);
