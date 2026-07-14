@@ -75,7 +75,7 @@ non-live until its Phase 9 implementation passes.
 | `GET` | `/api/about` | Service metadata | live | Protected like other `/api/*`. |
 | `GET` | `/api/me` | Current API identity mode | live | Native passkey user, OIDC user, or bearer-token client. |
 | `GET` | `/api/authentication/options` | Public sign-in presentation and enrollment capability | live | Reports `passkey|oidc|none`; actions are advertised only when the active backend can perform them. |
-| `GET` | `/api/workspace/owner-claims/native-passkey/status` | Public first-Owner presentation state | live | Native mode only; returns `available|private-link-required|claimed`, contains no identity or authority material, and is `no-store`. |
+| `GET` | `/api/workspace/owner-claims/native-passkey/status` | Public first-Owner presentation state | live | Native mode only; returns `available` \| `private-link-required` \| `claimed`, contains no identity or authority material, and is `no-store`. |
 | `GET` | `/api/anisette/info` | Anisette client info probe | live | No raw anisette secrets. |
 | `GET` | `/api/logs?limit=` | In-process API log tail | live | Ring buffer, not durable operation history. |
 | `GET` | `/api/apple-access/status` | App Store Connect read-only probe | live | Optional paid-team path. |

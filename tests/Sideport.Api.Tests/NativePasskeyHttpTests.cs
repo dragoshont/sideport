@@ -114,6 +114,25 @@ public sealed class NativePasskeyHttpTests
     }
 
     [Fact]
+    public async Task OwnerBootstrapStatus_IsRateLimitedBeforeRepeatedStoreReads()
+    {
+        using var app = new NativePasskeyTestApp();
+        using HttpClient browser = app.CreateClient();
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            HttpResponseMessage allowed = await browser.GetAsync(
+                "/api/workspace/owner-claims/native-passkey/status");
+            Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        }
+
+        HttpResponseMessage limited = await browser.GetAsync(
+            "/api/workspace/owner-claims/native-passkey/status");
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Contains("passkey-rate-limited", await limited.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FreshNativeDeployment_RedirectsRootToDirectOwnerSetup()
     {
         using var app = new NativePasskeyTestApp();

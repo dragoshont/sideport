@@ -5,24 +5,26 @@ namespace Sideport.Api.WorkspaceAccess;
 
 internal static partial class WorkspaceAccessEndpoints
 {
-    private static readonly SemaphoreSlim NativeOwnerBootstrapGate = new(1, 1);
-
     private static void MapNativePasskeyEndpoints(WebApplication app, WorkspaceHttpOptions options)
     {
         app.MapGet("/api/workspace/owner-claims/native-passkey/status", async (
             WorkspaceAccessStore store,
+            WorkspaceLinkRateLimiter rateLimiter,
             HttpContext context,
             CancellationToken ct) =>
-        {
-            string state = await store.GetNativeOwnerBootstrapStateAsync(ct).ConfigureAwait(false);
-            context.Response.Headers.CacheControl = "no-store";
-            return Results.Json(new { mode = "passkey", state });
-        });
+            await ExecuteAsync(async () =>
+            {
+                EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey-status", "presentation", context);
+                string state = await store.GetNativeOwnerBootstrapStateAsync(ct).ConfigureAwait(false);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { mode = "passkey", state });
+            }).ConfigureAwait(false));
 
         app.MapPost("/api/workspace/owner-claims/native-passkey/options", async (
             NativePasskeyProfileHttpRequest request,
             WorkspaceAccessStore store,
             NativePasskeyService passkeys,
+            NativeOwnerBootstrapCoordinator coordinator,
             WorkspaceLinkRateLimiter rateLimiter,
             HttpContext context,
             CancellationToken ct) =>
@@ -30,7 +32,7 @@ internal static partial class WorkspaceAccessEndpoints
             {
                 RequireExactOrigin(context);
                 EnsureLinkRateAllowed(rateLimiter, "owner-native-passkey-bootstrap", "unclaimed", context);
-                await NativeOwnerBootstrapGate.WaitAsync(ct).ConfigureAwait(false);
+                await coordinator.Gate.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
                     string handoff = await RequireOrCreateNativeOwnerHandoffAsync(
@@ -45,7 +47,7 @@ internal static partial class WorkspaceAccessEndpoints
                 }
                 finally
                 {
-                    NativeOwnerBootstrapGate.Release();
+                    coordinator.Gate.Release();
                 }
             }).ConfigureAwait(false));
 
@@ -315,4 +317,9 @@ internal static partial class WorkspaceAccessEndpoints
     internal sealed record NativePasskeyCredentialHttpRequest(
         string CredentialJson,
         string IdempotencyKey = "");
+}
+
+internal sealed class NativeOwnerBootstrapCoordinator
+{
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
 }

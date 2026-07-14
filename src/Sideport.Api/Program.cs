@@ -492,6 +492,7 @@ if (interactiveIdentityEnabled)
     if (nativePasskeyEnabled)
     {
         string identityDatabasePath = Path.Combine(stateDirectory, "identity.db");
+        builder.Services.AddSingleton<NativeOwnerBootstrapCoordinator>();
         builder.Services.AddSideportNativePasskeys(
             identityDatabasePath,
             publicOrigin.Host);
