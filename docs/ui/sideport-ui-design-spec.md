@@ -597,6 +597,9 @@ Minimum stories:
   authority is replaced by an opaque handoff before OIDC; the actual signed-in
   account and permissions are confirmed with **Join Sideport**; expired, used,
   suspended, and Authentik-owned recovery states.
+- Passkey enrollment asks only for the person's name and email. Sideport
+  generates the provider's opaque internal username; the UI never asks a person
+  to invent one and never reuses email as an infrastructure identifier.
 - Owner claim: short-lived setup and recovery links outside the shell; no API
   key field; actual signed-in account and Owner impact confirmed before setup or
   replacement continues.

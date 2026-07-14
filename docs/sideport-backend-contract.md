@@ -137,7 +137,11 @@ its base URL, least-privilege API token, and enrollment flow are configured,
 invitation handoff offers **Create passkey** before the existing-account OIDC
 login. Authentik owns the discoverable credential, user verification, recovery,
 and cross-platform passkey ceremony. Sideport creates only the short-lived
-provider invitation and returns the browser to `/invite`; membership is still
+provider invitation, supplies a deterministic opaque 96-bit SHA-256-derived
+internal username from the invitation request key, and returns the browser to
+`/invite`. The person supplies
+only a display name and contact email; email is never reused as the Authentik
+username. Membership is still
 granted only after the resulting validated OIDC session explicitly accepts the
 Sideport invitation. A different OIDC provider works for existing-account login
 without claiming generic account provisioning or passkey enrollment.

@@ -79,8 +79,7 @@ internal sealed class AuthentikEnrollmentAdapter(
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Length > 128)
             throw new ArgumentException("A bounded enrollment request key is required.", nameof(request));
 
-        string name = $"sideport-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(request.IdempotencyKey)))[..24].ToLowerInvariant()}";
+        string name = EnrollmentNameFor(request.IdempotencyKey);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -96,13 +95,19 @@ internal sealed class AuthentikEnrollmentAdapter(
             }
 
             DateTimeOffset expiresAt = _time.GetUtcNow().Add(options.InvitationLifetime);
-            var fixedData = new Dictionary<string, object?>();
+            var fixedData = new Dictionary<string, object?>
+            {
+                // Authentik requires a username for user creation, but Sideport
+                // identities are passkey-first and users should never invent an
+                // infrastructure identifier. The invitation name is already a
+                // deterministic, opaque hash of the bounded idempotency key.
+                ["username"] = name,
+            };
             if (!string.IsNullOrWhiteSpace(request.DisplayName))
                 fixedData["name"] = request.DisplayName;
             if (!string.IsNullOrWhiteSpace(request.ContactEmail))
             {
                 fixedData["email"] = request.ContactEmail;
-                fixedData["username"] = request.ContactEmail;
             }
             var fixedDataJson = new JsonObject();
             foreach ((string key, object? value) in fixedData)
@@ -175,6 +180,10 @@ internal sealed class AuthentikEnrollmentAdapter(
     private static AuthentikEnrollmentException Unavailable() => new(
         "authentik-enrollment-unavailable",
         "Authentik could not create a passkey enrollment link.");
+
+    internal static string EnrollmentNameFor(string idempotencyKey) =>
+        $"sideport-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(idempotencyKey)))[..24].ToLowerInvariant()}";
 
     private sealed record AuthentikInvitationCreated(
         [property: JsonPropertyName("pk")] Guid Pk,
