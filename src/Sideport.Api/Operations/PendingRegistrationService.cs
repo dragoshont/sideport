@@ -110,19 +110,43 @@ public sealed class PendingRegistrationService(
                 string.Equals(app.BundleId, selected.BundleId, StringComparison.Ordinal));
             if (existing is not null)
             {
-                bool replay = existing.IsPendingInstall &&
+                bool sameSelection =
                     string.Equals(existing.CatalogAppId, selected.Id, StringComparison.OrdinalIgnoreCase) &&
                     existing.CatalogVersion == selected.CatalogVersion &&
                     string.Equals(existing.CatalogSha256, selected.Sha256, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(existing.AppleId, apple.AppleId, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(existing.TeamId, apple.TeamId, StringComparison.Ordinal);
-                return replay
-                    ? new CatalogAppRegistrationResult(ToDto(existing), Created: false)
-                    : Reject(
-                        existing.IsPendingInstall ? "pending-registration-conflict" : "registration-already-active",
-                        existing.IsPendingInstall
-                            ? "A different pending selection already owns this app and iPhone."
-                            : "This app is already active on the selected iPhone.");
+                if (sameSelection)
+                    return new CatalogAppRegistrationResult(ToDto(existing), Created: false);
+
+                bool upgradesActiveSelection = !existing.IsPendingInstall &&
+                    string.Equals(existing.CatalogAppId, selected.Id, StringComparison.OrdinalIgnoreCase) &&
+                    selected.CatalogVersion > (existing.CatalogVersion ?? 0) &&
+                    !string.Equals(existing.CatalogSha256, selected.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(existing.AppleId, apple.AppleId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(existing.TeamId, apple.TeamId, StringComparison.Ordinal);
+                if (upgradesActiveSelection)
+                {
+                    string upgradedIpaPath = await ipaStore.StoreAsync(
+                        deviceUdid,
+                        selected.BundleId,
+                        selected.IpaPath,
+                        ct).ConfigureAwait(false);
+                    AppRegistration upgraded = existing with
+                    {
+                        InputIpaPath = upgradedIpaPath,
+                        CatalogVersion = selected.CatalogVersion,
+                        CatalogSha256 = selected.Sha256,
+                    };
+                    await registry.UpsertAsync(upgraded, ct).ConfigureAwait(false);
+                    return new CatalogAppRegistrationResult(ToDto(upgraded), Created: false);
+                }
+
+                return Reject(
+                    existing.IsPendingInstall ? "pending-registration-conflict" : "registration-already-active",
+                    existing.IsPendingInstall
+                        ? "A different pending selection already owns this app and iPhone."
+                        : "This app is already active on the selected iPhone with different catalog or signing lineage.");
             }
 
             int used = registrations.Count(app =>
