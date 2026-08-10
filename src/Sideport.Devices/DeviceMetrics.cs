@@ -155,7 +155,7 @@ public sealed class DeviceMetrics
 
     private static void AppendProfileShapeWarnings(StringBuilder text, Dictionary<string, long> metrics)
     {
-        text.AppendLine("# HELP sideport_device_provisioning_profile_shape_warnings_total Provisioning-profile nodes that were not returned as Data by misagent.");
+        text.AppendLine("# HELP sideport_device_provisioning_profile_shape_warnings_total Unsupported provisioning-profile node shapes returned by misagent.");
         text.AppendLine("# TYPE sideport_device_provisioning_profile_shape_warnings_total counter");
         foreach ((string nodeType, long count) in metrics.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
