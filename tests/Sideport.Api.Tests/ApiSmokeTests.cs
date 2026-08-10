@@ -303,7 +303,7 @@ public class ApiSmokeTests
     }
 
     [Fact]
-    public async Task VerifyExistingRegistration_RejectsPendingOrUnacceptedRegistrationBeforeQueueing()
+    public async Task VerifyExistingRegistration_RejectsUnacceptedRegistrationBeforeQueueing()
     {
         string dir = TestDir();
         const string bundleId = "com.example.verificationblocked";
@@ -325,9 +325,9 @@ public class ApiSmokeTests
         HttpResponseMessage pending = await client.PostAsJsonAsync(
             $"/api/apps/TEST-UDID/{bundleId}/verify",
             new { idempotencyKey = "verify-pending" });
-        Assert.Equal(HttpStatusCode.Conflict, pending.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, pending.StatusCode);
         Assert.Equal(
-            "registration-pending-install",
+            "device-not-accepted",
             ((await pending.Content.ReadFromJsonAsync<OperationErrorDto>())!).error);
 
         await registry.UpsertAsync(new AppRegistration(
@@ -344,6 +344,52 @@ public class ApiSmokeTests
             "device-not-accepted",
             ((await unaccepted.Content.ReadFromJsonAsync<OperationErrorDto>())!).error);
         Assert.Empty(await factory.Services.GetRequiredService<OperationStore>().ListAsync(limit: null));
+    }
+
+    [Fact]
+    public async Task VerifyExistingRegistration_ActivatesInstalledPendingRegistrationOverWifi()
+    {
+        string dir = TestDir();
+        const string bundleId = "com.example.pendingwifi";
+        string ipaPath = WriteTestIpa(dir, bundleId, "Pending Wi-Fi", "1", "1.0");
+        var controller = new ExistingInstallDeviceController(
+            "TEST-UDID",
+            bundleId,
+            "1.0",
+            connection: DeviceConnection.Wifi);
+        using var factory = Factory(
+            apiToken: "s3cr3t-token",
+            stateDirectory: Path.Combine(dir, "state"),
+            deviceController: controller);
+        using HttpClient client = HttpsTokenClient(factory);
+        await factory.Services.GetRequiredService<IAppRegistry>().UpsertAsync(new AppRegistration(
+            bundleId,
+            "developer@example.com",
+            "TEAMID1234",
+            "TEST-UDID",
+            ipaPath,
+            Lifecycle: "pending-install"));
+        await AcceptKnownDeviceAsync(factory, "TEST-UDID");
+
+        HttpResponseMessage queued = await client.PostAsJsonAsync(
+            $"/api/apps/TEST-UDID/{bundleId}/verify",
+            new { idempotencyKey = "verify-pending-wifi" });
+
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        OperationRecordDto initial = (await queued.Content.ReadFromJsonAsync<OperationRecordDto>())!;
+        OperationRecordDto terminal = await WaitForTerminalOperationAsync(client, initial.operationId);
+        Assert.True(
+            string.Equals(terminal.status, "succeeded", StringComparison.Ordinal),
+            $"{terminal.error?.code}: {terminal.error?.message}");
+        Assert.Equal("1.0", terminal.result?.version);
+        Assert.NotNull(terminal.result?.expiresAt);
+        Assert.Equal(1, controller.InstalledAppReads);
+        Assert.Equal(0, controller.InstallCalls);
+
+        AppRegistration registration = (await factory.Services.GetRequiredService<IAppRegistry>()
+            .FindAsync("TEST-UDID", bundleId))!;
+        Assert.Equal("active", registration.Lifecycle);
+        Assert.Equal(initial.operationId, registration.LastVerifiedOperationId);
     }
 
     [Theory]
@@ -4515,7 +4561,8 @@ public class ApiSmokeTests
         DateTimeOffset? signatureExpiresAt = null,
         bool installed = true,
         Exception? listException = null,
-        Exception? trustException = null) : IDeviceController
+        Exception? trustException = null,
+        DeviceConnection connection = DeviceConnection.Usb) : IDeviceController
     {
         private int _installCalls;
         private int _installedAppReads;
@@ -4537,9 +4584,9 @@ public class ApiSmokeTests
                 "Existing iPhone",
                 "iPhone15,2",
                 "18.5",
-                DeviceConnection.Usb,
+                connection,
                 "trusted",
-                "Lockdown session verified over USB.",
+                $"Lockdown session verified over {connection}.",
                 DateTimeOffset.UtcNow,
                 UsableForInstall: true)]);
         }
@@ -4553,9 +4600,9 @@ public class ApiSmokeTests
                 throw new InvalidOperationException("device unavailable");
             return Task.FromResult(new DeviceTrustProbe(
                 udid,
-                DeviceConnection.Usb,
+                connection,
                 "trusted",
-                "Lockdown session verified over USB.",
+                $"Lockdown session verified over {connection}.",
                 DateTimeOffset.UtcNow,
                 UsableForInstall: true));
         }
