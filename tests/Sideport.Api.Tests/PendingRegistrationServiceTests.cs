@@ -5,6 +5,7 @@ using Sideport.Api.AppleAccess;
 using Sideport.Api.Catalog;
 using Sideport.Api.DeviceInventory;
 using Sideport.Api.Operations;
+using Sideport.DeveloperApi.Packaging;
 using Sideport.Orchestrator;
 
 namespace Sideport.Api.Tests;
@@ -94,6 +95,65 @@ public sealed class PendingRegistrationServiceTests : IDisposable
         Assert.DoesNotContain(_directory, response.RootElement.GetRawText(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CreateAsync_AdoptsNewerCatalogVersionForActiveSameApp()
+    {
+        string sourceV1 = WriteIpa(Path.Combine(_directory, "source-v1.ipa"), "1.0");
+        string catalogPath = Path.Combine(_directory, "catalog.json");
+        var catalog = new FileAppCatalog(new AppCatalogOptions(
+            catalogPath,
+            Path.Combine(_directory, "catalog-imports"),
+            MaxUploadBytes: 64 * 1024 * 1024,
+            Seeds: [new AppCatalogSeed(CatalogAppId, "Sample App", sourceV1, BundleId, "Test app")]));
+        var registry = new InMemoryAppRegistry();
+        var knownDevices = new KnownDeviceStore(Path.Combine(_directory, "known-devices.json"));
+        await knownDevices.UpsertAsync(AcceptedDevice());
+        var personalApple = new FakePersonalAppleAccess(new PersonalAppleInstallContext(
+            AppleId,
+            AccountProfileId,
+            TeamId,
+            Now));
+        var ipaStore = new IpaStore(Path.Combine(_directory, "registration-ipas"));
+        var service = new PendingRegistrationService(
+            registry,
+            catalog,
+            new Lazy<IPersonalAppleAccess>(() => personalApple),
+            knownDevices,
+            ipaStore);
+        var request = new CatalogAppRegistrationRequest(CatalogAppId, DeviceUdid, AccountProfileId);
+        CatalogAppRegistrationResult initial = await service.CreateAsync(request);
+        AppRegistration activeV1 = (await registry.FindAsync(DeviceUdid, BundleId))! with
+        {
+            Lifecycle = "active",
+            ActivatedAt = Now,
+            LastVerifiedOperationId = "op_verified_v1",
+        };
+        await registry.UpsertAsync(activeV1);
+
+        string sourceV2 = WriteIpa(Path.Combine(_directory, "source-v2.ipa"), "2.0");
+        CatalogAppDto catalogV2 = await catalog.InspectAndStoreAsync(new CatalogInspectRequest(
+            sourceV2,
+            CatalogAppId,
+            "Sample App",
+            "Test app v2"));
+        CatalogAppRegistrationResult upgraded = await service.CreateAsync(request);
+
+        Assert.False(upgraded.Created);
+        Assert.NotNull(upgraded.Registration);
+        Assert.Equal(catalogV2.CatalogVersion, upgraded.Registration.CatalogVersion);
+        Assert.Equal(catalogV2.Sha256, upgraded.Registration.CatalogSha256);
+        Assert.Equal("active", upgraded.Registration.Lifecycle);
+        Assert.Equal("op_verified_v1", upgraded.Registration.LastVerifiedOperationId);
+
+        AppRegistration stored = (await registry.FindAsync(DeviceUdid, BundleId))!;
+        Assert.Equal("active", stored.Lifecycle);
+        Assert.Equal("op_verified_v1", stored.LastVerifiedOperationId);
+        Assert.Equal(catalogV2.CatalogVersion, stored.CatalogVersion);
+        Assert.Equal(catalogV2.Sha256, stored.CatalogSha256);
+        Assert.True(File.Exists(stored.InputIpaPath));
+        Assert.Equal("2.0", IpaInspector.Inspect(stored.InputIpaPath).ShortVersion);
+    }
+
     public void Dispose()
     {
         try
@@ -127,7 +187,7 @@ public sealed class PendingRegistrationServiceTests : IDisposable
             LockdownCheckedAt: Now,
             UsableForInstall: true);
 
-    private static string WriteIpa(string path)
+    private static string WriteIpa(string path, string version = "1.0")
     {
         using FileStream stream = File.Create(path);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
@@ -140,7 +200,7 @@ public sealed class PendingRegistrationServiceTests : IDisposable
               <key>CFBundleDisplayName</key><string>Sample App</string>
               <key>CFBundleExecutable</key><string>Sample</string>
               <key>CFBundleVersion</key><string>1</string>
-              <key>CFBundleShortVersionString</key><string>1.0</string>
+              <key>CFBundleShortVersionString</key><string>{{version}}</string>
             </dict></plist>
             """);
         target.Write(plist);
