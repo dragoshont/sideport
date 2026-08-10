@@ -942,15 +942,6 @@ public sealed class OperationService(
                     "registration-not-found",
                     "No Sideport registration exists for this iPhone and bundle ID.");
             }
-            if (registration.IsPendingInstall)
-            {
-                return new VerifyExistingRegistrationSubmissionResult(
-                    null,
-                    Created: false,
-                    "registration-pending-install",
-                    "Use the install flow to finish this pending app registration.");
-            }
-
             (string? expectedVersion, OperationIssueDto? artifactError) = InspectRegistrationArtifact(registration);
             if (artifactError is not null)
             {
@@ -988,8 +979,8 @@ public sealed class OperationService(
                     "Another operation still owns or has unresolved state for this iPhone.");
             }
 
-            (string? deviceError, string? deviceMessage) =
-                await ValidateInstallDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
+            (string? deviceError, string? deviceMessage, _) =
+                await ValidateRefreshDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
             if (deviceError is not null)
             {
                 return new VerifyExistingRegistrationSubmissionResult(
@@ -1030,7 +1021,7 @@ public sealed class OperationService(
                         "succeeded",
                         now,
                         now,
-                        "The active registration and trusted USB iPhone are ready for verification."),
+                        "The saved registration and trusted iPhone are ready for verification."),
                     new OperationStageDto(
                         "verify",
                         "Verify existing app",
@@ -2035,7 +2026,7 @@ public sealed class OperationService(
             }
 
             AppRegistration? registration = await registry.FindAsync(deviceUdid, bundleId, ct).ConfigureAwait(false);
-            if (registration is null || registration.IsPendingInstall || !VerificationTargetMatches(record.Target, registration))
+            if (registration is null || !VerificationTargetMatches(record.Target, registration))
             {
                 await FailExistingRegistrationVerificationAsync(
                     operationId,
@@ -2062,8 +2053,8 @@ public sealed class OperationService(
 
             if (!await EnsureExecutionAuthorizedAsync(record, "verify", ct).ConfigureAwait(false))
                 return;
-            (string? deviceError, string? deviceMessage) =
-                await ValidateInstallDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
+            (string? deviceError, string? deviceMessage, _) =
+                await ValidateRefreshDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
             if (deviceError is not null)
             {
                 await FailExistingRegistrationVerificationAsync(
@@ -3257,7 +3248,7 @@ public sealed class OperationService(
             record.Target.DeviceUdid,
             record.Target.BundleId,
             ct).ConfigureAwait(false);
-        if (registration is null || registration.IsPendingInstall || !VerificationTargetMatches(record.Target, registration))
+        if (registration is null || !VerificationTargetMatches(record.Target, registration))
         {
             await BlockExistingVerificationFinalizationAsync(
                 record.OperationId,
