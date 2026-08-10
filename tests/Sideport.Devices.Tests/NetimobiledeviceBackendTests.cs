@@ -2,7 +2,9 @@ using System.Net;
 using Netimobiledevice.Exceptions;
 using Netimobiledevice.Lockdown;
 using Netimobiledevice.Lockdown.Pairing;
+using Netimobiledevice.Plist;
 using Sideport.Core;
+using Sideport.DeveloperApi.Packaging;
 
 namespace Sideport.Devices.Tests;
 
@@ -95,5 +97,58 @@ public class NetimobiledeviceBackendTests
         Assert.Equal("error", result.TrustState);
         Assert.False(result.UsableForInstall);
         Assert.DoesNotContain(udid, result.TrustReason!);
+    }
+
+    [Fact]
+    public void ProvisioningProfileBytes_DictionaryNode_RoundTripsAsBareMobileProvision()
+    {
+        DateTime expiry = new(2027, 8, 10, 10, 41, 36, DateTimeKind.Utc);
+        var profile = new DictionaryNode
+        {
+            { "Name", new StringNode("Aletheia Development") },
+            { "ExpirationDate", new DateNode(expiry) },
+            { "TeamIdentifier", new ArrayNode { new StringNode("TEAMID") } },
+            { "Entitlements", new DictionaryNode {
+                { "application-identifier", new StringNode("TEAMID.ro.hont.aletheia") },
+            } },
+        };
+
+        byte[] bytes = NetimobiledeviceBackend.ProvisioningProfileBytes(profile);
+        ProvisioningProfileInfo parsed = MobileProvision.Parse(bytes);
+
+        Assert.Equal("Aletheia Development", parsed.Name);
+        Assert.Equal(expiry, parsed.ExpirationDate.UtcDateTime);
+        Assert.True(parsed.CoversBundle("ro.hont.aletheia"));
+    }
+
+    [Fact]
+    public void ProvisioningProfileBytes_DataNode_PreservesExactBytes()
+    {
+        byte[] original = [0, 1, 2, 3, 255];
+
+        byte[] converted = NetimobiledeviceBackend.ProvisioningProfileBytes(new DataNode(original));
+
+        Assert.Same(original, converted);
+    }
+
+    [Fact]
+    public void ProvisioningProfileBytes_UnsupportedNode_Throws()
+    {
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+            NetimobiledeviceBackend.ProvisioningProfileBytes(new StringNode("unsupported")));
+
+        Assert.Contains("String", error.Message);
+    }
+
+    [Fact]
+    public void NormalizeProfileDate_UsesUtcForLocalAndUnspecifiedValues()
+    {
+        DateTime local = new(2027, 8, 10, 10, 41, 36, DateTimeKind.Local);
+        DateTime unspecified = new(2027, 8, 10, 10, 41, 36, DateTimeKind.Unspecified);
+
+        Assert.Equal(local.ToUniversalTime(), NetimobiledeviceBackend.NormalizeProfileDate(local));
+        Assert.Equal(DateTimeKind.Utc, NetimobiledeviceBackend.NormalizeProfileDate(local).Kind);
+        Assert.Equal(DateTime.SpecifyKind(unspecified, DateTimeKind.Utc),
+                     NetimobiledeviceBackend.NormalizeProfileDate(unspecified));
     }
 }

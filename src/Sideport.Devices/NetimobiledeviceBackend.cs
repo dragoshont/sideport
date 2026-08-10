@@ -138,7 +138,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             {
                 try
                 {
-                    result.Add(profile.AsDataNode().Value);
+                    result.Add(ProvisioningProfileBytes(profile));
                 }
                 catch (Exception ex)
                 {
@@ -462,6 +462,44 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
 
     private static string ProfileNodeType(PropertyNode node) =>
         node.GetType().Name.Replace("Node", "", StringComparison.OrdinalIgnoreCase);
+
+    internal static byte[] ProvisioningProfileBytes(PropertyNode profile) => profile switch
+    {
+        DataNode data => data.Value,
+        DictionaryNode dictionary => SerializeProvisioningProfileDictionary(dictionary),
+        _ => throw new InvalidDataException($"Unsupported provisioning-profile node: {ProfileNodeType(profile)}"),
+    };
+
+    private static byte[] SerializeProvisioningProfileDictionary(DictionaryNode profile)
+    {
+        NormalizeProfileDates(profile);
+        return PropertyList.SaveAsByteArray(profile, PlistFormat.Xml);
+    }
+
+    private static void NormalizeProfileDates(PropertyNode node)
+    {
+        switch (node)
+        {
+            case DateNode date:
+                date.Value = NormalizeProfileDate(date.Value);
+                break;
+            case DictionaryNode dictionary:
+                foreach (PropertyNode value in dictionary.Values)
+                    NormalizeProfileDates(value);
+                break;
+            case ArrayNode array:
+                foreach (PropertyNode value in array)
+                    NormalizeProfileDates(value);
+                break;
+        }
+    }
+
+    internal static DateTime NormalizeProfileDate(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
 
     private LockdownClient CreateLockdown(UsbmuxdDevice mux)
     {
