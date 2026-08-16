@@ -2825,6 +2825,7 @@ app.MapPost("/api/operations/preflight", async (
             request.AccountProfileId,
             allowOwnerManagedAppleAuthority:
                 principal.Kind != WorkspaceRequestPrincipalKind.Family,
+            allowWifiFirstInstall: request.AllowWifiFirstInstall && principal.Kind != WorkspaceRequestPrincipalKind.Family,
             ct: ct);
         return principal.Kind == WorkspaceRequestPrincipalKind.Family
             ? Results.Ok(FamilyResourceProjections.Preflight(preflight))

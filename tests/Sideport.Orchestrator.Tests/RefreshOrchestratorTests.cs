@@ -63,6 +63,26 @@ public class RefreshOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshAsync_RequiredConnectionReachesDeviceMutation()
+    {
+        await RegisterAsync();
+        RefreshOrchestrator orchestrator = Build();
+        RefreshExecutionPolicy policy = RefreshExecutionPolicy.OwnerManaged with
+        {
+            RequiredInstallConnection = DeviceConnection.Wifi,
+        };
+
+        RefreshResult result = await orchestrator.RefreshAsync(
+            "UDID-1",
+            "com.example.app",
+            policy);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(DeviceConnection.Wifi, _devices.RequiredInstallConnection);
+        Assert.Single(_devices.Installs);
+    }
+
+    [Fact]
     public async Task RefreshAsync_RemovesTransientSigningInputsAfterUse()
     {
         await RegisterAsync();

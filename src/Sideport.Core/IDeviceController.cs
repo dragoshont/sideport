@@ -4,7 +4,7 @@ namespace Sideport.Core;
 /// Device transport seam (design §6). Backed by a vendored, pinned build of
 /// <c>artehe/Netimobiledevice</c> (MIT) — usbmux + lockdown + pairing +
 /// <c>installation_proxy</c> + <c>misagent</c>. Replaces the entire
-/// libimobiledevice family. Wi-Fi/mDNS discovery is an open spike (design §6).
+/// libimobiledevice family and supports previously paired Wi-Fi connections.
 /// </summary>
 public interface IDeviceController
 {
@@ -23,8 +23,16 @@ public interface IDeviceController
         string udid, CancellationToken ct = default) =>
         ListInstalledAppsAsync(udid, ct);
 
-    /// <summary>Install (or upgrade) an IPA onto a device.</summary>
-    Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default);
+    /// <summary>
+    /// Install (or upgrade) an IPA. When <paramref name="requiredConnection"/>
+    /// is set, implementations must use exactly that authorized transport and
+    /// must not fall back to another connection.
+    /// </summary>
+    Task InstallAsync(
+        string udid,
+        string ipaPath,
+        CancellationToken ct = default,
+        DeviceConnection? requiredConnection = null);
 
     /// <summary>
     /// Run a connectivity self-test of the device transport chain
@@ -73,8 +81,8 @@ public enum DeviceConnection { Usb, Wifi }
 /// Result of a passive lockdown check. <paramref name="TrustState"/> is one of
 /// <c>trusted</c>, <c>untrusted</c>, <c>locked</c>, <c>error</c>, or
 /// <c>unknown</c>. <paramref name="UsableForInstall"/> describes whether the
-/// current trusted transport can run an existing managed install/refresh; a
-/// first install still requires the caller to additionally require USB.
+/// current trusted transport can run an install or refresh. First-install
+/// callers separately authorize and bind USB or paired Wi-Fi.
 /// </summary>
 public sealed record DeviceTrustProbe(
     string Udid,

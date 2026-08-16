@@ -14,6 +14,7 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
     public Dictionary<string, int> ListInstalledAppsCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> ListProvisioningProfilesCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Exception? ThrowOnInstall { get; set; }
+    public DeviceConnection? RequiredInstallConnection { get; private set; }
     public int PairCalls { get; private set; }
     public int ProbeTrustCalls { get; private set; }
     public Dictionary<string, DeviceTrustProbe> TrustByUdid { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -36,10 +37,16 @@ internal sealed class FakeDeviceBackend : IDeviceBackend
             ProfilesByUdid.TryGetValue(udid, out List<byte[]>? p) ? p : []);
     }
 
-    public Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct)
+    public Task InstallAsync(
+        string udid,
+        string ipaPath,
+        IProgress<int>? progress,
+        CancellationToken ct,
+        DeviceConnection? requiredConnection = null)
     {
         if (ThrowOnInstall is not null)
             throw ThrowOnInstall;
+        RequiredInstallConnection = requiredConnection;
         Installs.Add((udid, ipaPath));
         return Task.CompletedTask;
     }

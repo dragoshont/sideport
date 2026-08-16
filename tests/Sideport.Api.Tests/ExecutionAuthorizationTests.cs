@@ -507,7 +507,11 @@ public sealed class ExecutionAuthorizationTests : IDisposable
             return Task.FromResult<IReadOnlyList<InstalledApp>>([]);
         }
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)
+        public Task InstallAsync(
+            string udid,
+            string ipaPath,
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
             InstallCalls++;
             return Task.CompletedTask;

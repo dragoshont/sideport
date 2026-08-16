@@ -726,7 +726,7 @@ public sealed class DeviceEnrollmentTests : IDisposable
         public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default) => Task.CompletedTask;
+        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default, DeviceConnection? requiredConnection = null) => Task.CompletedTask;
 
         public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>
             Task.FromResult(new DeviceDiagnostics("ok", []));

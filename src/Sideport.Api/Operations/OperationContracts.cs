@@ -26,7 +26,8 @@ public sealed record OperationPreflightRequest(
     string BundleId,
     bool FinishOnboarding = false,
     string? CatalogAppId = null,
-    string? AccountProfileId = null);
+    string? AccountProfileId = null,
+    bool AllowWifiFirstInstall = false);
 
 public sealed record OperationPreflightCheckDto(
     string Code,
@@ -90,7 +91,8 @@ public sealed record FirstInstallRequest(
     string? BundleId = null,
     string? PreflightId = null,
     string? PlanVersion = null,
-    bool ConfirmedPlannedMutations = false);
+    bool ConfirmedPlannedMutations = false,
+    bool AllowWifiFirstInstall = false);
 
 public sealed record InstallOperationIntentDto(
     string DeviceUdid,
@@ -104,7 +106,9 @@ public sealed record InstallOperationIntentDto(
     string? InventoryVersion = null,
     bool ConfirmedPlannedMutations = false,
     int? CatalogVersion = null,
-    string? CatalogSha256 = null);
+    string? CatalogSha256 = null,
+    bool AllowWifiFirstInstall = false,
+    string? InstallConnection = null);
 
 public sealed record SigningCutoverIntentDto(
     string CurrentAccountProfileId,

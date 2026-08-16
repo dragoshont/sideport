@@ -61,7 +61,6 @@ const dragosFixtures: SideportReadModel = {
     },
   },
 }
-
 const iPhoneSoundStory = fn((cue: IPhoneSoundCue) => cue)
 
 const workflowSteps = (completeThrough: 'server' | 'apple-signer' | 'device' | 'app' | 'install' | 'ready') => {
@@ -296,6 +295,11 @@ const readyForAppOnboardingData: SideportReadModel = {
   },
 }
 
+const wifiReadyForAppOnboardingData: SideportReadModel = {
+  ...readyForAppOnboardingData,
+  devices: [fixtures.devices[0]],
+}
+
 const readyForDeviceOnboardingData: SideportReadModel = {
   ...readyForAppOnboardingData,
   devices: [],
@@ -355,6 +359,14 @@ const completedOnboardingData: SideportReadModel = {
     displayName: { value: 'Cert Clock', source: 'demo' },
     version: { value: '0.1.0', source: 'demo' },
   }],
+}
+
+const wifiOnlyInstallData: SideportReadModel = {
+  ...completedOnboardingData,
+  devices: [fixtures.devices[0]],
+  installedApps: [],
+  apps: [],
+  operations: [],
 }
 
 const terminalLineageOperationId = 'op-onboarding-terminal-lineage'
@@ -650,7 +662,7 @@ export const OnboardingInstallStartsInline: Story = {
       if (payload.catalogAppId !== fixtures.catalogApps[0].id || payload.accountProfileId !== 'demo-personal-account') throw new Error('The selected catalog app and Apple account were not bound to the install.')
       return installStarted(payload)
     },
-    readOperationService: async (operationId) => ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', preflightId: 'install_preflight_story', planVersion: 'sha256:storybook-plan', finishOnboarding: true, confirmedPlannedMutations: true, idempotencyKey: 'story' }), operationId, status: 'succeeded', stages: [{ id: 'verify', label: 'Verify on iPhone', status: 'succeeded', message: 'Verified.' }] }),
+    readOperationService: async (operationId) => ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', preflightId: 'install_preflight_story', planVersion: 'sha256:storybook-plan', finishOnboarding: true, confirmedPlannedMutations: true, allowWifiFirstInstall: false, idempotencyKey: 'story' }), operationId, status: 'succeeded', stages: [{ id: 'verify', label: 'Verify on iPhone', status: 'succeeded', message: 'Verified.' }] }),
   },
   play: async ({ canvasElement }) => {
     savePendingOnboardingStory.mockClear()
@@ -662,11 +674,65 @@ export const OnboardingInstallStartsInline: Story = {
     const installPanel = within(canvas.getByTestId('runtime-onboarding-panel-install'))
     await expect(await installPanel.findByRole('button', { name: 'Install and finish' })).toBeEnabled()
     await expect(savePendingOnboardingStory).toHaveBeenCalledWith({ catalogAppId: fixtures.catalogApps[0].id, deviceUdid: fixtures.devices[1].udid, accountProfileId: 'demo-personal-account', lifecycle: 'pending-install' })
-    await expect(preflightOnboardingStory).toHaveBeenCalledWith({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', finishOnboarding: true })
+    await expect(preflightOnboardingStory).toHaveBeenCalledWith({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', finishOnboarding: true, allowWifiFirstInstall: false })
     await expect(savePendingOnboardingStory.mock.invocationCallOrder[0]).toBeLessThan(preflightOnboardingStory.mock.invocationCallOrder[0])
     await userEvent.click(installPanel.getByRole('button', { name: 'Install and finish' }))
     await expect(await installPanel.findByText('Verify on iPhone')).toBeVisible()
     await expect(canvas.getByRole('heading', { name: 'Install' })).toBeVisible()
+  },
+}
+
+export const OnboardingInstallOverTrustedWifi: Story = {
+  name: 'First Run - explicit trusted Wi-Fi install',
+  args: {
+    data: wifiReadyForAppOnboardingData,
+    apiStatus: { ...interactiveOnboardingStatus, baseUrl: 'storybook://onboarding-wifi-install' },
+    initialRoute: 'home',
+    registerPendingAppService: fn(savePendingStoryApp),
+    preflightInstallService: fn(async (payload) => {
+      if (!payload.allowWifiFirstInstall) throw new Error('Onboarding Wi-Fi consent must be bound to preflight.')
+      return {
+        ...installPreflightReady,
+        warnings: [{ code: 'wifi-first-install-usb-retry', message: 'If Wi-Fi cannot finish, Sideport stops; reconnect USB and review a new plan.' }],
+        plannedMutations: ['Install and verify over paired Wi-Fi without changing transports'],
+      }
+    }),
+    installAppService: fn(async (payload) => {
+      if (!payload.allowWifiFirstInstall) throw new Error('Onboarding Wi-Fi consent must be bound to install.')
+      return installStarted(payload)
+    }),
+    readOperationService: fn(async (operationId) => ({
+      ...installStarted({
+        deviceUdid: fixtures.devices[0].udid,
+        bundleId: 'com.example.certcountdown',
+        catalogAppId: fixtures.catalogApps[0].id,
+        accountProfileId: 'demo-personal-account',
+        preflightId: 'install_preflight_story',
+        planVersion: 'sha256:storybook-plan',
+        finishOnboarding: true,
+        confirmedPlannedMutations: true,
+        allowWifiFirstInstall: true,
+        idempotencyKey: 'onboarding-wifi-story',
+      }),
+      operationId,
+      status: 'running',
+    })),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+    const appPanel = within(canvas.getByTestId('runtime-onboarding-panel-app'))
+    await userEvent.click(appPanel.getAllByRole('radio')[0])
+    await userEvent.click(appPanel.getByRole('button', { name: /Continue to install/ }))
+
+    const installPanel = within(canvas.getByTestId('runtime-onboarding-panel-install'))
+    const consent = installPanel.getByRole('checkbox', { name: /Install over this trusted Wi-Fi connection/ })
+    await expect(consent).not.toBeChecked()
+    await userEvent.click(consent)
+    await waitFor(() => expect(args.preflightInstallService).toHaveBeenCalledWith(expect.objectContaining({ allowWifiFirstInstall: true })))
+    const installButton = await installPanel.findByRole('button', { name: 'Install and finish' })
+    await expect(installButton).toBeEnabled()
+    await userEvent.click(installButton)
+    await expect(args.installAppService).toHaveBeenCalledWith(expect.objectContaining({ allowWifiFirstInstall: true }))
   },
 }
 
@@ -806,13 +872,13 @@ export const InstallAppOneAction: Story = {
       if (payload.finishOnboarding) throw new Error('A signed-in install must not finish onboarding.')
       return installStarted(payload)
     },
-    readOperationService: async (operationId) => ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', preflightId: 'install_preflight_story', planVersion: 'sha256:storybook-plan', finishOnboarding: false, confirmedPlannedMutations: true, idempotencyKey: 'story' }), operationId, status: 'running' }),
+    readOperationService: async (operationId) => ({ ...installStarted({ deviceUdid: fixtures.devices[1].udid, bundleId: 'com.example.certcountdown', catalogAppId: fixtures.catalogApps[0].id, accountProfileId: 'demo-personal-account', preflightId: 'install_preflight_story', planVersion: 'sha256:storybook-plan', finishOnboarding: false, confirmedPlannedMutations: true, allowWifiFirstInstall: false, idempotencyKey: 'story' }), operationId, status: 'running' }),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByRole('heading', { name: 'Install an app on your iPhone' })).toBeVisible()
     await expect(canvas.getByText('Example Personal Team')).toBeVisible()
-    await expect(canvas.getByText(/does not switch this install to Wi-Fi/)).toBeVisible()
+    await expect(canvas.getByText(/most reliable first install/)).toBeVisible()
     await expect(canvas.queryByLabelText('Apple ID')).not.toBeInTheDocument()
     await expect(canvas.queryByLabelText('Team ID')).not.toBeInTheDocument()
     await expect(canvas.queryByText('Server IPA path')).not.toBeInTheDocument()
@@ -820,6 +886,56 @@ export const InstallAppOneAction: Story = {
     await expect(await canvas.findByText('Sideport is signing, installing, and verifying the app.')).toBeVisible()
     await expect(canvas.getByRole('button', { name: 'Installing…' })).toBeDisabled()
     await expect(canvas.queryByText('Installed — you can unplug')).not.toBeInTheDocument()
+  },
+}
+export const InstallAppOverTrustedWifi: Story = {
+  name: 'Install app - explicit trusted Wi-Fi consent',
+  args: {
+    data: wifiOnlyInstallData,
+    apiStatus: { ...completedOnboardingStatus, baseUrl: 'storybook://wifi-first-install' },
+    initialRoute: 'install-app',
+    registerPendingAppService: fn(savePendingStoryApp),
+    preflightInstallService: fn(async (payload) => {
+      if (!payload.allowWifiFirstInstall) throw new Error('Wi-Fi consent must be bound to preflight.')
+      return {
+        ...installPreflightReady,
+        warnings: [{ code: 'wifi-first-install-usb-retry', message: 'If Wi-Fi cannot finish, Sideport stops; reconnect USB and review a new plan.' }],
+        plannedMutations: ['Sign the selected IPA', 'Install and verify over paired Wi-Fi without changing transports'],
+      }
+    }),
+    installAppService: fn(async (payload) => {
+      if (!payload.allowWifiFirstInstall) throw new Error('Wi-Fi consent must be bound to install.')
+      return installStarted(payload)
+    }),
+    readOperationService: fn(async (operationId) => ({
+      ...installStarted({
+        deviceUdid: fixtures.devices[0].udid,
+        bundleId: 'com.example.certcountdown',
+        catalogAppId: fixtures.catalogApps[0].id,
+        accountProfileId: 'demo-personal-account',
+        preflightId: 'install_preflight_story',
+        planVersion: 'sha256:storybook-plan',
+        finishOnboarding: false,
+        confirmedPlannedMutations: true,
+        allowWifiFirstInstall: true,
+        idempotencyKey: 'wifi-story',
+      }),
+      operationId,
+      status: 'running',
+    })),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+    const consent = canvas.getByRole('checkbox', { name: /Install over this trusted Wi-Fi connection/ })
+    await expect(consent).not.toBeChecked()
+    await expect(canvas.getByRole('button', { name: 'Check install' })).toBeDisabled()
+
+    await userEvent.click(consent)
+    await waitFor(() => expect(args.preflightInstallService).toHaveBeenCalledWith(expect.objectContaining({ allowWifiFirstInstall: true })))
+    const installButton = await canvas.findByRole('button', { name: 'Install app' })
+    await expect(installButton).toBeEnabled()
+    await userEvent.click(installButton)
+    await expect(args.installAppService).toHaveBeenCalledWith(expect.objectContaining({ allowWifiFirstInstall: true }))
   },
 }
 export const InstallAppReloadResume: Story = {

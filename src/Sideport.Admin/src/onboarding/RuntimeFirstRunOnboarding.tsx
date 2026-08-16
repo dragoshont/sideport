@@ -73,6 +73,8 @@ export interface RuntimeFirstRunOnboardingProps {
   appleContent?: ReactNode
   selectedCatalogAppId?: string
   onSelectedCatalogAppChange?: (catalogAppId: string) => void
+  allowWifiFirstInstall?: boolean
+  onAllowWifiFirstInstallChange?: (allowed: boolean) => void
   onPrepareInstall: (catalogAppId: string) => void
   onInstallApp: (catalogAppId: string) => void
   onReconcileInstall: () => void
@@ -244,6 +246,8 @@ export function RuntimeFirstRunOnboarding({
   appleContent,
   selectedCatalogAppId,
   onSelectedCatalogAppChange,
+  allowWifiFirstInstall = false,
+  onAllowWifiFirstInstallChange,
   onPrepareInstall,
   onInstallApp,
   onReconcileInstall,
@@ -319,6 +323,8 @@ export function RuntimeFirstRunOnboarding({
   const receiptDeviceUdid = completionReceipt?.deviceUdid ?? completionReceipt?.registrationKey.deviceUdid
   const device = deviceForApp(data, selectedApp, receiptDeviceUdid)
   const connectedToUsb = Boolean(device && device.connection === 'usb' && device.usableForInstall !== false)
+  const wifiFirstInstall = Boolean(device && device.connection === 'wifi' && device.usableForInstall !== false)
+  const installConnectionReady = connectedToUsb || (wifiFirstInstall && allowWifiFirstInstall)
   const selectedTeam = data.personalApple.teams.find((team) => team.teamId === data.personalApple.selectedTeamId)
   const workflowInstallStep = workflow?.steps.find((step) => step.id === 'install')
   const workflowInstallOperationId = workflowInstallStep?.activeOperationId ?? null
@@ -369,13 +375,13 @@ export function RuntimeFirstRunOnboarding({
     if (activeStage === 'install' && installRequestError) errorSummaryRef.current?.focus()
   }, [activeStage, installRequestError])
 
-  const installTargetKey = selectedApp && device ? `${device.udid}:${selectedApp.expectedBundleId}` : ''
+  const installTargetKey = selectedApp && device ? `${device.udid}:${selectedApp.expectedBundleId}:${wifiFirstInstall && allowWifiFirstInstall}` : ''
   useEffect(() => {
-    if (activeStage !== 'install' || !installTargetKey || !connectedToUsb || !canRunInstall || workflowInstallOperationId || operationActive || installOperation || installPreflight || installRequestPending || installRequestError) return
+    if (activeStage !== 'install' || !installTargetKey || !installConnectionReady || !canRunInstall || workflowInstallOperationId || operationActive || installOperation || installPreflight || installRequestPending || installRequestError) return
     if (autoPreparedTargetRef.current === installTargetKey) return
     autoPreparedTargetRef.current = installTargetKey
     onPrepareInstall(selectedApp!.id)
-  }, [activeStage, canRunInstall, connectedToUsb, installOperation, installPreflight, installRequestError, installRequestPending, installTargetKey, onPrepareInstall, operationActive, selectedApp, workflowInstallOperationId])
+  }, [activeStage, canRunInstall, installConnectionReady, installOperation, installPreflight, installRequestError, installRequestPending, installTargetKey, onPrepareInstall, operationActive, selectedApp, workflowInstallOperationId])
 
   const completedCount = LIVE_STAGES.filter((stage) => stepState(stage.id) === 'complete').length
   const activeIndex = LIVE_STAGES.findIndex((stage) => stage.id === activeStage)
@@ -444,7 +450,7 @@ export function RuntimeFirstRunOnboarding({
         ]} />}
         {!deviceComplete && <p className="spo-friendly-note"><RefreshCw size={17} /> Keep this page open. Sideport checks for progress automatically; you do not need to confirm that you tapped Trust.</p>}
         {!deviceComplete && <details className="spo-inline-details"><summary>If Sideport still cannot see the iPhone</summary><p>Try another data-capable cable or a different USB port, connect directly instead of through a hub, unlock the iPhone, then unplug and reconnect it. If the iPhone never appears on the host, the cable or USB port is not carrying data.</p></details>}
-        {deviceComplete && device && !connectedToUsb && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Reconnect USB before Install</strong><span>The iPhone is already accepted, but Sideport requires a direct USB connection for the first install.</span></div></div>}
+        {deviceComplete && device && !connectedToUsb && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Paired Wi-Fi is available</strong><span>You can reconnect USB, or explicitly confirm the paired Wi-Fi connection during Install.</span></div></div>}
         <div className="spo-iphone-guide"><strong>Before the first app</strong><ol><li>Open Settings → Privacy &amp; Security → Developer Mode.</li><li>Turn it on and restart the iPhone.</li><li>Unlock, tap Enable, enter the passcode, and reconnect USB if needed.</li></ol></div>
       </div>
     )
@@ -463,7 +469,7 @@ export function RuntimeFirstRunOnboarding({
       </div>
     )
   } else if (activeStage === 'install') {
-    const canPrepare = Boolean(selectedApp && device && connectedToUsb && canRunInstall)
+    const canPrepare = Boolean(selectedApp && device && installConnectionReady && canRunInstall)
     if (finalizationRecovery) {
       primaryLabel = finalizationPending ? 'Finishing setup…' : 'Retry finishing setup'
       primaryDisabled = finalizationPending || !canCompleteOnboarding
@@ -495,14 +501,15 @@ export function RuntimeFirstRunOnboarding({
     }
     body = (
       <div className="spo-live-stage">
-        <div className="spo-stage-intro"><span className="spo-stage-icon"><RefreshCw size={21} /></span><div><h3>{finalizationRecovery ? 'Finish setup safely' : operationActive && installOperation?.type === 'reconcile' ? 'Checking the iPhone' : operationActive ? 'Installing your app' : 'Review the install'}</h3><p>Keep USB connected. Sideport checks the plan, signs and installs the app, verifies it on the iPhone, then enables automatic refresh.</p></div></div>
-        <div className="spo-install-summary"><span><small>iPhone</small><strong>{device?.name ?? 'Connect an iPhone first'}</strong></span><span><small>App</small><strong>{selectedApp?.name ?? 'Choose an app first'}</strong></span><span><small>Apple team</small><strong>{selectedTeam?.name ?? 'Connect Apple first'}</strong></span><span><small>First install</small><strong>{connectedToUsb ? 'USB connected' : 'USB required'}</strong></span></div>
-        {!canPrepare && !installOperation && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Finish the earlier requirement</strong><span>Sideport needs the server workflow, an accepted iPhone connected by USB, a ready app, and server permission to install.</span></div></div>}
+        <div className="spo-stage-intro"><span className="spo-stage-icon"><RefreshCw size={21} /></span><div><h3>{finalizationRecovery ? 'Finish setup safely' : operationActive && installOperation?.type === 'reconcile' ? 'Checking the iPhone' : operationActive ? 'Installing your app' : 'Review the install'}</h3><p>Keep the confirmed connection active. Sideport checks the plan, signs and installs the app, verifies it on the iPhone, then enables automatic refresh.</p></div></div>
+        <div className="spo-install-summary"><span><small>iPhone</small><strong>{device?.name ?? 'Connect an iPhone first'}</strong></span><span><small>App</small><strong>{selectedApp?.name ?? 'Choose an app first'}</strong></span><span><small>Apple team</small><strong>{selectedTeam?.name ?? 'Connect Apple first'}</strong></span><span><small>First install</small><strong>{connectedToUsb ? 'USB connected' : wifiFirstInstall && allowWifiFirstInstall ? 'Wi-Fi confirmed' : 'Confirmation required'}</strong></span></div>
+        {wifiFirstInstall && !installOperation && <label className="spo-confirm-row"><input checked={allowWifiFirstInstall} onChange={(event) => onAllowWifiFirstInstallChange?.(event.currentTarget.checked)} type="checkbox" /><span>Install over this trusted Wi-Fi connection. Keep the iPhone awake. If it cannot finish, Sideport stops; reconnect USB and review a new plan before retrying.</span></label>}
+        {!canPrepare && !installOperation && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Finish the earlier requirement</strong><span>Sideport needs the server workflow, an accepted iPhone over USB or confirmed paired Wi-Fi, a ready app, and server permission to install.</span></div></div>}
         {installPreflight && <section className="spo-runtime-preflight" aria-label="Install checks"><div className={`spo-live-callout ${installPreflight.ready ? 'success' : 'warning'}`}>{installPreflight.ready ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}<div><strong>{installPreflight.ready ? 'Ready to install' : 'Install is blocked'}</strong><span>{installPreflight.ready ? 'The server rechecked the Apple signer, iPhone, IPA, limits, and automatic refresh plan.' : 'Fix the items below, then check again.'}</span></div></div>{installPreflight.blockers.map((item) => <div className="spo-preflight-item blocked" key={item.code}><XCircle size={17} /><span><strong>{item.message}</strong>{item.detail && <small>{item.detail}</small>}</span></div>)}{installPreflight.warnings.map((item) => <div className="spo-preflight-item warning" key={item.code}><AlertTriangle size={17} /><span><strong>{item.message}</strong>{item.detail && <small>{item.detail}</small>}</span></div>)}{installPreflight.scarceLimits.map((limit) => <div className="spo-preflight-item" key={limit.code}><Package size={17} /><span><strong>{limit.label}</strong><small>{limit.used} of {limit.limit} in use</small></span></div>)}{installPreflight.plannedMutations.length > 0 && <details className="spo-inline-details"><summary>What Sideport will do</summary><ul>{installPreflight.plannedMutations.map((mutation) => <li key={mutation}>{mutation}</li>)}</ul></details>}</section>}
         {installOperation?.stages?.length ? <ol className="spo-runtime-operation-stages" aria-label="Installation progress">{installOperation.stages.map((stage) => <li className={stage.status ?? 'pending'} key={stage.id ?? stage.label}><span>{stage.status === 'succeeded' ? <CheckCircle2 size={16} /> : stage.status === 'failed' || stage.status === 'blocked' ? <XCircle size={16} /> : <RefreshCw className={stage.status === 'running' ? 'stage-spin' : ''} size={16} />}</span><div><strong>{stage.label ?? stage.id?.replaceAll('-', ' ') ?? 'Install stage'}</strong><small>{stage.error?.message ?? stage.message ?? stateLabel(stage.status === 'succeeded' ? 'complete' : stage.status === 'running' ? 'in-progress' : stage.status === 'failed' || stage.status === 'blocked' ? 'blocked' : 'not-started')}</small></div></li>)}</ol> : null}
         {finalizationRecovery && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>The app is already verified</strong><span>Retry resumes activation, automatic refresh, and the completion receipt. It does not sign or install the app again.{!canCompleteOnboarding ? ' This session cannot finish onboarding.' : ''}</span></div></div>}
         {terminalFinalizationBlock && <div className="spo-live-callout warning"><XCircle size={20} /><div><strong>Saved setup evidence no longer matches</strong><span>Sideport will not reuse stale app, Apple-team, or profile evidence. Review the current plan before installing again.</span></div></div>}
-        {unknownInstall && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Check before trying again</strong><span>Sideport will only read the installed bundle, version, and profile over USB. It will not pair, sign, or install during this check.</span></div></div>}
+        {unknownInstall && <div className="spo-live-callout warning"><AlertTriangle size={20} /><div><strong>Check before trying again</strong><span>Sideport will only read the installed bundle, version, and profile over the trusted connection. It will not pair, sign, or install during this check.</span></div></div>}
         {installPollError && <p className="mutation-message error" role="status">The install is still being tracked. {installPollError}</p>}
         {(installRequestError || operationMessage(installOperation)) && <p className="mutation-message error" id="runtime-install-error-summary" ref={errorSummaryRef} role="alert" tabIndex={-1}>{installRequestError ?? operationMessage(installOperation)}</p>}
       </div>

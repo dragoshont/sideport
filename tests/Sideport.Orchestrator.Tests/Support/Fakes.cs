@@ -102,6 +102,7 @@ internal sealed class FakeDeviceController : IDeviceController
     public Exception? ThrowOnInstall { get; set; }
     public TaskCompletionSource? InstallCompletion { get; set; }
     public bool CompleteInstallWhenCanceled { get; set; }
+    public DeviceConnection? RequiredInstallConnection { get; private set; }
 
     public Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<DeviceInfo>>([]);
@@ -109,10 +110,15 @@ internal sealed class FakeDeviceController : IDeviceController
     public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-    public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)
+    public Task InstallAsync(
+        string udid,
+        string ipaPath,
+        CancellationToken ct = default,
+        DeviceConnection? requiredConnection = null)
     {
         if (ThrowOnInstall is not null)
             throw ThrowOnInstall;
+        RequiredInstallConnection = requiredConnection;
         Installs.Add((udid, ipaPath));
         if (CompleteInstallWhenCanceled && InstallCompletion is not null)
         {

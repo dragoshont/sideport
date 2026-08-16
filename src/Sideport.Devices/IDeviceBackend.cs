@@ -26,7 +26,12 @@ internal interface IDeviceBackend
     Task<IReadOnlyList<byte[]>> ListProvisioningProfilesAsync(string udid, CancellationToken ct);
 
     /// <summary>Install (or upgrade) an IPA already validated by the controller.</summary>
-    Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct);
+    Task InstallAsync(
+        string udid,
+        string ipaPath,
+        IProgress<int>? progress,
+        CancellationToken ct,
+        DeviceConnection? requiredConnection = null);
 
     /// <summary>
     /// Probe the device transport: whether the usbmux socket is reachable and,

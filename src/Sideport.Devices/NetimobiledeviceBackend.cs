@@ -156,9 +156,14 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         }
     }
 
-    public async Task InstallAsync(string udid, string ipaPath, IProgress<int>? progress, CancellationToken ct)
+    public async Task InstallAsync(
+        string udid,
+        string ipaPath,
+        IProgress<int>? progress,
+        CancellationToken ct,
+        DeviceConnection? requiredConnection = null)
     {
-        using LockdownClient lockdown = CreateLockdown(udid);
+        using LockdownClient lockdown = CreateLockdown(udid, requiredConnection);
         using var installProxy = new InstallationProxyService(lockdown, _logger);
         await installProxy.Install(ipaPath, ct, options: null, progress).ConfigureAwait(false);
     }
@@ -439,22 +444,47 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
     /// against the host's existing pairing record — is the only path that
     /// completes the trusted handshake.
     /// </summary>
-    private LockdownClient CreateLockdown(string udid)
+    private LockdownClient CreateLockdown(string udid, DeviceConnection? requiredConnection = null)
     {
-        return CreateLockdown(FindPreferredMuxDevice(udid));
+        return CreateLockdown(FindPreferredMuxDevice(udid, requiredConnection));
     }
 
-    private static UsbmuxdDevice FindPreferredMuxDevice(string udid)
+    private static UsbmuxdDevice FindPreferredMuxDevice(
+        string udid,
+        DeviceConnection? requiredConnection = null)
     {
         List<UsbmuxdDevice> matches = Usbmux.GetDeviceList()
             .Where(d => string.Equals(d.Serial, udid, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        // Prefer USB (the daemon proxies it reliably); fall back to Wi-Fi.
-        UsbmuxdDevice? mux = matches.FirstOrDefault(d => d.ConnectionType != UsbmuxdConnectionType.Network)
-                             ?? matches.FirstOrDefault();
+        DeviceConnection? selectedConnection = SelectInstallConnection(
+            matches.Select(mux => mux.ConnectionType == UsbmuxdConnectionType.Network
+                ? DeviceConnection.Wifi
+                : DeviceConnection.Usb),
+            requiredConnection);
+        UsbmuxdDevice? mux = selectedConnection switch
+        {
+            DeviceConnection.Usb => matches.FirstOrDefault(d => d.ConnectionType != UsbmuxdConnectionType.Network),
+            DeviceConnection.Wifi => matches.FirstOrDefault(d => d.ConnectionType == UsbmuxdConnectionType.Network),
+            _ => null,
+        };
         if (mux is null)
-            throw new InvalidOperationException("The requested iPhone is not currently reachable over usbmux.");
+        {
+            string connection = requiredConnection?.ToString() ?? "USB or paired Wi-Fi";
+            throw new InvalidOperationException($"The requested iPhone is not currently reachable over {connection}.");
+        }
         return mux;
+    }
+
+    internal static DeviceConnection? SelectInstallConnection(
+        IEnumerable<DeviceConnection> availableConnections,
+        DeviceConnection? requiredConnection)
+    {
+        HashSet<DeviceConnection> available = [.. availableConnections];
+        if (requiredConnection is { } required)
+            return available.Contains(required) ? required : null;
+        if (available.Contains(DeviceConnection.Usb))
+            return DeviceConnection.Usb;
+        return available.Contains(DeviceConnection.Wifi) ? DeviceConnection.Wifi : null;
     }
 
     private static string ConnectionLabel(UsbmuxdDevice mux) =>

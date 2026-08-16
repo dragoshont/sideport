@@ -493,6 +493,21 @@ public class NetimobiledeviceControllerTests
     }
 
     [Fact]
+    public async Task Install_RequiredConnectionIsBoundToBackend()
+    {
+        string dir = NewDir();
+        try
+        {
+            string ipa = DeviceFixtures.WriteMinimalIpa(dir, "com.example.wifi");
+            await Build().InstallAsync("UDID-1", ipa, requiredConnection: DeviceConnection.Wifi);
+
+            Assert.Equal(DeviceConnection.Wifi, _backend.RequiredInstallConnection);
+            Assert.Single(_backend.Installs);
+        }
+        finally { Cleanup(dir); }
+    }
+
+    [Fact]
     public async Task Install_MissingFile_ThrowsFileNotFound()
     {
         await Assert.ThrowsAsync<FileNotFoundException>(

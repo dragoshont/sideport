@@ -101,6 +101,7 @@ export interface InstallOperationPayload {
   planVersion: string
   finishOnboarding: boolean
   confirmedPlannedMutations: boolean
+  allowWifiFirstInstall: boolean
   idempotencyKey: string
 }
 
@@ -110,6 +111,7 @@ export interface InstallPreflightPayload {
   catalogAppId: string
   accountProfileId: string
   finishOnboarding: boolean
+  allowWifiFirstInstall: boolean
 }
 
 export interface OnboardingCompletionPayload {

@@ -1376,7 +1376,8 @@ public class ApiSmokeTests
             "TEST-UDID",
             bundleId,
             "1.0",
-            signatureExpiresAt: expiry);
+            signatureExpiresAt: expiry,
+            connection: DeviceConnection.Wifi);
         using var factory = Factory(
             apiToken: "s3cr3t-token",
             stateDirectory: stateDir,
@@ -1428,7 +1429,8 @@ public class ApiSmokeTests
             FinishOnboarding: true,
             RegistrationKey: $"TEST-UDID:{bundleId}",
             CatalogVersion: catalogApp.CatalogVersion,
-            CatalogSha256: catalogApp.Sha256);
+            CatalogSha256: catalogApp.Sha256,
+            AllowWifiFirstInstall: true);
         var unknownIssue = new Sideport.Api.Operations.OperationIssueDto(
             "install-outcome-unknown",
             "The original install outcome is unknown.");
@@ -1673,6 +1675,171 @@ public class ApiSmokeTests
             Assert.False(preflight.ready);
             Assert.Contains(preflight.blockers, blocker => blocker.code == "apple-authentication-stale");
         }
+    }
+
+    [Fact]
+    public async Task FirstInstall_ExplicitWifiConsentIsPlanBoundAndPersisted()
+    {
+        string dir = TestDir();
+        const string bundleId = "com.example.wifi-consent";
+        string ipaPath = WriteTestIpa(dir, bundleId, "WiFi Consent", "1", "1.0");
+        var controller = new FirstInstallDeviceController(
+            "TEST-UDID",
+            bundleId,
+            connection: DeviceConnection.Wifi);
+        using var factory = Factory(
+            apiToken: "s3cr3t-token",
+            seedCatalogPath: ipaPath,
+            personalAppleId: "developer@example.com",
+            personalApplePassword: "configured-host-secret",
+            personalApplePortal: new StubApplePortal(),
+            deviceController: controller,
+            schedulerEnabled: true);
+        using HttpClient client = HttpsTokenClient(factory);
+        string profile = await PrepareAppleTeamAsync(client);
+        await AcceptKnownDeviceAsync(factory, "TEST-UDID");
+
+        OperationPreflightDto preflight = await GetInstallPreflightAsync(
+            client,
+            "TEST-UDID",
+            bundleId,
+            finishOnboarding: false,
+            accountProfileId: profile,
+            allowWifiFirstInstall: true);
+
+        Assert.True(preflight.ready, string.Join("; ", preflight.blockers.Select(blocker => blocker.code)));
+        Assert.NotNull(preflight.warnings);
+        Assert.Contains(preflight.warnings!, warning => warning.code == "wifi-first-install-usb-retry");
+        Assert.Contains(preflight.plannedMutations, mutation => mutation.Contains("paired Wi-Fi", StringComparison.Ordinal));
+
+        var mismatched = new ConfirmedInstallRequestDto(
+            "TEST-UDID",
+            bundleId,
+            "cert-clock",
+            profile,
+            preflight.preflightId!,
+            preflight.planVersion!,
+            finishOnboarding: false,
+            confirmedPlannedMutations: true,
+            idempotencyKey: "wifi-consent-mismatch",
+            allowWifiFirstInstall: false);
+        HttpResponseMessage rejected = await client.PostAsJsonAsync("/api/operations/install", mismatched);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        OperationErrorDto stale = (await rejected.Content.ReadFromJsonAsync<OperationErrorDto>())!;
+        Assert.Equal("install-preflight-stale", stale.error);
+        Assert.Equal(0, controller.InstallCalls);
+
+        ConfirmedInstallRequestDto confirmed = await ConfirmedInstallRequestAsync(
+            client,
+            "TEST-UDID",
+            bundleId,
+            profile,
+            finishOnboarding: false,
+            idempotencyKey: "wifi-consent-install",
+            allowWifiFirstInstall: true);
+        HttpResponseMessage queued = await client.PostAsJsonAsync("/api/operations/install", confirmed);
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        OperationRecordDto initial = (await queued.Content.ReadFromJsonAsync<OperationRecordDto>())!;
+        Assert.True(initial.installIntent?.allowWifiFirstInstall);
+        Assert.Equal("wifi", initial.installIntent?.installConnection);
+
+        OperationRecordDto terminal = await WaitForTerminalOperationAsync(client, initial.operationId);
+        Assert.Equal("succeeded", terminal.status);
+        Assert.True(terminal.installIntent?.allowWifiFirstInstall);
+        Assert.Equal(1, controller.InstallCalls);
+        Assert.Equal(DeviceConnection.Wifi, controller.RequiredInstallConnection);
+    }
+
+    [Fact]
+    public async Task FirstInstall_WifiConfirmationRejectsUsbAppearingBeforeExecution()
+    {
+        string dir = TestDir();
+        const string bundleId = "com.example.wifi-drift";
+        string ipaPath = WriteTestIpa(dir, bundleId, "WiFi Drift", "1", "1.0");
+        var controller = new FirstInstallDeviceController(
+            "TEST-UDID",
+            bundleId,
+            connection: DeviceConnection.Wifi);
+        using var factory = Factory(
+            apiToken: "s3cr3t-token",
+            seedCatalogPath: ipaPath,
+            personalAppleId: "developer@example.com",
+            personalApplePassword: "configured-host-secret",
+            personalApplePortal: new StubApplePortal(),
+            operationWorker: false,
+            deviceController: controller,
+            schedulerEnabled: true);
+        using HttpClient client = HttpsTokenClient(factory);
+        string profile = await PrepareAppleTeamAsync(client);
+        await AcceptKnownDeviceAsync(factory, "TEST-UDID");
+        ConfirmedInstallRequestDto request = await ConfirmedInstallRequestAsync(
+            client,
+            "TEST-UDID",
+            bundleId,
+            profile,
+            finishOnboarding: false,
+            idempotencyKey: "wifi-drift",
+            allowWifiFirstInstall: true);
+
+        HttpResponseMessage queued = await client.PostAsJsonAsync("/api/operations/install", request);
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        OperationRecordDto initial = (await queued.Content.ReadFromJsonAsync<OperationRecordDto>())!;
+        Assert.Equal("wifi", initial.installIntent?.installConnection);
+
+        controller.SetConnection(DeviceConnection.Usb);
+        await factory.Services.GetRequiredService<OperationService>()
+            .ProcessQueuedOperationAsync(initial.operationId);
+
+        OperationRecordDto terminal = (await client.GetFromJsonAsync<OperationRecordDto>(
+            $"/api/operations/{initial.operationId}"))!;
+        Assert.Equal("failed", terminal.status);
+        Assert.Equal("install-connection-changed", terminal.error?.code);
+        Assert.Equal(0, controller.InstallCalls);
+        Assert.Null(controller.RequiredInstallConnection);
+    }
+
+    [Theory]
+    [InlineData("untrusted", 0, true)]
+    [InlineData("trusted", 10, true)]
+    [InlineData("trusted", 0, false)]
+    public async Task FirstInstall_WifiConsentStillRequiresFreshUsableTrust(
+        string trustState,
+        int trustAgeMinutes,
+        bool usableForInstall)
+    {
+        string dir = TestDir();
+        const string bundleId = "com.example.wifi-trust";
+        string ipaPath = WriteTestIpa(dir, bundleId, "WiFi Trust", "1", "1.0");
+        var controller = new FirstInstallDeviceController(
+            "TEST-UDID",
+            bundleId,
+            connection: DeviceConnection.Wifi,
+            trustState: trustState,
+            trustCheckedAt: DateTimeOffset.UtcNow.AddMinutes(-trustAgeMinutes),
+            usableForInstall: usableForInstall);
+        using var factory = Factory(
+            apiToken: "s3cr3t-token",
+            seedCatalogPath: ipaPath,
+            personalAppleId: "developer@example.com",
+            personalApplePassword: "configured-host-secret",
+            personalApplePortal: new StubApplePortal(),
+            deviceController: controller,
+            schedulerEnabled: true);
+        using HttpClient client = HttpsTokenClient(factory);
+        string profile = await PrepareAppleTeamAsync(client);
+        await AcceptKnownDeviceAsync(factory, "TEST-UDID");
+
+        OperationPreflightDto preflight = await GetInstallPreflightAsync(
+            client,
+            "TEST-UDID",
+            bundleId,
+            finishOnboarding: false,
+            accountProfileId: profile,
+            allowWifiFirstInstall: true);
+
+        Assert.False(preflight.ready);
+        Assert.Contains(preflight.blockers, blocker => blocker.code == "device-not-trusted");
+        Assert.Equal(0, controller.InstallCalls);
     }
 
     [Fact]
@@ -3732,7 +3899,9 @@ public class ApiSmokeTests
         string? preflightId = null,
         string? planVersion = null,
         string? inventoryVersion = null,
-        bool confirmedPlannedMutations = false);
+        bool confirmedPlannedMutations = false,
+        bool allowWifiFirstInstall = false,
+        string? installConnection = null);
     private sealed record ConfirmedInstallRequestDto(
         string deviceUdid,
         string bundleId,
@@ -3742,7 +3911,8 @@ public class ApiSmokeTests
         string planVersion,
         bool finishOnboarding,
         bool confirmedPlannedMutations,
-        string idempotencyKey);
+        string idempotencyKey,
+        bool allowWifiFirstInstall = false);
     private sealed record OperationRecordDto(
         string operationId,
         string type,
@@ -3841,7 +4011,8 @@ public class ApiSmokeTests
         string bundleId,
         bool finishOnboarding,
         string? catalogAppId = "cert-clock",
-        string? accountProfileId = null)
+        string? accountProfileId = null,
+        bool allowWifiFirstInstall = false)
     {
         HttpResponseMessage response = await client.PostAsJsonAsync("/api/operations/preflight", new
         {
@@ -3851,6 +4022,7 @@ public class ApiSmokeTests
             finishOnboarding,
             catalogAppId,
             accountProfileId,
+            allowWifiFirstInstall,
         });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<OperationPreflightDto>())!;
@@ -3863,7 +4035,8 @@ public class ApiSmokeTests
         string accountProfileId,
         bool finishOnboarding,
         string idempotencyKey,
-        string catalogAppId = "cert-clock")
+        string catalogAppId = "cert-clock",
+        bool allowWifiFirstInstall = false)
     {
         OperationPreflightDto preflight = await GetInstallPreflightAsync(
             client,
@@ -3871,7 +4044,8 @@ public class ApiSmokeTests
             bundleId,
             finishOnboarding,
             catalogAppId,
-            accountProfileId);
+            accountProfileId,
+            allowWifiFirstInstall);
         Assert.True(preflight.ready, string.Join("; ", preflight.blockers.Select(blocker => blocker.code)));
         Assert.NotNull(preflight.preflightId);
         Assert.NotNull(preflight.planVersion);
@@ -3884,7 +4058,8 @@ public class ApiSmokeTests
             preflight.planVersion!,
             finishOnboarding,
             confirmedPlannedMutations: true,
-            idempotencyKey);
+            idempotencyKey,
+            allowWifiFirstInstall);
     }
 
     private static async Task AcceptKnownDeviceAsync(
@@ -4540,7 +4715,8 @@ public class ApiSmokeTests
         public async Task InstallAsync(
             string requestedUdid,
             string ipaPath,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
             Assert.Equal(udid, requestedUdid);
             Assert.True(File.Exists(ipaPath));
@@ -4623,7 +4799,11 @@ public class ApiSmokeTests
                 _signatureExpiresAt)]);
         }
 
-        public Task InstallAsync(string requestedUdid, string ipaPath, CancellationToken ct = default)
+        public Task InstallAsync(
+            string requestedUdid,
+            string ipaPath,
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
             ct.ThrowIfCancellationRequested();
             Interlocked.Increment(ref _installCalls);
@@ -4639,28 +4819,36 @@ public class ApiSmokeTests
         string bundleId,
         bool verifyInstalled = true,
         bool reachable = true,
-        DeviceConnection connection = DeviceConnection.Usb) : IDeviceController
+        DeviceConnection connection = DeviceConnection.Usb,
+        string trustState = "trusted",
+        DateTimeOffset? trustCheckedAt = null,
+        bool usableForInstall = true) : IDeviceController
     {
         private int _installCalls;
         private int _installed;
+        private int _connection = (int)connection;
 
         public int InstallCalls => Volatile.Read(ref _installCalls);
+        public DeviceConnection? RequiredInstallConnection { get; private set; }
+        public void SetConnection(DeviceConnection nextConnection) =>
+            Volatile.Write(ref _connection, (int)nextConnection);
 
         public Task<IReadOnlyList<DeviceInfo>> ListDevicesAsync(CancellationToken ct = default)
         {
             ct.ThrowIfCancellationRequested();
             if (!reachable)
                 return Task.FromResult<IReadOnlyList<DeviceInfo>>([]);
+            DeviceConnection currentConnection = (DeviceConnection)Volatile.Read(ref _connection);
             return Task.FromResult<IReadOnlyList<DeviceInfo>>([new DeviceInfo(
                 udid,
                 "Test iPhone",
                 "iPhone15,2",
                 "18.5",
-                connection,
-                "trusted",
-                $"Lockdown session verified over {connection}.",
-                DateTimeOffset.UtcNow,
-                UsableForInstall: true)]);
+                currentConnection,
+                trustState,
+                $"Lockdown session verified over {currentConnection}.",
+                trustCheckedAt ?? DateTimeOffset.UtcNow,
+                UsableForInstall: usableForInstall)]);
         }
 
         public Task<DeviceTrustProbe> ProbeTrustAsync(string requestedUdid, CancellationToken ct = default)
@@ -4668,20 +4856,28 @@ public class ApiSmokeTests
             ct.ThrowIfCancellationRequested();
             if (!reachable || !string.Equals(requestedUdid, udid, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("device unavailable");
+            DeviceConnection currentConnection = (DeviceConnection)Volatile.Read(ref _connection);
             return Task.FromResult(new DeviceTrustProbe(
                 udid,
-                connection,
-                "trusted",
-                $"Lockdown session verified over {connection}.",
-                DateTimeOffset.UtcNow,
-                UsableForInstall: true));
+                currentConnection,
+                trustState,
+                $"Lockdown session verified over {currentConnection}.",
+                trustCheckedAt ?? DateTimeOffset.UtcNow,
+                UsableForInstall: usableForInstall));
         }
 
-        public Task InstallAsync(string requestedUdid, string ipaPath, CancellationToken ct = default)
+        public Task InstallAsync(
+            string requestedUdid,
+            string ipaPath,
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
+            RequiredInstallConnection = requiredConnection;
             ct.ThrowIfCancellationRequested();
             Assert.Equal(udid, requestedUdid);
             Assert.True(File.Exists(ipaPath));
+            if (requiredConnection is { } connectionRequirement)
+                Assert.Equal((DeviceConnection)Volatile.Read(ref _connection), connectionRequirement);
             Interlocked.Increment(ref _installCalls);
             Volatile.Write(ref _installed, 1);
             return Task.CompletedTask;
@@ -4790,7 +4986,7 @@ public class ApiSmokeTests
         public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default) => Task.CompletedTask;
+        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default, DeviceConnection? requiredConnection = null) => Task.CompletedTask;
 
         public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>
             Task.FromResult(new DeviceDiagnostics("ok", []));
@@ -4838,7 +5034,11 @@ public class ApiSmokeTests
                 return Task.FromResult<IReadOnlyList<InstalledApp>>([.. _installed.Values]);
         }
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)
+        public Task InstallAsync(
+            string udid,
+            string ipaPath,
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
             ct.ThrowIfCancellationRequested();
             IpaInfo info = IpaInspector.Inspect(ipaPath);

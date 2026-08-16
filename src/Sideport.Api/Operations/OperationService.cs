@@ -265,6 +265,7 @@ public sealed class OperationService(
         string? catalogAppId = null,
         string? accountProfileId = null,
         bool allowOwnerManagedAppleAuthority = true,
+        bool allowWifiFirstInstall = false,
         CancellationToken ct = default)
     {
         InstallPreflightBuild build = await BuildInstallPreflightAsync(
@@ -274,6 +275,7 @@ public sealed class OperationService(
             catalogAppId,
             accountProfileId,
             allowOwnerManagedAppleAuthority,
+            allowWifiFirstInstall,
             persistAuthorization: true,
             ct).ConfigureAwait(false);
         return build.Preflight;
@@ -286,6 +288,7 @@ public sealed class OperationService(
         string? requestedCatalogAppId,
         string? requestedAccountProfileId,
         bool allowOwnerManagedAppleAuthority,
+        bool allowWifiFirstInstall,
         bool persistAuthorization,
         CancellationToken ct)
     {
@@ -342,10 +345,24 @@ public sealed class OperationService(
             }
         }
 
-        (string? deviceError, string? deviceMessage) =
-            await ValidateInstallDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
+        (string? deviceError, string? deviceMessage, DeviceConnection? installConnection) =
+            await ValidateInstallDeviceAsync(deviceUdid, allowWifiFirstInstall, ct).ConfigureAwait(false);
         if (deviceError is null)
-            Passed("device", "device-ready", "The accepted iPhone is trusted and connected over USB.");
+        {
+            Passed(
+                "device",
+                "device-ready",
+                installConnection == DeviceConnection.Wifi
+                    ? "The accepted iPhone is trusted and connected over paired Wi-Fi."
+                    : "The accepted iPhone is trusted and connected over USB.");
+            if (installConnection == DeviceConnection.Wifi)
+            {
+                Warned(
+                    "device",
+                    "wifi-first-install-usb-retry",
+                    "This first install will use paired Wi-Fi. If the bounded transfer cannot complete, Sideport stops without switching connections; reconnect USB and review a new plan before retrying.");
+            }
+        }
         else
             Blocked("device", deviceError, deviceMessage!);
 
@@ -590,12 +607,15 @@ public sealed class OperationService(
             }
         }
 
+        bool usingWifiFirstInstall = deviceError is null && installConnection == DeviceConnection.Wifi;
         var plannedMutations = new List<string>
         {
             "Register the selected iPhone with Apple if needed",
             "Ensure the app identifier and provisioning profile",
             "Re-sign the selected IPA",
-            "Install and verify the app over USB",
+            usingWifiFirstInstall
+                ? "Install and verify the app over paired Wi-Fi; stop without changing transports if the bounded transfer cannot complete"
+                : "Install and verify the app over USB",
             "Activate the verified app registration",
         };
         if (string.Equals(signingImpact, "mint-new", StringComparison.Ordinal))
@@ -637,6 +657,7 @@ public sealed class OperationService(
             deviceUdid = deviceUdid.ToUpperInvariant(),
             bundleId,
             finishOnboarding,
+            allowWifiFirstInstall,
             catalog = catalogApp is null ? null : new
             {
                 catalogApp.Id,
@@ -704,7 +725,8 @@ public sealed class OperationService(
             catalogApp,
             applePreflight?.Install,
             existingRegistration,
-            registrations);
+            registrations,
+            installConnection);
 
         if (persistAuthorization)
         {
@@ -717,6 +739,8 @@ public sealed class OperationService(
                 applePreflight?.Install.AccountProfileId ?? accountProfileId,
                 finishOnboarding,
                 allowOwnerManagedAppleAuthority,
+                allowWifiFirstInstall,
+                installConnection,
                 ConsumedByIdempotencyKey: null);
         }
         return build;
@@ -1333,7 +1357,8 @@ public sealed class OperationService(
                     bundleId,
                     requestedCatalogAppId,
                     requestedAccountProfileId,
-                    request.FinishOnboarding);
+                    request.FinishOnboarding,
+                    request.AllowWifiFirstInstall);
                 if (matches && ShouldEnqueueInstall(replay))
                     queue.Enqueue(replay.OperationId);
                 return matches
@@ -1364,6 +1389,7 @@ public sealed class OperationService(
                     requestedCatalogAppId,
                     requestedAccountProfileId,
                     allowOwnerManagedAppleAuthority,
+                    request.AllowWifiFirstInstall,
                     persistAuthorization: true,
                     ct).ConfigureAwait(false);
                 return InstallPreflightStale(replacement.Preflight, "The install preflight expired or is no longer available.");
@@ -1378,7 +1404,8 @@ public sealed class OperationService(
                  string.Equals(authorization.CatalogAppId, requestedCatalogAppId, StringComparison.OrdinalIgnoreCase)) &&
                 (requestedAccountProfileId is null ||
                  string.Equals(authorization.AccountProfileId, requestedAccountProfileId, StringComparison.Ordinal)) &&
-                authorization.AllowOwnerManagedAppleAuthority == allowOwnerManagedAppleAuthority;
+                authorization.AllowOwnerManagedAppleAuthority == allowOwnerManagedAppleAuthority &&
+                authorization.AllowWifiFirstInstall == request.AllowWifiFirstInstall;
             if (!targetMatchesAuthorization ||
                 !string.Equals(authorization.Preflight.PlanVersion, confirmedPlanVersion, StringComparison.Ordinal) ||
                 authorization.ConsumedByIdempotencyKey is not null)
@@ -1390,6 +1417,7 @@ public sealed class OperationService(
                     requestedCatalogAppId,
                     requestedAccountProfileId,
                     allowOwnerManagedAppleAuthority,
+                    request.AllowWifiFirstInstall,
                     persistAuthorization: true,
                     ct).ConfigureAwait(false);
                 return InstallPreflightStale(replacement.Preflight, "The confirmed install plan no longer matches this request.");
@@ -1402,10 +1430,13 @@ public sealed class OperationService(
                 authorization.CatalogAppId,
                 authorization.AccountProfileId,
                 allowOwnerManagedAppleAuthority,
+                authorization.AllowWifiFirstInstall,
                 persistAuthorization: true,
                 ct).ConfigureAwait(false);
             if (!string.Equals(current.Preflight.PlanVersion, authorization.Preflight.PlanVersion, StringComparison.Ordinal))
                 return InstallPreflightStale(current.Preflight, "The install plan changed after it was confirmed.");
+            if (current.InstallConnection != authorization.InstallConnection)
+                return InstallPreflightStale(current.Preflight, "The confirmed iPhone connection changed before this install was queued.");
             if (!current.Preflight.Ready)
             {
                 OperationIssueDto blocker = current.Preflight.Blockers.FirstOrDefault()
@@ -1452,7 +1483,9 @@ public sealed class OperationService(
                 current.Preflight.InventoryVersion,
                 request.ConfirmedPlannedMutations,
                 CatalogVersion: catalogApp.CatalogVersion,
-                CatalogSha256: catalogApp.Sha256);
+                CatalogSha256: catalogApp.Sha256,
+                AllowWifiFirstInstall: request.AllowWifiFirstInstall,
+                InstallConnection: ConnectionName(current.InstallConnection));
             string operationId = NewOperationId(now);
             var stages = new List<OperationStageDto>
             {
@@ -1508,7 +1541,8 @@ public sealed class OperationService(
                     bundleId,
                     requestedCatalogAppId,
                     requestedAccountProfileId,
-                    request.FinishOnboarding);
+                    request.FinishOnboarding,
+                    request.AllowWifiFirstInstall);
                 if (matches && ShouldEnqueueInstall(stored))
                     queue.Enqueue(stored.OperationId);
                 return matches
@@ -1773,7 +1807,20 @@ public sealed class OperationService(
 
             if (!await EnsureExecutionAuthorizedAsync(record, "install", ct).ConfigureAwait(false))
                 return;
-            (string? DeviceError, string? DeviceMessage) = await ValidateInstallDeviceAsync(intent.DeviceUdid, ct).ConfigureAwait(false);
+            if (!TryInstallConnection(intent.InstallConnection, out DeviceConnection requiredInstallConnection))
+            {
+                await FailInstallAsync(
+                    record.OperationId,
+                    "install-intent-invalid",
+                    "The saved install connection is invalid; review a new install plan.",
+                    ct).ConfigureAwait(false);
+                return;
+            }
+            (string? DeviceError, string? DeviceMessage, DeviceConnection? installConnection) = await ValidateInstallDeviceAsync(
+                intent.DeviceUdid,
+                intent.AllowWifiFirstInstall,
+                ct,
+                requiredInstallConnection).ConfigureAwait(false);
             if (DeviceError is not null)
             {
                 await FailInstallAsync(record.OperationId, DeviceError, DeviceMessage!, ct).ConfigureAwait(false);
@@ -1797,6 +1844,11 @@ public sealed class OperationService(
             RefreshExecutionPolicy installPolicy = installExecutionDecision?.CanUseOwnerManagedAppleAuthority == false
                 ? RefreshExecutionPolicy.ExistingAuthorityOnly
                 : RefreshExecutionPolicy.OwnerManaged;
+            installPolicy = installPolicy with
+            {
+                RequiredInstallConnection = installConnection
+                    ?? throw new InvalidOperationException("A successful device validation did not select an install connection."),
+            };
             RefreshResult refresh = signerAuthorityGate is null
                 ? await orchestrator.RefreshAsync(intent.DeviceUdid, intent.BundleId, installPolicy, ct).ConfigureAwait(false)
                 : await signerAuthorityGate.RunAsync(
@@ -2313,8 +2365,11 @@ public sealed class OperationService(
 
             if (!await EnsureExecutionAuthorizedAsync(record, "verify", ct).ConfigureAwait(false))
                 return;
-            (string? deviceError, string? deviceMessage) =
-                await ValidateInstallDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
+            (string? deviceError, string? deviceMessage, _) =
+                await ValidateInstallDeviceAsync(
+                    deviceUdid,
+                    source.InstallIntent?.AllowWifiFirstInstall == true,
+                    ct).ConfigureAwait(false);
             if (deviceError is not null)
             {
                 await BlockReconciliationAsync(
@@ -3082,9 +3137,11 @@ public sealed class OperationService(
         return "healthy";
     }
 
-    private async Task<(string? Error, string? Message)> ValidateInstallDeviceAsync(
+    private async Task<(string? Error, string? Message, DeviceConnection? Connection)> ValidateInstallDeviceAsync(
         string deviceUdid,
-        CancellationToken ct)
+        bool allowWifiFirstInstall,
+        CancellationToken ct,
+        DeviceConnection? requiredConnection = null)
     {
         KnownDeviceRecord? known = await knownDevices.FindAsync(deviceUdid, ct).ConfigureAwait(false);
         if (known is null ||
@@ -3093,7 +3150,7 @@ public sealed class OperationService(
             string.IsNullOrWhiteSpace(known.AcceptedBy) ||
             string.IsNullOrWhiteSpace(known.EnrollmentOperationId))
         {
-            return ("device-not-accepted", "Add and accept this iPhone in Sideport before installing an app.");
+            return ("device-not-accepted", "Add and accept this iPhone in Sideport before installing an app.", null);
         }
 
         IReadOnlyList<DeviceInfo> reachable;
@@ -3103,20 +3160,28 @@ public sealed class OperationService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return ("device-not-reachable", "Sideport could not discover the accepted iPhone over USB.");
+            return ("device-not-reachable", "Sideport could not discover the accepted iPhone over USB or paired Wi-Fi.", null);
         }
-        DeviceInfo? usb = reachable.FirstOrDefault(device =>
-            string.Equals(device.Udid, deviceUdid, StringComparison.OrdinalIgnoreCase) &&
-            device.Connection == DeviceConnection.Usb);
-        if (usb is null)
-        {
-            bool wifiOnly = reachable.Any(device =>
+        DeviceInfo? current = reachable
+            .Where(device =>
                 string.Equals(device.Udid, deviceUdid, StringComparison.OrdinalIgnoreCase) &&
-                device.Connection == DeviceConnection.Wifi);
-            return wifiOnly
-                ? ("device-usb-required", "Connect the accepted iPhone over USB for its first install.")
-                : ("device-not-reachable", "Connect the accepted iPhone over USB, unlock it, and try again.");
+                (requiredConnection is null || device.Connection == requiredConnection))
+            .OrderBy(device => device.Connection == DeviceConnection.Usb ? 0 : 1)
+            .FirstOrDefault();
+        if (current is null)
+        {
+            if (requiredConnection is { } required && reachable.Any(device =>
+                    string.Equals(device.Udid, deviceUdid, StringComparison.OrdinalIgnoreCase)))
+            {
+                return (
+                    "install-connection-changed",
+                    $"The confirmed {ConnectionName(required)} connection changed. Review a new install plan before retrying.",
+                    null);
+            }
+            return ("device-not-reachable", "Connect the accepted iPhone over USB or paired Wi-Fi, unlock it, and try again.", null);
         }
+        if (current.Connection == DeviceConnection.Wifi && !allowWifiFirstInstall)
+            return ("device-usb-required", "Connect the accepted iPhone over USB for its first install, or explicitly confirm paired Wi-Fi installation.", current.Connection);
 
         DeviceTrustProbe trust;
         try
@@ -3125,19 +3190,49 @@ public sealed class OperationService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return ("device-trust-check-unavailable", "Sideport could not verify Trust with the accepted iPhone.");
+            return ("device-trust-check-unavailable", "Sideport could not verify Trust with the accepted iPhone.", current.Connection);
         }
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (trust.Connection != DeviceConnection.Usb)
-            return ("device-usb-required", "The current trusted connection must be USB for the first install.");
+        if (requiredConnection is { } expectedConnection && trust.Connection != expectedConnection)
+        {
+            return (
+                "install-connection-changed",
+                $"The confirmed {ConnectionName(expectedConnection)} connection changed. Review a new install plan before retrying.",
+                trust.Connection);
+        }
+        if (trust.Connection == DeviceConnection.Wifi && !allowWifiFirstInstall)
+            return ("device-usb-required", "The current trusted connection is paired Wi-Fi; explicitly confirm Wi-Fi installation or use USB.", trust.Connection);
         if (!string.Equals(trust.TrustState, "trusted", StringComparison.OrdinalIgnoreCase) ||
             !trust.UsableForInstall ||
             trust.LockdownCheckedAt > now.AddSeconds(5) ||
             now - trust.LockdownCheckedAt > TimeSpan.FromMinutes(1))
         {
-            return ("device-not-trusted", "Unlock the iPhone and complete Trust This Computer before installing.");
+            return ("device-not-trusted", "Unlock the iPhone and restore its saved Trust connection before installing.", trust.Connection);
         }
-        return (null, null);
+        return (null, null, trust.Connection);
+    }
+
+    private static string? ConnectionName(DeviceConnection? connection) => connection switch
+    {
+        DeviceConnection.Usb => "usb",
+        DeviceConnection.Wifi => "wifi",
+        _ => null,
+    };
+
+    private static bool TryInstallConnection(string? value, out DeviceConnection connection)
+    {
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "usb", StringComparison.OrdinalIgnoreCase))
+        {
+            connection = DeviceConnection.Usb;
+            return true;
+        }
+        if (string.Equals(value, "wifi", StringComparison.OrdinalIgnoreCase))
+        {
+            connection = DeviceConnection.Wifi;
+            return true;
+        }
+        connection = default;
+        return false;
     }
 
     private async Task<(string? Error, string? Message, DeviceConnection? Connection)>
@@ -4175,13 +4270,16 @@ public sealed class OperationService(
                 "A reusable persisted signing identity is required before setup can finish.");
         }
 
-        (string? deviceError, _) = await ValidateInstallDeviceAsync(intent.DeviceUdid, ct).ConfigureAwait(false);
+        (string? deviceError, _, _) = await ValidateInstallDeviceAsync(
+            intent.DeviceUdid,
+            intent.AllowWifiFirstInstall,
+            ct).ConfigureAwait(false);
         if (deviceError is not null)
         {
             return (
                 operational,
                 "onboarding-device-verification-stale",
-                "Reconnect the accepted iPhone over USB, unlock it, and retry finishing setup.");
+                "Reconnect the accepted iPhone over USB or paired Wi-Fi, unlock it, and retry finishing setup.");
         }
 
         if (intent.CatalogVersion is null ||
@@ -4322,7 +4420,8 @@ public sealed class OperationService(
         string bundleId,
         string? catalogAppId,
         string? accountProfileId,
-        bool finishOnboarding) =>
+        bool finishOnboarding,
+        bool allowWifiFirstInstall) =>
         intent is not null &&
         string.Equals(intent.DeviceUdid, deviceUdid, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(intent.BundleId, bundleId, StringComparison.Ordinal) &&
@@ -4330,7 +4429,8 @@ public sealed class OperationService(
          string.Equals(intent.CatalogAppId, catalogAppId, StringComparison.OrdinalIgnoreCase)) &&
         (accountProfileId is null ||
          string.Equals(intent.AccountProfileId, accountProfileId, StringComparison.Ordinal)) &&
-        intent.FinishOnboarding == finishOnboarding;
+        intent.FinishOnboarding == finishOnboarding &&
+        intent.AllowWifiFirstInstall == allowWifiFirstInstall;
 
     private static bool HasVerifiedInstallEvidence(OperationRecordDto record) =>
         string.Equals(record.Type, "install", StringComparison.Ordinal) &&
@@ -4459,7 +4559,8 @@ public sealed class OperationService(
         CatalogAppDto? CatalogApp,
         PersonalAppleInstallContext? Apple,
         AppRegistration? ExistingRegistration,
-        IReadOnlyList<AppRegistration> Registrations);
+        IReadOnlyList<AppRegistration> Registrations,
+        DeviceConnection? InstallConnection);
 
     private sealed record InstallPreflightAuthorization(
         OperationPreflightDto Preflight,
@@ -4469,5 +4570,7 @@ public sealed class OperationService(
         string? AccountProfileId,
         bool FinishOnboarding,
         bool AllowOwnerManagedAppleAuthority,
+        bool AllowWifiFirstInstall,
+        DeviceConnection? InstallConnection,
         string? ConsumedByIdempotencyKey);
 }

@@ -46,8 +46,9 @@ keeps verified registrations refreshed.
 - Apple passwords remain in environment/SOPS or macOS Keychain custody; browser
   APIs may handle Apple ID identifiers and 2FA codes, never passwords/keys.
 - The device controller uses managed Netimobiledevice over the host usbmux
-  socket. First installs are operationally reliable over USB; Wi-Fi bulk upload
-  is not yet an accepted path.
+  socket. First installs prefer USB; an Owner may explicitly confirm a fresh,
+  trusted paired-Wi-Fi connection per install. The worker binds that exact
+  transport through the orchestrator to the backend, which never falls back.
 - The React UI must bind to live/derived contract evidence; Storybook owns hard
   mock states before runtime integration.
 
@@ -77,11 +78,11 @@ keeps verified registrations refreshed.
 | Enumeration can currently survive lockdown failure while known-device mapping labels reachable devices trusted. | `NetimobiledeviceBackend.cs`; `KnownDeviceService.cs` | 2026-07-11 |
 | Current certificate creation revokes development certificates before minting when no usable local identity exists. | `AppleDeveloperPortal.EnsureCertificateAsync` | 2026-07-11 |
 | Phase 6 runtime onboarding persists a pending registration, runs the exact preflight/install operation, resumes reconciliation/finalization, and completes only from a durable receipt; scheduler settings are live. | `src/Sideport.Admin/src/App.tsx`; `src/Sideport.Admin/src/onboarding/RuntimeFirstRunOnboarding.tsx`; Phase 6 gate artifact | 2026-07-12 |
-| USB is the accepted install path; Wi-Fi bulk transfer can hang. | `AGENTS.md` runbook; issue #3 | 2026-07-11 |
+| First install defaults to USB and accepts paired Wi-Fi only through plan-bound Owner consent; the exact transport reaches the backend, and bounded ambiguous transfers become reconciliation-only. | `OperationService.cs`; `RefreshExecutionPolicy.cs`; `RefreshOrchestrator.cs`; `NetimobiledeviceBackend.cs`; focused API/device/orchestrator tests | 2026-08-16 |
 | Onboarding implementation plan passed backend, UI, and independent rubric review. | run `sideport-onboarding-plan-20260711`; plan hash `b0d9363a…` | 2026-07-11 |
-| The Storybook suite passes 135 render, interaction, security, and accessibility tests, including 74 focused fresh-deployment onboarding tests; desktop/mobile Playwright passes 20/20. | `FirstRunOnboardingPrototype.stories.tsx`; `SideportAdmin.stories.tsx`; Phase 6 gate artifact | 2026-07-12 |
+| Current gates pass 813 .NET tests, 110 Storybook interaction/accessibility tests, and 14 desktop/mobile Playwright screens. | `.github/workflows/ci.yml`; focused API/device/orchestrator tests; `SideportAdmin.stories.tsx` | 2026-08-16 |
 
 ## Last Reviewed
 
-2026-07-12 on the `codex/apple-like-add-flows` working tree based on
-`697646b`; validate again after any deployment or later-phase implementation.
+2026-08-16 on `feat/wifi-first-install` based on `f6133a9`; validate again
+after deployment or later transport changes.

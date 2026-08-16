@@ -269,12 +269,13 @@ function replacementInstallPreflight(error: unknown): OperationPreflightDto | nu
   return candidate as OperationPreflightDto
 }
 
-function preferredAcceptedUsbDevice(data: SideportReadModel): DeviceSummary | undefined {
+function preferredAcceptedInstallDevice(data: SideportReadModel): DeviceSummary | undefined {
   const candidates = data.devices.filter((device) =>
     device.inventoryState === 'accepted'
-    && device.connection === 'usb'
     && device.usableForInstall !== false)
-  return candidates.find((device) => device.supportedForFirstInstall) ?? candidates[0]
+  return candidates.find((device) => device.supportedForFirstInstall)
+    ?? candidates.find((device) => device.connection === 'usb')
+    ?? candidates[0]
 }
 
 function operationFailure(record: OperationRecordDto): string | null {
@@ -301,6 +302,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   const onboardingInstallKey = useMemo(() => onboardingInstallSessionKey(viewStatus.baseUrl), [viewStatus.baseUrl])
   const [submittedInstallOperationId, setSubmittedInstallOperationId] = useState<string | null>(() => readRememberedOperationId(onboardingInstallSessionKey(viewStatus.baseUrl)))
   const [onboardingPreflight, setOnboardingPreflight] = useState<OperationPreflightDto | null>(null)
+  const [onboardingAllowWifiFirstInstall, setOnboardingAllowWifiFirstInstall] = useState(false)
   const [onboardingInstallOperation, setOnboardingInstallOperation] = useState<OperationRecordDto | null>(null)
   const [ignoredInstallOperationId, setIgnoredInstallOperationId] = useState<string | null>(null)
   const [installPollError, setInstallPollError] = useState<string | null>(null)
@@ -385,7 +387,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
     setAppSelectionError(null)
     if (viewStatus.mode === 'demo') return true
     const catalogApp = catalogApps.find((app) => app.id === catalogAppId && app.status === 'ready')
-    const device = preferredAcceptedUsbDevice(viewData) ?? viewData.devices.find((candidate) => candidate.inventoryState === 'accepted')
+    const device = preferredAcceptedInstallDevice(viewData) ?? viewData.devices.find((candidate) => candidate.inventoryState === 'accepted')
     const accountProfileId = viewData.personalApple.accountProfileId?.trim() ?? ''
     if ((!catalogApp && !acceptFreshImport) || !catalogAppId.trim() || !device || !accountProfileId || !canImportCatalog) {
       setAppSelectionError('Sideport needs an accepted iPhone, connected Apple account, and permission to save this app choice.')
@@ -414,24 +416,27 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   }
   const onboardingInstallTarget = useCallback((catalogAppId: string) => {
     const catalogApp = catalogApps.find((app) => app.id === catalogAppId && app.status === 'ready')
-    const device = preferredAcceptedUsbDevice(viewData)
+    const device = preferredAcceptedInstallDevice(viewData)
+    const wifiFirstInstall = device?.connection === 'wifi'
     const selectedTeam = viewData.personalApple.teams.find((team) => team.teamId === viewData.personalApple.selectedTeamId)
     const accountProfileId = viewData.personalApple.accountProfileId?.trim() ?? ''
     const blocker = !catalogApp
       ? 'Choose an app that Sideport has inspected.'
       : !device
-        ? 'Connect an accepted iPhone by USB before the first install.'
+        ? 'Connect an accepted iPhone by USB or paired Wi-Fi before the first install.'
+        : wifiFirstInstall && !onboardingAllowWifiFirstInstall
+          ? 'Confirm this first install over paired Wi-Fi, or connect the iPhone by USB.'
         : viewData.personalApple.state !== 'authenticated' || !accountProfileId || !selectedTeam
           ? 'Finish Apple sign-in and choose a team returned by Apple.'
           : !canRunOperations
             ? 'Sign in to a protected Sideport session before installing.'
             : null
-    return { catalogApp, device, accountProfileId, blocker }
-  }, [canRunOperations, catalogApps, viewData])
+    return { catalogApp, device, accountProfileId, blocker, allowWifiFirstInstall: wifiFirstInstall && onboardingAllowWifiFirstInstall }
+  }, [canRunOperations, catalogApps, onboardingAllowWifiFirstInstall, viewData])
 
   const prepareOnboardingInstall = useCallback(async (catalogAppId: string) => {
     if (installRequestInFlightRef.current) return
-    const { catalogApp, device, accountProfileId, blocker } = onboardingInstallTarget(catalogAppId)
+    const { catalogApp, device, accountProfileId, blocker, allowWifiFirstInstall } = onboardingInstallTarget(catalogAppId)
     if (blocker || !catalogApp || !device || !accountProfileId) {
       setInstallRequestError(blocker ?? 'Sideport is missing an install requirement.')
       return
@@ -448,7 +453,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
     }
     try {
       await registerPendingApp({ catalogAppId: catalogApp.id, deviceUdid: device.udid, accountProfileId, lifecycle: 'pending-install' })
-      setOnboardingPreflight(await preflightInstall({ deviceUdid: device.udid, bundleId: catalogApp.expectedBundleId, catalogAppId: catalogApp.id, accountProfileId, finishOnboarding: true }))
+      setOnboardingPreflight(await preflightInstall({ deviceUdid: device.udid, bundleId: catalogApp.expectedBundleId, catalogAppId: catalogApp.id, accountProfileId, finishOnboarding: true, allowWifiFirstInstall }))
     } catch (reason) {
       setInstallRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.')
     } finally {
@@ -462,7 +467,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
       || workflowInstallStep?.nextAction?.action === 'retry-finalization'
       || workflowInstallStep?.nextAction?.action === 'reconcile-install'
     if (installRequestInFlightRef.current || submittedInstallOperationId || workflowBlocksNewInstall) return
-    const { catalogApp, device, accountProfileId, blocker } = onboardingInstallTarget(catalogAppId)
+    const { catalogApp, device, accountProfileId, blocker, allowWifiFirstInstall } = onboardingInstallTarget(catalogAppId)
     if (blocker || !catalogApp || !device || !accountProfileId || !onboardingPreflight?.preflightId || !onboardingPreflight.planVersion || !onboardingPreflight.ready) {
       setInstallRequestError(blocker ?? 'Review the current install checks before continuing.')
       return
@@ -481,6 +486,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
         planVersion: onboardingPreflight.planVersion,
         finishOnboarding: true,
         confirmedPlannedMutations: true,
+        allowWifiFirstInstall,
         idempotencyKey: newUiIdempotencyKey('onboarding-install'),
       })
       const failure = operationFailure(record)
@@ -642,7 +648,7 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
 
   const setupIncomplete = viewStatus.onboarding !== undefined && viewStatus.onboarding.setupState !== 'complete'
   if (setupIncomplete && setupOpen) {
-    return <><RuntimeFirstRunOnboarding apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={startOnboardingIPhone} onExit={() => setSetupOpen(false)} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />{addFlowDialogs}</>
+    return <><RuntimeFirstRunOnboarding allowWifiFirstInstall={onboardingAllowWifiFirstInstall} apiStatus={viewStatus} appSelectionError={appSelectionError} appSelectionPending={appSelectionPending} appleContent={<PersonalAppleConnectorPanel canManageSigner={canManageAppleSigner} personalApple={viewData.personalApple} />} canAddApp={canImportCatalog} canAddIPhone={canAddIPhone} canCompleteOnboarding={canCompleteOnboarding} canRunInstall={canRunOperations} data={viewData} finalizationPending={finalizationPending} installOperation={onboardingInstallOperation} installPollError={installPollError} installPreflight={onboardingPreflight} installRequestError={installRequestError} installRequestPending={installRequestPending} onAddApp={openAddApp} onAddIPhone={startOnboardingIPhone} onAllowWifiFirstInstallChange={(allowed) => { setOnboardingAllowWifiFirstInstall(allowed); setOnboardingPreflight(null); setInstallRequestError(null) }} onExit={() => setSetupOpen(false)} onInstallApp={(catalogAppId) => void startOnboardingInstall(catalogAppId)} onOpenDevice={openDevice} onPrepareInstall={(catalogAppId) => void prepareOnboardingInstall(catalogAppId)} onReconcileInstall={() => void reconcileOnboardingInstall()} onRefresh={() => void refreshAdminData()} onRetryFinalization={() => void retryOnboardingFinalization()} onSelectedCatalogAppChange={(catalogAppId) => void selectOnboardingApp(catalogAppId)} reconciliationPending={reconciliationPending} selectedCatalogAppId={selectedCatalogAppId} />{addFlowDialogs}</>
   }
 
   return (
@@ -997,9 +1003,12 @@ export function AppCatalogPage({ data, catalogApps, onInstallApp, onAddApp }: { 
 export function InstallAppPage({ data, canRunOperations, catalogApps, initialCatalogAppId, installApp, preflightInstall, readOperation, registerPendingApp, onOpenCatalog, onAddIPhone, onAddApp }: { data: SideportReadModel; canRunOperations: boolean; catalogApps: CatalogAppSummary[]; initialCatalogAppId: string; installApp: (payload: InstallOperationPayload) => Promise<OperationRecordDto>; preflightInstall: (payload: InstallPreflightPayload) => Promise<OperationPreflightDto>; readOperation: (operationId: string) => Promise<OperationRecordDto>; registerPendingApp: (payload: PendingAppRegistrationPayload) => Promise<AppRegistrationDto>; onOpenCatalog: () => void; onAddIPhone?: () => void; onAddApp?: () => void }) {
   const queryClient = useQueryClient()
   const readyApps = catalogApps.filter((app) => app.status === 'ready')
-  const usbDevices = data.devices.filter((device) => device.inventoryState === 'accepted' && device.connection === 'usb' && device.usableForInstall !== false)
+  const installDevices = data.devices
+    .filter((device) => device.inventoryState === 'accepted' && device.usableForInstall !== false && (device.connection === 'usb' || device.connection === 'wifi'))
+    .sort((left, right) => Number(right.connection === 'usb') - Number(left.connection === 'usb'))
   const [catalogAppId, setCatalogAppId] = useState(initialCatalogAppId || readyApps[0]?.id || '')
-  const [deviceUdid, setDeviceUdid] = useState((usbDevices.find((device) => device.supportedForFirstInstall) ?? usbDevices[0])?.udid ?? '')
+  const [deviceUdid, setDeviceUdid] = useState((installDevices.find((device) => device.supportedForFirstInstall) ?? installDevices[0])?.udid ?? '')
+  const [allowWifiFirstInstall, setAllowWifiFirstInstall] = useState(false)
   const [requestPending, setRequestPending] = useState(false)
   const [requestError, setRequestError] = useState<string | null>(null)
   const [preflight, setPreflight] = useState<OperationPreflightDto | null>(null)
@@ -1009,7 +1018,8 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
   const preparedTargetRef = useRef('')
   const installErrorRef = useRef<HTMLParagraphElement>(null)
   const selectedCatalogApp = readyApps.find((app) => app.id === catalogAppId) ?? readyApps[0]
-  const selectedDevice = usbDevices.find((device) => device.udid === deviceUdid) ?? usbDevices[0]
+  const selectedDevice = installDevices.find((device) => device.udid === deviceUdid) ?? installDevices[0]
+  const wifiInstall = selectedDevice?.connection === 'wifi'
   const selectedTeam = data.personalApple.teams.find((team) => team.teamId === data.personalApple.selectedTeamId)
   const accountProfileId = data.personalApple.accountProfileId?.trim() ?? ''
   const selectedDeviceRegistrations = selectedDevice ? appsForDevice(data.apps, selectedDevice.udid) : []
@@ -1053,11 +1063,12 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
   const blockers = [
     !selectedCatalogApp ? 'Add or choose an inspected app.' : null,
     !appleReady ? 'Finish Apple sign-in and choose a team returned by Apple.' : null,
-    !selectedDevice ? 'Connect an accepted iPhone by USB.' : null,
+    !selectedDevice ? 'Connect an accepted iPhone by USB or paired Wi-Fi.' : null,
+    wifiInstall && !allowWifiFirstInstall ? 'Confirm this first install over paired Wi-Fi, or connect the iPhone by USB.' : null,
     selectedDevice && !slotAvailable ? `This iPhone already uses all 3 Sideport app slots.` : null,
     !canRunOperations ? 'This protected Sideport session does not have permission to install apps.' : null,
   ].filter((blocker): blocker is string => Boolean(blocker))
-  const targetKey = selectedCatalogApp && selectedDevice ? `${selectedDevice.udid}:${selectedCatalogApp.expectedBundleId}` : ''
+  const targetKey = selectedCatalogApp && selectedDevice ? `${selectedDevice.udid}:${selectedCatalogApp.expectedBundleId}:${wifiInstall && allowWifiFirstInstall}` : ''
   const preflightReady = Boolean(preflight?.ready && preflight.preflightId && preflight.planVersion)
   const canInstall = blockers.length === 0 && preflightReady && !requestPending && !operationActive && !resumableStandaloneOperation
   const completedChimeRef = useRef<string | null>(null)
@@ -1089,7 +1100,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
     setPreflight(null)
     try {
       await registerPendingApp({ catalogAppId: selectedCatalogApp.id, deviceUdid: selectedDevice.udid, accountProfileId, lifecycle: 'pending-install' })
-      setPreflight(await preflightInstall({ deviceUdid: selectedDevice.udid, bundleId: selectedCatalogApp.expectedBundleId, catalogAppId: selectedCatalogApp.id, accountProfileId, finishOnboarding: false }))
+      setPreflight(await preflightInstall({ deviceUdid: selectedDevice.udid, bundleId: selectedCatalogApp.expectedBundleId, catalogAppId: selectedCatalogApp.id, accountProfileId, finishOnboarding: false, allowWifiFirstInstall: wifiInstall && allowWifiFirstInstall }))
     } catch (reason) {
       setRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.')
     } finally {
@@ -1110,7 +1121,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
     void Promise.resolve().then(() => {
       if (!cancelled) setRequestPending(true)
       return registerPendingApp({ catalogAppId: autoPreflightCatalogAppId, deviceUdid: autoPreflightDeviceUdid, accountProfileId, lifecycle: 'pending-install' })
-        .then(() => preflightInstall({ deviceUdid: autoPreflightDeviceUdid, bundleId: autoPreflightBundleId, catalogAppId: autoPreflightCatalogAppId, accountProfileId, finishOnboarding: false }))
+        .then(() => preflightInstall({ deviceUdid: autoPreflightDeviceUdid, bundleId: autoPreflightBundleId, catalogAppId: autoPreflightCatalogAppId, accountProfileId, finishOnboarding: false, allowWifiFirstInstall: wifiInstall && allowWifiFirstInstall }))
     })
       .then((next) => { if (!cancelled) setPreflight(next) })
       .catch((reason) => { if (!cancelled) setRequestError(reason instanceof Error ? reason.message : 'Sideport could not check this install.') })
@@ -1119,7 +1130,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
         requestInFlightRef.current = false
     })
     return () => { cancelled = true }
-  }, [accountProfileId, autoPreflightBundleId, autoPreflightCatalogAppId, autoPreflightDeviceUdid, autoPreflightEligible, preflightInstall, registerPendingApp, targetKey])
+  }, [accountProfileId, allowWifiFirstInstall, autoPreflightBundleId, autoPreflightCatalogAppId, autoPreflightDeviceUdid, autoPreflightEligible, preflightInstall, registerPendingApp, targetKey, wifiInstall])
 
   useEffect(() => {
     if (!trackedOperation?.operationId || !operationActive) return
@@ -1162,6 +1173,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
         planVersion: preflight.planVersion,
         finishOnboarding: false,
         confirmedPlannedMutations: true,
+        allowWifiFirstInstall: wifiInstall && allowWifiFirstInstall,
         idempotencyKey: newUiIdempotencyKey('install'),
       })
       setSubmittedOperation(record)
@@ -1186,7 +1198,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
       <PageHeader
         eyebrow="Install app"
         title="Install an app on your iPhone"
-        description="Choose the app and an accepted USB-connected iPhone. Sideport uses the Apple account and team you already connected."
+        description="Choose the app and an accepted iPhone. Sideport prefers USB and can use a trusted paired Wi-Fi connection when you confirm it for this install."
       />
 
       <div className="two-column-layout">
@@ -1203,29 +1215,34 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
         </Panel>
 
         <Panel title="iPhone">
-          {usbDevices.length ? (
+          {installDevices.length ? (
             <label className="form-field">
               <span>Install on</span>
-              <select onChange={(event) => { resetInstallTargetState(); setDeviceUdid(event.currentTarget.value) }} value={selectedDevice?.udid ?? ''}>
-                {usbDevices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · USB · {appsForDevice(data.apps, device.udid).length}/3 apps</option>)}
+              <select onChange={(event) => { resetInstallTargetState(); setAllowWifiFirstInstall(false); setDeviceUdid(event.currentTarget.value) }} value={selectedDevice?.udid ?? ''}>
+                {installDevices.map((device) => <option key={device.udid} value={device.udid}>{device.name} · {device.connection === 'wifi' ? 'Wi-Fi' : 'USB'} · {appsForDevice(data.apps, device.udid).length}/3 apps</option>)}
               </select>
             </label>
-          ) : <EmptyState actionLabel="Add iPhone" detail="Use an accepted iPhone connected directly to the Sideport computer." icon={Smartphone} onAction={onAddIPhone} title="USB iPhone required" />}
-          <p className="pipeline-note"><Cable size={14} /> Keep the iPhone unlocked and connected by USB. Sideport does not switch this install to Wi-Fi.</p>
+          ) : <EmptyState actionLabel="Add iPhone" detail="Use an accepted iPhone connected by USB or a saved paired Wi-Fi connection." icon={Smartphone} onAction={onAddIPhone} title="Accepted iPhone required" />}
+          {wifiInstall ? (
+            <label className="checkbox-row"><input checked={allowWifiFirstInstall} onChange={(event) => { resetInstallTargetState(); setAllowWifiFirstInstall(event.currentTarget.checked) }} type="checkbox" /><span>Install over this trusted Wi-Fi connection. Keep the iPhone awake. If it cannot finish, Sideport stops; reconnect USB and review a new plan before retrying.</span></label>
+          ) : (
+            <p className="pipeline-note"><Cable size={14} /> Keep the iPhone unlocked and connected by USB for the most reliable first install.</p>
+          )}
         </Panel>
       </div>
 
       <Panel title="Ready to install">
         <div className="facts-grid">
           <FactTile label="App" source={selectedCatalogApp?.source ?? 'planned'} value={selectedCatalogApp?.name ?? 'Choose an app'} />
-          <FactTile label="iPhone" source={selectedDevice ? 'live' : 'planned'} value={selectedDevice?.name ?? 'Connect USB'} />
+          <FactTile label="iPhone" source={selectedDevice ? 'live' : 'planned'} value={selectedDevice ? `${selectedDevice.name} · ${selectedDevice.connection === 'wifi' ? 'Wi-Fi' : 'USB'}` : 'Connect iPhone'} />
           <FactTile label="Apple Developer Team" source={selectedTeam ? data.personalApple.source : 'planned'} value={selectedTeam?.name ?? 'Finish Apple setup'} />
           <FactTile label="Sideport slots" source="derived" value={selectedDevice ? `${selectedDeviceRegistrations.length}/3 used` : 'Unknown'} />
         </div>
 
         <PreflightList items={[
           ['IPA inspected and ready', Boolean(selectedCatalogApp), selectedCatalogApp?.source ?? 'planned'],
-          ['Accepted iPhone connected by USB', Boolean(selectedDevice), selectedDevice ? 'live' : 'planned'],
+          ['Accepted iPhone connection ready', Boolean(selectedDevice), selectedDevice ? 'live' : 'planned'],
+          ['Wi-Fi first install confirmed when required', !wifiInstall || allowWifiFirstInstall, wifiInstall ? 'live' : 'derived'],
           ['Apple account and returned team connected', appleReady, data.personalApple.source],
           ['App slot available', slotAvailable, 'derived'],
           ['Permission to install', canRunOperations, 'live'],
@@ -1245,7 +1262,7 @@ export function InstallAppPage({ data, canRunOperations, catalogApps, initialCat
           <button aria-describedby={requestError ? 'standalone-install-error-summary' : undefined} className="primary-action" disabled={operationActive || requestPending || (preflight ? !canInstall : blockers.length > 0)} onClick={() => void (preflight ? submitInstall() : prepareInstall())} type="button"><Play size={16} /> {requestPending ? preflight ? 'Starting install…' : 'Checking install…' : operationActive ? 'Installing…' : preflight ? 'Install app' : 'Check install'}</button>
         </div>
 
-        <details className="add-flow-advanced"><summary>Technical details</summary><p>Sideport resolves the managed artifact and selected Apple account on the server, creates the device registration if needed, signs the app, installs over USB, then verifies the bundle and provisioning profile on the iPhone.</p></details>
+        <details className="add-flow-advanced"><summary>Technical details</summary><p>Sideport resolves the managed artifact and selected Apple account on the server, creates the device registration if needed, signs the app, installs over the confirmed connection, then verifies the bundle and provisioning profile on the iPhone.</p></details>
       </Panel>
 
       {trackedOperation?.stages?.length ? <SigningPipeline title="Install progress" stages={trackedOperation.stages.map((stage) => ({ id: stage.id ?? 'stage', label: stage.label ?? stage.id ?? 'Stage', state: stage.status === 'succeeded' ? 'done' : stage.status === 'running' ? 'active' : stage.status === 'failed' || stage.status === 'blocked' ? 'failed' : 'pending', detail: stage.error?.message ?? stage.message ?? '' }))} /> : null}

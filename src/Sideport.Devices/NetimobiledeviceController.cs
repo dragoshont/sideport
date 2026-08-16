@@ -279,7 +279,11 @@ public sealed class NetimobiledeviceController : IDeviceController
         }
     }
 
-    public async Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)
+    public async Task InstallAsync(
+        string udid,
+        string ipaPath,
+        CancellationToken ct = default,
+        DeviceConnection? requiredConnection = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(udid);
         ArgumentException.ThrowIfNullOrEmpty(ipaPath);
@@ -299,8 +303,12 @@ public sealed class NetimobiledeviceController : IDeviceController
             throw new InvalidOperationException($"not a valid IPA: {ex.Message}", ex);
         }
 
-        _logger.LogInformation("installing {Bundle} onto iPhone {DeviceTag}", info.BundleIdentifier, DeviceTag(udid));
-        await _backend.InstallAsync(udid, ipaPath, progress: null, ct);
+        _logger.LogInformation(
+            "installing {Bundle} onto iPhone {DeviceTag} over {Connection}",
+            info.BundleIdentifier,
+            DeviceTag(udid),
+            requiredConnection?.ToString() ?? "preferred transport");
+        await _backend.InstallAsync(udid, ipaPath, progress: null, ct, requiredConnection);
         InvalidateInstalledAppsCache(udid);
     }
 

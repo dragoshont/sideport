@@ -194,6 +194,7 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
                     app.DeviceUdid,
                     sign.OutputIpaPath,
                     inputs.ExpiresAt,
+                    executionPolicy.RequiredInstallConnection,
                     ct).ConfigureAwait(false);
             }
             catch (InstallOutcomeUnknownException)
@@ -222,6 +223,7 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
         string deviceUdid,
         string signedIpaPath,
         DateTimeOffset expiresAt,
+        DeviceConnection? requiredConnection,
         CancellationToken ct)
     {
         if (_options.InstallTimeout <= TimeSpan.Zero)
@@ -230,7 +232,11 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
             throw new InvalidOperationException("InstallCancellationGrace cannot be negative.");
 
         using var transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        Task transfer = _devices.InstallAsync(deviceUdid, signedIpaPath, transferCancellation.Token);
+        Task transfer = _devices.InstallAsync(
+            deviceUdid,
+            signedIpaPath,
+            transferCancellation.Token,
+            requiredConnection);
         Task timeout = Task.Delay(_options.InstallTimeout, CancellationToken.None);
         Task callerCanceled = Task.Delay(Timeout.InfiniteTimeSpan, ct);
         Task winner = await Task.WhenAny(transfer, timeout, callerCanceled).ConfigureAwait(false);

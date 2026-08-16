@@ -118,7 +118,7 @@ public sealed class SystemStatusServiceTests : IDisposable
             CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default) =>
+        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default, DeviceConnection? requiredConnection = null) =>
             Task.CompletedTask;
 
         public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>
@@ -135,7 +135,7 @@ public sealed class SystemStatusServiceTests : IDisposable
             CancellationToken ct = default) =>
             Task.FromException<IReadOnlyList<InstalledApp>>(Failure());
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default) =>
+        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default, DeviceConnection? requiredConnection = null) =>
             Task.FromException(Failure());
 
         public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>

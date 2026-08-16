@@ -128,7 +128,7 @@ public sealed class SchedulerStatusServiceTests
             CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default) =>
+        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default, DeviceConnection? requiredConnection = null) =>
             Task.CompletedTask;
 
         public Task<DeviceDiagnostics> DiagnoseAsync(CancellationToken ct = default) =>

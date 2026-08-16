@@ -18,6 +18,26 @@ namespace Sideport.Devices.Tests;
 public class NetimobiledeviceBackendTests
 {
     [Fact]
+    public void SelectInstallConnection_RequiredTransportNeverFallsBack()
+    {
+        Assert.Null(NetimobiledeviceBackend.SelectInstallConnection(
+            [DeviceConnection.Wifi],
+            DeviceConnection.Usb));
+        Assert.Null(NetimobiledeviceBackend.SelectInstallConnection(
+            [DeviceConnection.Usb],
+            DeviceConnection.Wifi));
+        Assert.Equal(DeviceConnection.Usb, NetimobiledeviceBackend.SelectInstallConnection(
+            [DeviceConnection.Wifi, DeviceConnection.Usb],
+            DeviceConnection.Usb));
+        Assert.Equal(DeviceConnection.Wifi, NetimobiledeviceBackend.SelectInstallConnection(
+            [DeviceConnection.Usb, DeviceConnection.Wifi],
+            DeviceConnection.Wifi));
+        Assert.Equal(DeviceConnection.Usb, NetimobiledeviceBackend.SelectInstallConnection(
+            [DeviceConnection.Wifi, DeviceConnection.Usb],
+            requiredConnection: null));
+    }
+
+    [Fact]
     public void DecodeNetworkAddress_Ipv4_ReturnsDottedQuad() =>
         // Netimobiledevice already decodes the sockaddr to the 4 IPv4 octets.
         Assert.Equal("10.0.0.42", NetimobiledeviceBackend.DecodeNetworkAddress([10, 0, 0, 42]));

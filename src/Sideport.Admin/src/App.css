@@ -1620,6 +1620,26 @@ tr:last-child td {
   background: #ffffff;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 12px;
+  color: #354052;
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #2463eb;
+  flex: 0 0 auto;
+}
+
 .wide-field {
   grid-column: 1 / -1;
 }

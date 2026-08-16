@@ -556,7 +556,11 @@ public sealed class FamilyAppleAuthorityBoundaryTests : IDisposable
             CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<InstalledApp>>([]);
 
-        public Task InstallAsync(string udid, string ipaPath, CancellationToken ct = default)
+        public Task InstallAsync(
+            string udid,
+            string ipaPath,
+            CancellationToken ct = default,
+            DeviceConnection? requiredConnection = null)
         {
             Interlocked.Increment(ref _installCalls);
             return Task.CompletedTask;

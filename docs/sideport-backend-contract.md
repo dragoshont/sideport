@@ -111,20 +111,19 @@ non-live until its Phase 9 implementation passes.
 
 ### Current Device Transport Truth
 
-The live Netimobiledevice backend enumerates both USB and network devices,
-prefers USB when both are available, and otherwise opens a paired Wi-Fi device
-directly over TCP using the existing pairing record. Install and refresh use
-the selected lockdown session, so the current scheduler can attempt a due
-refresh over paired Wi-Fi when USB is absent. USB is required to create the
-pairing; Wi-Fi consumes existing trust and never initiates pairing.
+The live Netimobiledevice backend enumerates both USB and network devices and
+prefers USB when both are available. Refresh may use paired Wi-Fi when USB is
+absent. First install uses USB by default and may use paired Wi-Fi only when the
+Owner explicitly confirms that exact transport in both preflight and submission.
+USB is still required to create the pairing; Wi-Fi consumes existing trust and
+never initiates pairing.
 
-That capability is not yet equivalent to proven wireless reliability. Issue #3
-records bulk-transfer stalls, socket failures, and ambiguous network
-verification, and the current synchronous route has no complete termination
-and reconciliation boundary. Operationally, USB remains the reliable fallback.
-The planned V2 contract below preserves paired-Wi-Fi refresh while adding the
-bounded transfer, unknown-state quarantine, verification, and fallback rules
-required before it is called production-ready.
+The worker live-trust checks the device, binds the selected connection into the
+durable execution policy, and the backend opens only that transport. It never
+switches from USB to Wi-Fi or Wi-Fi to USB after confirmation. Every bulk
+transfer is bounded; a timeout, socket failure, or ambiguous verification becomes
+an unknown outcome requiring reconciliation. A USB retry is a separate freshly
+reviewed plan, never an automatic fallback.
 
 ### Identity provider and passkey ownership
 
@@ -229,8 +228,9 @@ only after the server rechecks all of these conditions:
    timestamp.
 6. A usable persisted signing identity is verified. If mint or replacement was
    necessary, its durable signer-cutover operation is terminal `succeeded`.
-7. The selected device is durably accepted, currently reachable over USB, and
-   has a successful lockdown/trust handshake.
+7. The selected device is durably accepted, currently reachable over USB or an
+  explicitly confirmed paired-Wi-Fi connection, and has a fresh successful
+  lockdown/trust handshake.
 8. A ready catalog artifact and registration retain durable lineage to the
    artifact, bundle ID, accepted device, account profile, and selected team.
 9. A durable install operation recorded successful sign/install stages and
@@ -1670,7 +1670,7 @@ remain accepted for API compatibility but are not used by the onboarding UI,
 and a manual team ID does not satisfy V2.
 
 `POST /api/operations/preflight` supports `type=install`. It is read-only and checks
-operational status, accepted/current trusted USB device, catalog integrity and
+operational status, accepted/current trusted device, catalog integrity and
 bundle ID, pending registration and three-registration limit, authenticated
 account and selected returned team, the exact development-certificate inventory
 that the current Apple interface can read, persisted signer identity/cutover
@@ -1686,18 +1686,24 @@ operations only after the confirmed plan is submitted.
   "type": "install",
   "deviceUdid": "000081...",
   "bundleId": "com.example.app",
-  "finishOnboarding": true
+  "finishOnboarding": true,
+  "allowWifiFirstInstall": true
 }
 ```
+
+`allowWifiFirstInstall` defaults to `false`. When true, it is effective only for
+an Owner request and only when the fresh trusted transport is Wi-Fi. It is part
+of `planVersion`; changing it requires a new preflight and confirmation.
 
 The response retains `ready`, `target`, `blockers`, `warnings`,
 `plannedMutations`, `scarceLimits`, `requiresConfirmation`, and `source`; it
 adds `preflightId`, `expiresAt`, grouped checks, signing `inventoryVersion`, and
 `planVersion`. `planVersion` is a server-generated semantic digest of the
-selected account/team/device/artifact, scarce limits, planned external
-mutations, and `finishOnboarding`. Timestamp-only changes do not change it. The
-short-lived preflight record is process-local; restart or expiry requires fresh
-review inside the Install step; it does not add a separate Review step.
+selected account/team/device connection/artifact, scarce limits, planned
+external mutations, Wi-Fi authorization, and `finishOnboarding`. Timestamp-only
+changes do not change it. The short-lived preflight record is process-local;
+restart or expiry requires fresh review inside the Install step; it does not add
+a separate Review step.
 
 Submission reruns preflight under the submission lock. It queues only if the
 new semantic plan exactly matches the confirmed `planVersion`. Any changed
@@ -1717,6 +1723,7 @@ nothing. The UI must review and confirm the replacement.
   "planVersion": "sha256:...",
   "finishOnboarding": true,
   "confirmedPlannedMutations": true,
+  "allowWifiFirstInstall": true,
   "idempotencyKey": "ui-generated-key"
 }
 ```
@@ -1738,6 +1745,12 @@ the three onboarding-finalization stages are omitted. Each stage has status,
 timestamps, duration, redacted message, structured error, and recovery action.
 Only backend callbacks at real boundaries advance stages; the UI never
 simulates progress.
+
+The client does not choose a raw transport identifier. The server stores the
+fresh preflight-selected `installConnection` (`usb` or `wifi`) in the durable
+intent. The worker requires that same connection before signing and passes it to
+the backend mutation. A changed connection fails `install-connection-changed`
+and requires a new preflight; missing legacy intent values remain USB-only.
 
 The finalization write order is fixed: durable device verification first,
 registration activation second, scheduler enablement third, next-evaluation
@@ -1993,21 +2006,21 @@ registration because an older scheduler does not understand lifecycle. Neither
 Sideport state nor anisette identity volumes are deleted. Apple certificate
 revocation is never automatically rolled back.
 
-### USB Pairing, Wi-Fi Refresh, and Device-Verification Truth
+### USB Pairing, Wi-Fi Install/Refresh, and Device-Verification Truth
 
-USB is the supported pairing, acceptance, and first-install transport in V2.
-Wi-Fi discovery is useful evidence but yields `device-usb-required` for those
-first-run mutations. After a successful USB pairing and verified first install,
-the saved pairing may be used for scheduled or manual refresh over the same
-Wi-Fi network. USB remains supported and is the immediate fallback if a
-wireless transfer cannot finish. A phone must be reachable, explicitly paired,
-accepted, and live-trust checked. Discovery alone is never trust.
+USB is the only supported pairing transport and remains the default first-install
+transport. After successful USB pairing, the saved pairing may be used for a
+first install only through explicit per-install Owner consent, and for scheduled
+or manual refresh over the same Wi-Fi network. A phone must be reachable,
+explicitly paired, accepted, and live-trust checked. Discovery alone is never
+trust.
 
-The first install requires a post-install USB read of the requested bundle and
-provisioning profile, including signature expiry. A later Wi-Fi refresh may use
-the managed device read over the same trusted session, but a missing/ambiguous
-wireless read never becomes success and never triggers an automatic duplicate
-install; it becomes `unknown` and requires reconciliation, normally over USB.
+The first install requires a post-install read of the requested bundle and
+provisioning profile, including signature expiry, over the trusted connection.
+A missing or ambiguous wireless read never becomes success and never triggers an
+automatic duplicate install; it becomes `unknown` and requires reconciliation.
+Sideport does not switch transports during a mutation. Reconnecting USB and
+retrying requires a new preflight and confirmation.
 A queued request, completed upload call, operator acknowledgement, home-screen
 observation, or external `ideviceinstaller -n` result is not the verification
 evidence used by the contract. Sideport does not claim that the app launched.
@@ -2633,6 +2646,6 @@ Rules:
   claimed. Do not mount protected macOS `/var/db/lockdown` by default because
   Sideport requests the pairing record from usbmuxd before filesystem fallback.
 - Apple `container` remains experimental until the physical gate proves
-  non-root socket forwarding, first USB install, named-volume restart, and a
-  bounded paired-Wi-Fi refresh with safe USB fallback.
+  non-root socket forwarding, explicit-transport first install, named-volume
+  restart, and bounded paired-Wi-Fi operation with stop-and-reconcile behavior.
 - IaC changes remain plan-only until human approval.

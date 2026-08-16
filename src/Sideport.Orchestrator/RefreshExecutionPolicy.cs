@@ -1,3 +1,5 @@
+using Sideport.Core;
+
 namespace Sideport.Orchestrator;
 
 /// <summary>
@@ -7,7 +9,8 @@ namespace Sideport.Orchestrator;
 /// </summary>
 public sealed record RefreshExecutionPolicy(
     bool AllowAppleAuthentication,
-    bool AllowCertificateCreation)
+    bool AllowCertificateCreation,
+    DeviceConnection? RequiredInstallConnection = null)
 {
     public static RefreshExecutionPolicy OwnerManaged { get; } = new(true, true);
 
