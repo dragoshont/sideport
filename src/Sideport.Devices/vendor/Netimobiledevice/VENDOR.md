@@ -46,6 +46,13 @@ is consumed as a `ProjectReference` from `Sideport.Devices`.
    `EnforceCodeStyleInBuild` set to `false` (we consume it as a `ProjectReference`,
    not a packed NuGet).
 
+5. **`Usbmuxd/UsbmuxdSocket.cs` and `Usbmuxd/UsbmuxConnection.cs` — exact stream
+   framing.** Unix and TCP stream sockets may return partial reads or writes.
+   Upstream used one `Socket.Receive`/`Socket.Send` call and the payload retry
+   loop replaced earlier chunks instead of appending them. Sideport now loops
+   until the requested frame is complete, fails explicitly on EOF, and reads a
+   payload exactly once through that bounded primitive.
+
 ## Re-vendoring (do it deliberately, never auto-float)
 
 ```sh

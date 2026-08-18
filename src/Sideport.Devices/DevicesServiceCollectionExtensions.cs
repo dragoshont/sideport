@@ -24,18 +24,31 @@ public static class DevicesServiceCollectionExtensions
                 sp.GetService<IConfiguration>()?["Sideport:Devices:PairingRecordsDir"]));
         services.AddSingleton<IDeviceController>(sp =>
         {
+            IConfiguration? configuration = sp.GetService<IConfiguration>();
             TimeSpan? installedAppsCacheTtl = null;
-            string? configuredTtl = sp.GetService<IConfiguration>()?["Sideport:Devices:InstalledAppsCacheTtl"];
+            string? configuredTtl = configuration?["Sideport:Devices:InstalledAppsCacheTtl"];
             if (TimeSpan.TryParse(configuredTtl, out TimeSpan parsedTtl))
                 installedAppsCacheTtl = parsedTtl;
+
+            DevicePairingOwner pairingOwner = ParsePairingOwner(
+                configuration?["Sideport:Devices:PairingOwner"]);
 
             return
             new NetimobiledeviceController(
                 sp.GetRequiredService<IDeviceBackend>(),
                 sp.GetService<ILogger<NetimobiledeviceController>>(),
                 sp.GetRequiredService<DeviceMetrics>(),
-                installedAppsCacheTtl);
+                installedAppsCacheTtl,
+                pairingOwner: pairingOwner);
         });
         return services;
     }
+
+    internal static DevicePairingOwner ParsePairingOwner(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "sideport" => DevicePairingOwner.Sideport,
+        "host" => DevicePairingOwner.Host,
+        _ => throw new InvalidOperationException(
+            "Sideport:Devices:PairingOwner must be either 'sideport' or 'host'."),
+    };
 }

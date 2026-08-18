@@ -475,7 +475,8 @@ public sealed class DeviceEnrollmentTests : IDisposable
         controller.Probes.Enqueue(new DeviceTrustProbe(
             "pair-result-denied-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
         controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
-            udid, DeviceConnection.Usb, "untrusted", "Trust was denied on the iPhone.", DateTimeOffset.UtcNow, false));
+            udid, DeviceConnection.Usb, "untrusted", "Trust was denied on the iPhone.", DateTimeOffset.UtcNow, false,
+            DevicePairingDisposition.Denied));
         await using EnrollmentFixture fixture = CreateFixture(
             controller,
             new DeviceEnrollmentOptions { SessionTimeout = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) });
@@ -493,6 +494,31 @@ public sealed class DeviceEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task DamagedPairRecord_RequiresOwnerRepairWithoutRepeatingPairing()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var controller = FakeDeviceController.WithSingleUsb("repair-trust-udid", "untrusted", now);
+        controller.Probes.Enqueue(new DeviceTrustProbe(
+            "repair-trust-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
+        controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
+            udid, DeviceConnection.Usb, "untrusted", "Saved Trust cannot be verified.", DateTimeOffset.UtcNow, false,
+            DevicePairingDisposition.RepairRequired));
+        await using EnrollmentFixture fixture = CreateFixture(controller);
+
+        DeviceEnrollmentSubmissionResult submitted = await fixture.Service.StartAsync(
+            new DeviceEnrollmentRequest("repair-trust-key", "repair-trust-udid"),
+            new OperationActorDto("api-token", "api-token-client"));
+        await fixture.Service.ProcessAsync(submitted.Record!.OperationId);
+
+        OperationRecordDto failed = (await fixture.Operations.FindAsync(submitted.Record.OperationId))!;
+        Assert.Equal("recovery-required", failed.Status);
+        Assert.Equal("device-pairing-repair-required", failed.Error?.Code);
+        Assert.False(failed.Retryable);
+        Assert.Equal(1, controller.PairCalls);
+        Assert.Empty(await fixture.KnownDevices.ListAsync());
+    }
+
+    [Fact]
     public async Task ExplicitTrustDenialAfterPairing_FailsWithoutRepeatingPairing()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -500,7 +526,8 @@ public sealed class DeviceEnrollmentTests : IDisposable
         controller.Probes.Enqueue(new DeviceTrustProbe(
             "denied-trust-udid", DeviceConnection.Usb, "untrusted", "Trust is not established.", now, false));
         controller.Probes.Enqueue(new DeviceTrustProbe(
-            "denied-trust-udid", DeviceConnection.Usb, "untrusted", "Trust was declined on the iPhone.", now, false));
+            "denied-trust-udid", DeviceConnection.Usb, "untrusted", "Trust was declined on the iPhone.", now, false,
+            DevicePairingDisposition.Denied));
         controller.PairHandler = (udid, _) => Task.FromResult(new DevicePairingResult(
             udid, DeviceConnection.Usb, "unknown", "Waiting for Trust.", DateTimeOffset.UtcNow, false));
         await using EnrollmentFixture fixture = CreateFixture(

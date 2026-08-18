@@ -17,6 +17,11 @@ namespace Netimobiledevice.Usbmuxd
 
         private readonly Socket socket;
 
+        internal UsbmuxdSocket(Socket connectedSocket)
+        {
+            socket = connectedSocket ?? throw new ArgumentNullException(nameof(connectedSocket));
+        }
+
         public UsbmuxdSocket(string usbmuxAddress = "")
         {
             try {
@@ -67,14 +72,45 @@ namespace Netimobiledevice.Usbmuxd
 
         public byte[] Receive(int size)
         {
+            if (size < 0) {
+                throw new ArgumentOutOfRangeException(nameof(size));
+            }
+
             byte[] buf = new byte[size];
-            socket.Receive(buf);
+            int received = 0;
+            try {
+                while (received < size) {
+                    int count = socket.Receive(buf, received, size - received, SocketFlags.None);
+                    if (count == 0) {
+                        throw new UsbmuxException($"Usbmux socket closed after {received} of {size} bytes");
+                    }
+                    received += count;
+                }
+            }
+            catch (SocketException ex) {
+                throw new UsbmuxException($"Failed to receive {size} usbmux bytes (received {received})", ex);
+            }
             return buf;
         }
 
         public int Send(byte[] message)
         {
-            return socket.Send(message);
+            ArgumentNullException.ThrowIfNull(message);
+
+            int sent = 0;
+            try {
+                while (sent < message.Length) {
+                    int count = socket.Send(message, sent, message.Length - sent, SocketFlags.None);
+                    if (count == 0) {
+                        throw new UsbmuxException($"Usbmux socket closed after {sent} of {message.Length} bytes");
+                    }
+                    sent += count;
+                }
+            }
+            catch (SocketException ex) {
+                throw new UsbmuxException($"Failed to send {message.Length} usbmux bytes (sent {sent})", ex);
+            }
+            return sent;
         }
 
         public void SetBlocking(bool blocking)

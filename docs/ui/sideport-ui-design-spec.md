@@ -1,6 +1,6 @@
 # Sideport UI Design Spec
 
-> **Canonical target:** The six-destination product shell and trusted-person journey in
+> **Canonical target:** The four-job product shell and trusted-person journey in
 > this document are the Phase 7 Storybook approval target. The current runtime
 > still contains the older operator-console routes until the approved deletion
 > and binding pass in Phase 11. Storybook fixtures must not imply reliable Wi-Fi
@@ -32,8 +32,8 @@ the configured host USB port: an already trusted iPhone is recognized when it
 is connected, while a new iPhone opens the guided Trust and enrollment flow.
 
 Mobile is the primary layout. The signed-in mobile shell keeps a persistent
-five-item bottom navigation for Home, Apps, Devices, People, and Activity;
-Settings remains available from the top bar. Search is prominent, app rows or
+four-item bottom navigation for Home, Apps, Devices, and People. Activity is a
+bell/inbox surface and Settings is opened from the account avatar. Search is prominent, app rows or
 cards expose one clear install/update action, and the Activity feed groups
 human-readable events by time with **Needs attention** first. Routine polling,
 healthy background checks, raw transport events, and repeated per-app noise do
@@ -50,14 +50,16 @@ Use only two roles in the first trusted-people release:
 
 ## Information Architecture
 
-The signed-in shell has exactly six destinations:
+The signed-in shell has four primary destinations:
 
 - Home
 - Apps
 - Devices
 - People
-- Activity
-- Settings
+
+Activity remains a secondary inbox reached from the bell. Settings remains a
+secondary account surface reached from the avatar; neither competes with the
+four recurring product jobs in primary navigation.
 
 Secondary surfaces:
 
@@ -96,10 +98,9 @@ Purpose: answer "Is Sideport healthy?" in under five seconds.
 
 Content:
 
-- Fleet status strip: reachable devices, apps healthy, due soon, blocked.
-- Refresh preview: only items that need attention, sorted by urgency.
-- Device health list: connection, last seen, app slots, nearest expiry.
-- Recent activity: sign/install/auth/device events.
+- Needs attention: only unresolved, human-actionable items, sorted by urgency.
+- A short, drillable device list with plain-language connection state.
+- Quiet recent history for successful install and refresh outcomes.
 - Owner-only system summary behind **Show technical details** when attention is
   required. Healthy infrastructure does not compete with member tasks.
 
@@ -108,6 +109,7 @@ Avoid:
 - Decorative analytics cards.
 - Big charts for tiny counts.
 - Hero sections.
+- Fleet metric strips and equal-weight status cards.
 
 ## First-Run Onboarding Flow
 
