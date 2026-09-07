@@ -1173,6 +1173,26 @@ Diagnostics retain the operation, attempt, status, content type, HTTP version
 and timing, not raw bodies or authentication material. A retry budget exhausted
 at Apple is not proof of an account problem or an Apple-wide outage.
 
+#### Internal operational metrics
+
+`GET /metrics` exposes aggregate, low-cardinality Prometheus text for scheduler
+progress, due/expired/blocked renewals, unresolved device operations, the current
+Apple auth-state class, minimum known profile expiry, verified-renewal recency,
+device backend health, and GrandSlam response/retry counts. It never includes an
+Apple ID, account profile, device ID, bundle ID, operation ID, credential, token,
+or response body.
+
+Metrics access fails closed with `404` unless the effective remote address is
+loopback or belongs to `Sideport:Metrics:AllowedNetworks`. Reverse-proxy forwarded
+client addresses are applied before this check, so allowing the pod CIDR for a
+direct Prometheus scrape does not expose the endpoint through the public ingress.
+An invalid configured CIDR fails startup rather than widening access.
+
+`validation-stale` is normal after the 15-minute interactive-auth freshness
+window and must not page by itself. Operators should alert on outcomes: sustained
+5xx responses, overdue scheduler evaluations, held/unknown operations, due work
+that does not clear, and expired verified profiles.
+
 #### Managed credential establishment
 
 `POST /api/apple-access/personal/connect` is planned and is not part of the

@@ -16,11 +16,21 @@ public sealed class OperationRecoveryEvidenceTests
             string path = Path.Combine(directory, "operations.json");
             var store = new OperationStore(path);
             await store.AddIfIdempotentMissingAsync(evidence.Source);
-            using (JsonDocument legacy = JsonDocument.Parse(await File.ReadAllTextAsync(path)))
+            string legacyText = await File.ReadAllTextAsync(path);
+            using (JsonDocument legacy = JsonDocument.Parse(legacyText))
                 Assert.Equal(JsonValueKind.Array, legacy.RootElement.ValueKind);
 
             await store.AddIfIdempotentMissingAsync(evidence.Receipt);
             await store.AddIfIdempotentMissingAsync(evidence.Child);
+            string backupPath = path + ".pre-envelope.bak";
+            Assert.True(File.Exists(backupPath));
+            Assert.Equal(legacyText, await File.ReadAllTextAsync(backupPath));
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Equal(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                    File.GetUnixFileMode(backupPath));
+            }
             string persisted = await File.ReadAllTextAsync(path);
             using (JsonDocument current = JsonDocument.Parse(persisted))
             {
@@ -86,6 +96,26 @@ public sealed class OperationRecoveryEvidenceTests
             Assert.Equal(interrupted.RecoveryCheckpoint!.PreparedExpiresAt, restored.Result.ExpiresAt);
             Assert.Equal(interrupted.RecoveryCheckpoint, restored.RecoveryCheckpoint);
             Assert.False(restored.Rerunnable);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public async Task RecoveryBarrier_RemovesOrphanedPrivateSnapshots()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "sideport-snapshot-tests", Guid.NewGuid().ToString("N"));
+        string workDirectory = Path.Combine(directory, "signed");
+        string recoveryDirectory = Path.Combine(workDirectory, "TEST-UDID", "recovery", "snapshot-id");
+        Directory.CreateDirectory(recoveryDirectory);
+        await File.WriteAllTextAsync(Path.Combine(recoveryDirectory, "app.ipa"), "private snapshot");
+        try
+        {
+            var options = new Sideport.Orchestrator.OrchestratorOptions { WorkDirectory = workDirectory };
+            await new OperationRecoveryBarrier(
+                new OperationStore(Path.Combine(directory, "operations.json")),
+                options).StartAsync(CancellationToken.None);
+
+            Assert.False(Directory.Exists(Path.Combine(workDirectory, "TEST-UDID", "recovery")));
         }
         finally { Directory.Delete(directory, true); }
     }

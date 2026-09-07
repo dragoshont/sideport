@@ -522,6 +522,7 @@ Set these as environment variables, or as `Sideport__Section__Key` config keys.
 | `SIDEPORT_API_TOKEN` | recommended | *(unset)* | Bearer token guarding `/api/*`. If unset, the API is **open** and logs a loud warning. |
 | `Sideport__Signer__BinaryPath` | — | `/opt/sideport/zsign` | The signer binary (baked into the image). |
 | `Sideport__Scheduler__Enabled` | — | `true` | Turn the automatic 7-day refresh loop on/off. |
+| `Sideport__Metrics__AllowedNetworks__0` | — | *(loopback only)* | CIDR allowed to scrape aggregate `/metrics` directly. Add one indexed value per network; never expose metrics by using a public-wide CIDR. |
 | `Sideport__Scheduler__ResignInterval` | — | *(unset)* | Re-sign each app on a fixed cadence (e.g. `1.00:00:00` = daily) to keep a fresh margin well before the 7-day profile expiry, instead of only just before it. Unset = refresh near expiry only. The signing certificate is reused either way, so this does **not** make you re-trust the developer more often. |
 | `Sideport__Catalog__SeedCertClockPath` | — | *(unset)* | Optional path to a Cert Clock IPA to expose as a configured catalog seed. Fresh installations have an empty catalog when this is unset. |
 | `Sideport__Identity__Mode` | — | `none` in the app; deployment examples use `passkey` | Interactive identity backend: `passkey`, `oidc`, or `none`. Exactly one is active. |

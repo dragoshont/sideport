@@ -199,6 +199,11 @@ System.Net.IPNetwork[] trustedProxyNetworks = ReadConfigurationList(
     .Select(ParseTrustedProxyNetwork)
     .ToArray();
 bool useForwardedHeaders = trustedProxies.Length != 0 || trustedProxyNetworks.Length != 0;
+System.Net.IPNetwork[] metricsAllowedNetworks = ReadConfigurationList(
+        builder.Configuration,
+        "Sideport:Metrics:AllowedNetworks")
+    .Select(ParseMetricsNetwork)
+    .ToArray();
 
 var appleCredentialRateLimitOptions = new AppleCredentialRateLimitOptions(
     builder.Configuration.GetValue<int?>("Sideport:Apple:CredentialRateLimit:ClientPermitLimit")
@@ -358,6 +363,7 @@ builder.Services.AddSingleton<SystemStatusService>();
 builder.Services.AddSingleton<SchedulerStatusService>();
 builder.Services.AddSingleton<OperationQueue>();
 builder.Services.AddSingleton<OperationService>();
+builder.Services.AddSingleton<SideportOperationalMetrics>();
 builder.Services.AddSingleton<PendingRegistrationService>();
 // Recovery barrier runs to completion in StartAsync BEFORE the worker/scheduler
 // serve mutations, so prior-process operations are reconciled with no 30-min gap.
@@ -590,6 +596,17 @@ bool hasAdminBundle = app.Environment.WebRootFileProvider.GetFileInfo("index.htm
 var requestLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Sideport.Api.Requests");
 var appleCredentialRateLimiter = app.Services.GetRequiredService<AppleCredentialRateLimiter>();
 
+app.MapGet("/metrics", async (
+    HttpContext context,
+    SideportOperationalMetrics metrics,
+    CancellationToken ct) =>
+{
+    if (!MetricsAccessPolicy.IsAllowed(context.Connection.RemoteIpAddress, metricsAllowedNetworks))
+        return Results.NotFound();
+    string body = await metrics.CollectAsync(ct).ConfigureAwait(false);
+    return Results.Text(body, "text/plain; version=0.0.4; charset=utf-8");
+});
+
 // Only explicitly configured proxy addresses/networks may influence the
 // effective scheme, host, or client IP. This applies equally to bearer-only and
 // OIDC deployments so TLS termination behaves consistently without allowing a
@@ -668,7 +685,8 @@ if (interactiveIdentityEnabled)
         PathString path = context.Request.Path;
         bool isApi = path.StartsWithSegments("/api");
         bool isProbe = path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase);
+            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/metrics", StringComparison.OrdinalIgnoreCase);
         bool isSafeNavigation = HttpMethods.IsGet(context.Request.Method) ||
             HttpMethods.IsHead(context.Request.Method);
         bool isPrivateLinkShell = isSafeNavigation &&
@@ -3529,6 +3547,12 @@ static System.Net.IPNetwork ParseTrustedProxyNetwork(string value) =>
         ? network
         : throw new InvalidOperationException(
             $"Sideport:ReverseProxy:KnownNetworks contains invalid CIDR network '{value}'.");
+
+static System.Net.IPNetwork ParseMetricsNetwork(string value) =>
+    System.Net.IPNetwork.TryParse(value, out System.Net.IPNetwork network)
+        ? network
+        : throw new InvalidOperationException(
+            $"Sideport:Metrics:AllowedNetworks contains invalid CIDR network '{value}'.");
 
 static Uri? ParseOptionalHttpsUri(string? value, string key)
 {

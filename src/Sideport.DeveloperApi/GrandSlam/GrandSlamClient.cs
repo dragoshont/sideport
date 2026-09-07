@@ -26,17 +26,20 @@ internal sealed class GrandSlamClient
     private readonly IAnisetteProvider _anisette;
     private readonly GrandSlamClientOptions _options;
     private readonly ILogger<GrandSlamClient> _logger;
+    private readonly GrandSlamMetrics _metrics;
 
     public GrandSlamClient(
         HttpClient http,
         IAnisetteProvider anisette,
         GrandSlamClientOptions options,
-        ILogger<GrandSlamClient> logger)
+        ILogger<GrandSlamClient> logger,
+        GrandSlamMetrics? metrics = null)
     {
         _http = http;
         _anisette = anisette;
         _options = options;
         _logger = logger;
+        _metrics = metrics ?? new GrandSlamMetrics();
     }
 
     /// <summary>
@@ -297,6 +300,7 @@ internal sealed class GrandSlamClient
 
             using (response)
             {
+                _metrics.RecordResponse(operation, (int)response.StatusCode);
                 string contentType = response.Content.Headers.ContentType?.MediaType ?? "none";
                 _logger.LogInformation(
                     "GrandSlam {Operation} attempt {Attempt}/{MaximumAttempts} returned HTTP {Status} " +
@@ -347,6 +351,7 @@ internal sealed class GrandSlamClient
                     "(attempt {Attempt}/{MaximumAttempts}, status {Status})",
                     operation, delay.TotalMilliseconds, attempt, maximumAttempts,
                     (int)response.StatusCode);
+                _metrics.RecordRetry(operation);
                 response.Dispose();
                 try
                 {

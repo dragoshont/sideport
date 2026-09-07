@@ -3712,20 +3712,17 @@ public sealed class OperationService(
             }
             if (executionAuthorization is null)
                 return (null, false, "owner-recovery-authority-required");
-            if (executionAuthorization is not null)
-            {
-                WorkspaceExecutionDecision authorization = await executionAuthorization
-                    .AuthorizeOperationAsync(predecessor with
-                    {
-                        Actor = actor,
-                        ActorMemberId = actorMemberId,
-                    }, ct: ct)
-                    .ConfigureAwait(false);
-                if (!authorization.IsAllowed)
-                    return (null, false, authorization.ErrorCode ?? "operation-access-revoked");
-                if (!authorization.CanUseOwnerManagedAppleAuthority)
-                    return (null, false, "owner-recovery-authority-required");
-            }
+            WorkspaceExecutionDecision authorization = await executionAuthorization
+                .AuthorizeOperationAsync(predecessor with
+                {
+                    Actor = actor,
+                    ActorMemberId = actorMemberId,
+                }, ct: ct)
+                .ConfigureAwait(false);
+            if (!authorization.IsAllowed)
+                return (null, false, authorization.ErrorCode ?? "operation-access-revoked");
+            if (!authorization.CanUseOwnerManagedAppleAuthority)
+                return (null, false, "owner-recovery-authority-required");
             ownerMemberId = predecessor.OwnerMemberId;
 
             OperationRecordDto? keyed = await store.FindByActorAndIdempotencyAsync(
@@ -3749,20 +3746,6 @@ public sealed class OperationService(
                 BuildSupersedingRenewalIntent(predecessor, receipt, request);
             if (intentError is not null || intent is null)
                 return (null, false, intentError ?? "recovery-receipt-invalid");
-
-            // Idempotency: identical resubmission replays the same child; a
-            // reused key with a changed intent conflicts.
-            keyed = await store.FindByActorAndIdempotencyAsync(
-                "refresh",
-                actor,
-                storedKey,
-                ct).ConfigureAwait(false);
-            if (keyed is not null)
-            {
-                return keyed.RecoveryIntent is not null && RecoveryIntentsMatch(keyed.RecoveryIntent, intent)
-                    ? (keyed, false, null)
-                    : (null, false, "idempotency-target-conflict");
-            }
 
             // A receipt authorizes exactly one child; another key cannot reuse it.
             if (records.Any(op => op.RecoveryIntent is not null &&
@@ -4613,8 +4596,8 @@ public sealed class OperationService(
         // The installed profile is expired or unavailable (observed-null). A
         // different known expiry is a mismatch even when it has expired.
         (installed.SignatureExpiresAt is null ||
-         installed.SignatureExpiresAt.Value <= now &&
-         Math.Abs((installed.SignatureExpiresAt.Value - expectedExpiry).TotalSeconds) <= 60);
+         (installed.SignatureExpiresAt.Value <= now &&
+          Math.Abs((installed.SignatureExpiresAt.Value - expectedExpiry).TotalSeconds) <= 60));
 
     private async Task CompleteRenewalEligibleReconciliationAsync(
         OperationRecordDto record,

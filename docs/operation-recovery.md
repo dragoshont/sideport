@@ -105,7 +105,10 @@ verified finalization can resume without another install.
 Legacy operation histories remain readable. Once a recovery observation, intent
 or checkpoint is stored, history uses a `schemaVersion: 2` envelope. Older images
 expect an array and deliberately fail to load it rather than discard the new
-safety fields. Do not roll back to an older image after starting recovery without
-a compatible recovery plan. Prefer a forward fix; a backup restore requires
+safety fields. Before the first envelope write, Sideport automatically preserves
+the prior array as `operations.json.pre-envelope.bak` with owner-only permissions.
+This is an emergency migration artifact, not permission for an automatic downgrade.
+Do not roll back to an older image after starting recovery without a compatible
+recovery plan. Prefer a forward fix; a backup restore requires
 assessing the current device state and keeping scheduling paused. Do not hand-edit
 the envelope or remove its recovery fields to make an older image accept it.

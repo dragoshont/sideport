@@ -137,18 +137,6 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
         if (!File.Exists(app.InputIpaPath))
             return Record(app, null, false, $"input IPA not found: {app.InputIpaPath}");
 
-        string signInputPath = app.InputIpaPath;
-        string? pinnedSha = null;
-        if (recovery is not null)
-        {
-            (string? pinnedPath, string? pinnedHash, RefreshResult? pinFailure) =
-                await PinArtifactSnapshotAsync(app, recovery.ExpectedArtifactSha256, ct).ConfigureAwait(false);
-            if (pinFailure is not null)
-                return pinFailure;
-            signInputPath = pinnedPath!;
-            pinnedSha = pinnedHash;
-        }
-
         AppleSession session;
         try
         {
@@ -195,6 +183,18 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
             string outputIpa = Path.Combine(
                 _options.WorkDirectory, app.DeviceUdid, $"{app.BundleId}.ipa");
 
+            string signInputPath = app.InputIpaPath;
+            string? pinnedSha = null;
+            if (recovery is not null)
+            {
+                (string? pinnedPath, string? pinnedHash, RefreshResult? pinFailure) =
+                    await PinArtifactSnapshotAsync(app, recovery.ExpectedArtifactSha256, ct).ConfigureAwait(false);
+                if (pinFailure is not null)
+                    return pinFailure;
+                signInputPath = pinnedPath!;
+                pinnedSha = pinnedHash;
+            }
+
             SignResult sign;
             try
             {
@@ -207,6 +207,11 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
             {
                 _logger.LogWarning("signer execution failed ({ErrorType})", ex.GetType().Name);
                 return Record(app, null, false, "The signer stopped before producing an app.", "signer-execution-failed");
+            }
+            finally
+            {
+                if (recovery is not null)
+                    DeleteRecoverySnapshot(signInputPath);
             }
 
             if (!sign.Success)
@@ -309,12 +314,35 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            DeleteRecoverySnapshot(pinnedPath);
             return (null, null, Record(app, null, false, "Sideport could not create a private signing snapshot for recovery.", "recovery-artifact-unreadable"));
         }
         if (!string.Equals(pinnedSha, expectedArtifactSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            DeleteRecoverySnapshot(pinnedPath);
             return (null, null, Record(app, null, false, "Sideport's private signing snapshot did not match the expected app.", "recovery-artifact-lineage-changed"));
+        }
 
         return (pinnedPath, pinnedSha, null);
+    }
+
+    private static void DeleteRecoverySnapshot(string path)
+    {
+        string? directory = Path.GetDirectoryName(path);
+        if (directory is null)
+            return;
+        try
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // A stale private snapshot is safe; a later recovery can clean it.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Keep the recovery result; never widen permissions to force cleanup.
+        }
     }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)

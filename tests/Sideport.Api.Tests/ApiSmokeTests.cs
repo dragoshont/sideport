@@ -49,7 +49,10 @@ public partial class ApiSmokeTests
         IDeviceController? deviceController = null,
         DeviceEnrollmentOptions? enrollmentOptions = null,
         bool schedulerEnabled = false,
-        ISigningIdentityProvider? signingIdentityProvider = null)
+        ISigningIdentityProvider? signingIdentityProvider = null,
+        IPAddress? remoteIp = null,
+        string? metricsAllowedNetworks = null,
+        string? knownProxies = null)
     {
         signerPath ??= File.Exists("/usr/bin/true")
             ? "/usr/bin/true"
@@ -62,6 +65,10 @@ public partial class ApiSmokeTests
             builder.UseSetting("Sideport:Scheduler:Enabled", schedulerEnabled ? "true" : "false");
             builder.UseSetting("Sideport:Signer:BinaryPath", signerPath);
             builder.UseSetting("Sideport:State:Directory", stateDirectory);
+            if (metricsAllowedNetworks is not null)
+                builder.UseSetting("Sideport:Metrics:AllowedNetworks", metricsAllowedNetworks);
+            if (knownProxies is not null)
+                builder.UseSetting("Sideport:ReverseProxy:KnownProxies", knownProxies);
             if (apiToken is not null)
                 builder.UseSetting("Sideport:Api:AuthToken", apiToken);
             if (seedCatalogPath is not null)
@@ -107,6 +114,8 @@ public partial class ApiSmokeTests
                 }
                 if (!operationWorker)
                     services.RemoveAll<IHostedService>();
+                if (remoteIp is not null)
+                    services.AddSingleton<IStartupFilter>(new TestRemoteIpStartupFilter(remoteIp));
                 services.AddSingleton<ISigningIdentityProvider>(
                     signingIdentityProvider ?? new StubSigningIdentityProvider());
                 services.AddSingleton<ISigner, StubSigner>();
@@ -119,6 +128,21 @@ public partial class ApiSmokeTests
                 }
             });
         });
+    }
+
+    private sealed class TestRemoteIpStartupFilter(IPAddress remoteIp) : IStartupFilter
+    {
+        public Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> Configure(
+            Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> next) =>
+            app =>
+            {
+                app.Use(following => async context =>
+                {
+                    context.Connection.RemoteIpAddress = remoteIp;
+                    await following(context);
+                });
+                next(app);
+            };
     }
 
     [Fact]

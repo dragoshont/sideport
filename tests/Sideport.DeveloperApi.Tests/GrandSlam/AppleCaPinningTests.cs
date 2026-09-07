@@ -12,12 +12,13 @@ public class AppleCaPinningTests
     {
         X509Certificate2Collection roots = AppleCaPinning.Roots;
 
-        using X509Certificate2 root = Assert.Single(roots);
-        Assert.Contains("Apple Root CA", root.Subject);
-        // The well-known SHA-256 thumbprint of the Apple Root CA (G1).
-        Assert.Equal(
-            "B0B1730ECBC7FF4505142C49F1295E6EDA6BCAED7E2C68C5BE91B5A11001F024",
-            root.GetCertHashString(HashAlgorithmName.SHA256));
+        Assert.Equal(2, roots.Count);
+        string[] hashes = [.. roots.Select(root => root.GetCertHashString(HashAlgorithmName.SHA256))];
+        Assert.Contains("B0B1730ECBC7FF4505142C49F1295E6EDA6BCAED7E2C68C5BE91B5A11001F024", hashes);
+        Assert.Contains("63343ABFB89A6A03EBB57E9B3F5FA7BE7C4F5C756F3017B3A8C488C3653E9179", hashes);
+        Assert.All(roots.Cast<X509Certificate2>(), root => Assert.Contains("Apple Root CA", root.Subject));
+        foreach (X509Certificate2 root in roots)
+            root.Dispose();
     }
 
     [Fact]

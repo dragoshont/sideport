@@ -32,6 +32,7 @@ public static class DeveloperApiServiceCollectionExtensions
         string? signingIdentityDirectory = null)
     {
         services.AddSingleton(new GrandSlamClientOptions { DeviceId = deviceId });
+        services.AddSingleton<GrandSlamMetrics>();
 
         var signingOptions = new PortalSigningOptions();
         if (!string.IsNullOrEmpty(signingWorkDirectory))

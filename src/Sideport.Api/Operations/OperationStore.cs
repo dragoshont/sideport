@@ -447,34 +447,64 @@ public sealed class OperationStore
             bool recoveryEnvelope = _usesRecoveryEnvelope || _records!.Any(record =>
                 record.RecoveryIntent is not null || record.RecoveryCheckpoint is not null ||
                 record.Result?.RenewalEligible == true);
-            await using (FileStream stream = File.Create(tempPath))
+            if (recoveryEnvelope && !_usesRecoveryEnvelope && File.Exists(_path))
+                CreatePreEnvelopeBackup();
+            try
             {
-                OperationRecordDto[] ordered = _records!.OrderBy(operation => operation.CreatedAt)
-                    .ThenBy(operation => operation.OperationId, StringComparer.Ordinal).ToArray();
-                if (recoveryEnvelope)
+                await using (FileStream stream = File.Create(tempPath))
                 {
-                    // Older builds expect an array and must refuse this document
-                    // instead of silently dropping one-shot recovery intent.
-                    using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
-                    writer.WriteStartObject();
-                    writer.WriteNumber("schemaVersion", 2);
-                    writer.WritePropertyName("operations");
-                    JsonSerializer.Serialize(writer, ordered, JsonOptions);
-                    writer.WriteEndObject();
-                    await writer.FlushAsync(ct).ConfigureAwait(false);
+                    OperationRecordDto[] ordered = _records!.OrderBy(operation => operation.CreatedAt)
+                        .ThenBy(operation => operation.OperationId, StringComparer.Ordinal).ToArray();
+                    if (recoveryEnvelope)
+                    {
+                        // Older builds expect an array and must refuse this document
+                        // instead of silently dropping one-shot recovery intent.
+                        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+                        writer.WriteStartObject();
+                        writer.WriteNumber("schemaVersion", 2);
+                        writer.WritePropertyName("operations");
+                        JsonSerializer.Serialize(writer, ordered, JsonOptions);
+                        writer.WriteEndObject();
+                        await writer.FlushAsync(ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await JsonSerializer.SerializeAsync(stream, ordered, JsonOptions, ct).ConfigureAwait(false);
+                    }
                 }
-                else
-                {
-                    await JsonSerializer.SerializeAsync(stream, ordered, JsonOptions, ct).ConfigureAwait(false);
-                }
+                File.Move(tempPath, _path, overwrite: true);
+                _usesRecoveryEnvelope = recoveryEnvelope;
             }
-
-            File.Move(tempPath, _path, overwrite: true);
-            _usesRecoveryEnvelope = recoveryEnvelope;
+            finally
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
             throw new OperationStoreException("Operation history could not be saved.", ex);
+        }
+    }
+
+    private void CreatePreEnvelopeBackup()
+    {
+        string backupPath = _path + ".pre-envelope.bak";
+        if (File.Exists(backupPath))
+            return;
+
+        string tempBackup = backupPath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.Copy(_path, tempBackup, overwrite: false);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(tempBackup, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Move(tempBackup, backupPath, overwrite: false);
+        }
+        finally
+        {
+            if (File.Exists(tempBackup))
+                File.Delete(tempBackup);
         }
     }
 

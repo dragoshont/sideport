@@ -20,7 +20,11 @@ namespace Sideport.DeveloperApi.GrandSlam;
 /// </summary>
 internal static class AppleCaPinning
 {
-    private const string ResourceName = "Sideport.DeveloperApi.Resources.AppleRootCA-G1.pem";
+    private static readonly string[] ResourceNames =
+    [
+        "Sideport.DeveloperApi.Resources.AppleRootCA-G1.pem",
+        "Sideport.DeveloperApi.Resources.AppleRootCA-G3.pem",
+    ];
 
     private static readonly Lazy<X509Certificate2[]> PinnedRoots = new(LoadPinnedRoots);
 
@@ -74,10 +78,12 @@ internal static class AppleCaPinning
 
     private static X509Certificate2[] LoadPinnedRoots()
     {
-        using Stream stream = typeof(AppleCaPinning).Assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new InvalidOperationException($"embedded Apple root CA '{ResourceName}' not found");
-        using var reader = new StreamReader(stream);
-        string pem = reader.ReadToEnd();
-        return [X509Certificate2.CreateFromPem(pem)];
+        return ResourceNames.Select(resourceName =>
+        {
+            using Stream stream = typeof(AppleCaPinning).Assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException($"embedded Apple root CA '{resourceName}' not found");
+            using var reader = new StreamReader(stream);
+            return X509Certificate2.CreateFromPem(reader.ReadToEnd());
+        }).ToArray();
     }
 }

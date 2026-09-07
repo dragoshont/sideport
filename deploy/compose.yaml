@@ -12,7 +12,7 @@ name: sideport
 
 services:
   sideport:
-    image: ${SIDEPORT_IMAGE:-ghcr.io/dragoshont/sideport:0.1.12}
+    image: ${SIDEPORT_IMAGE:-ghcr.io/dragoshont/sideport:0.4.0}
     platform: linux/amd64
     depends_on:
       anisette:
@@ -36,6 +36,7 @@ services:
       Sideport__Orchestrator__InstallTimeout: "${SIDEPORT_INSTALL_TIMEOUT:-00:03:00}"
       Sideport__Orchestrator__InstallCancellationGrace: "${SIDEPORT_INSTALL_CANCELLATION_GRACE:-00:00:02}"
       Sideport__Devices__PairingRecordsDir: "/var/lib/lockdown"
+      Sideport__Metrics__AllowedNetworks__0: "${SIDEPORT_METRICS_ALLOWED_NETWORK:-}"
       USBMUXD_SOCKET_ADDRESS: "unix:/var/run/usbmuxd"
     ports:
       - "${SIDEPORT_PORT:-8080}:8080"

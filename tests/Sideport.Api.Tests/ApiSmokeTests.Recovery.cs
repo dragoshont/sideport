@@ -197,6 +197,12 @@ public partial class ApiSmokeTests
         Assert.NotEqual(DeviceConnection.Usb, test.Controller.RequiredConnection);
         Assert.Equal(new[] { false }, test.Identity.AllowCertificateCreation);
         Assert.Equal(0, test.Identity.LegacyPrepareCalls);
+        Assert.False(Directory.Exists(Path.Combine(
+            test.RootDirectory,
+            "signed",
+            "TEST-UDID",
+            "recovery",
+            completed.RecoveryCheckpoint!.ArtifactSnapshotId!)));
         Assert.True(test.Controller.FreshReads >= 3);
         Assert.Equal(0, test.Controller.CachedReads);
         Assert.Equal(0, test.Controller.PairCalls);
