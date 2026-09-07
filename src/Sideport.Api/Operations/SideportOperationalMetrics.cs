@@ -27,9 +27,7 @@ public sealed class SideportOperationalMetrics(
         PersonalAppleStatusDto apple = await appleAccess.StatusAsync(ct).ConfigureAwait(false);
         DateTimeOffset now = _time.GetUtcNow();
 
-        int unknownOperations = operationRecords.Count(record =>
-            record.Type is "install" or "refresh" &&
-            record.Status is "unknown" or "recovery-required");
+        int unknownOperations = CountUnresolvedDeviceOperations(operationRecords);
         int expiredProfiles = renewals.Count(item => item.ExpiresAt is { } expiry && expiry <= now);
         int blockedRenewals = renewals.Count(item =>
             string.Equals(item.Status, "blocked", StringComparison.Ordinal) ||
@@ -101,6 +99,11 @@ public sealed class SideportOperationalMetrics(
         "failed" => "failed",
         _ => "unknown",
     };
+
+    internal static int CountUnresolvedDeviceOperations(
+        IReadOnlyList<OperationRecordDto> records) =>
+        records.Count(record =>
+            OperationReconciliationEvidence.IsUnresolvedForManualAction(record, records));
 }
 
 internal static class MetricsAccessPolicy

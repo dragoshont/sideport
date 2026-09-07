@@ -24,6 +24,57 @@ public partial class ApiSmokeTests
     }
 
     [Fact]
+    public async Task Metrics_HistoricalReconciledOperationDoesNotHoldQuarantine()
+    {
+        using var factory = Factory(
+            apiToken: "metrics-test-token",
+            operationWorker: false,
+            remoteIp: IPAddress.Loopback);
+        using HttpClient client = factory.CreateClient();
+        OperationStore store = factory.Services.GetRequiredService<OperationStore>();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var target = new Sideport.Api.Operations.OperationTargetDto(
+            "TEST-UDID",
+            "com.example.app",
+            TeamId: "TEAM",
+            Kind: "app",
+            AccountProfileId: "profile",
+            Version: "1.0.0",
+            CatalogSha256: new string('a', 64));
+        Sideport.Api.Operations.OperationRecordDto historicalUnknown =
+            Operation("historical", "refresh", "unknown", target);
+        Sideport.Api.Operations.OperationRecordDto reconciliation = Operation(
+            "reconciliation",
+            "reconcile",
+            "succeeded",
+            target,
+            parentOperationId: historicalUnknown.OperationId,
+            stages: [new("verify", "Verify", "succeeded", now, now, "Verified.")],
+            result: new(
+                Success: false,
+                BundleId: target.BundleId,
+                ExpiresAt: null,
+                Error: null,
+                SafeToRerun: true,
+                ReconciledOperationId: historicalUnknown.OperationId));
+        Sideport.Api.Operations.OperationRecordDto activeUnknown =
+            Operation("active", "refresh", "recovery-required", target);
+
+        await store.AddIfIdempotentMissingAsync(historicalUnknown);
+        await store.AddIfIdempotentMissingAsync(reconciliation);
+
+        string reconciledBody = await client.GetStringAsync("/metrics");
+        Assert.Contains("sideport_unknown_device_operations 0", reconciledBody, StringComparison.Ordinal);
+        Assert.Contains("sideport_scheduler_lock_held 0", reconciledBody, StringComparison.Ordinal);
+
+        await store.AddIfIdempotentMissingAsync(activeUnknown);
+
+        string unresolvedBody = await client.GetStringAsync("/metrics");
+        Assert.Contains("sideport_unknown_device_operations 1", unresolvedBody, StringComparison.Ordinal);
+        Assert.Contains("sideport_scheduler_lock_held 1", unresolvedBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Metrics_LoopbackRequestReturnsPrometheusPayload()
     {
         using var factory = Factory(
@@ -155,5 +206,37 @@ public partial class ApiSmokeTests
         Assert.DoesNotContain("accountProfileId", body, StringComparison.Ordinal);
         Assert.DoesNotContain("deviceUdid", body, StringComparison.Ordinal);
         Assert.DoesNotContain("bundleId", body, StringComparison.Ordinal);
+    }
+
+    private static Sideport.Api.Operations.OperationRecordDto Operation(
+        string operationId,
+        string type,
+        string status,
+        Sideport.Api.Operations.OperationTargetDto target,
+        string? parentOperationId = null,
+        IReadOnlyList<Sideport.Api.Operations.OperationStageDto>? stages = null,
+        Sideport.Api.Operations.OperationResultDto? result = null)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        return new Sideport.Api.Operations.OperationRecordDto(
+            operationId,
+            type,
+            status,
+            now,
+            StartedAt: null,
+            now,
+            CompletedAt: null,
+            new Sideport.Api.Operations.OperationActorDto("test", "metrics-test"),
+            IdempotencyKey: operationId,
+            Attempt: 1,
+            target,
+            Stages: stages ?? [],
+            Result: result,
+            Error: null,
+            Cancelable: false,
+            Retryable: false,
+            Rerunnable: false,
+            CorrelationId: operationId,
+            ParentOperationId: parentOperationId);
     }
 }
