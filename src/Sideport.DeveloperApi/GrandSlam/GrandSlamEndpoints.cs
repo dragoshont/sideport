@@ -19,8 +19,9 @@ internal static class GrandSlamEndpoints
     /// <summary>The plist content type GsService2 expects and returns.</summary>
     public const string PlistContentType = "text/x-xml-plist";
 
-    /// <summary>The akd user agent Apple expects on the SRP requests.</summary>
-    public const string AkdUserAgent = "akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0";
+    /// <summary>The AuthKit/Xcode user agent sent on GrandSlam requests.</summary>
+    public const string AuthKitUserAgent =
+        "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)";
 
     /// <summary>The protocol header version sent in every request body.</summary>
     public const string ProtocolVersion = "1.0.1";

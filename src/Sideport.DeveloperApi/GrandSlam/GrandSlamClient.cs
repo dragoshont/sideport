@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Diagnostics;
 using System.Text;
 using Claunia.PropertyList;
 using Microsoft.Extensions.Logging;
@@ -50,6 +51,21 @@ internal sealed class GrandSlamClient
         ArgumentException.ThrowIfNullOrEmpty(username);
         ArgumentException.ThrowIfNullOrEmpty(password);
 
+        using var authenticationCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        authenticationCts.CancelAfter(_options.AuthenticationTimeout);
+        try
+        {
+            return await AuthenticateCoreAsync(username, password, authenticationCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new GrandSlamException("GrandSlam authentication exceeded the overall login budget", ex);
+        }
+    }
+
+    private async Task<AppleLoginResult> AuthenticateCoreAsync(
+        string username, string password, CancellationToken ct)
+    {
         var srp = new AppleSrpClient();
         byte[] a = srp.StartAuthentication();
 
@@ -68,7 +84,7 @@ internal sealed class GrandSlamClient
         {
             "s2k" => false,
             "s2k_fo" => true,
-            _ => throw new GrandSlamException($"unsupported SRP protocol '{protocol}'"),
+            _ => throw new GrandSlamException("GrandSlam returned an unsupported SRP protocol"),
         };
         byte[] salt = PlistCodec.GetData(initResponse, "s");
         int iterations = checked((int)PlistCodec.GetLong(initResponse, "i"));
@@ -165,7 +181,7 @@ internal sealed class GrandSlamClient
         byte[] body = await response.Content.ReadAsByteArrayAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new GrandSlamException(
-                $"2FA validation HTTP {(int)response.StatusCode} {response.ReasonPhrase}",
+                $"2FA validation HTTP {(int)response.StatusCode}",
                 statusCode: response.StatusCode);
 
         NSDictionary parsed = PlistCodec.ParseDictionary(body);
@@ -205,10 +221,7 @@ internal sealed class GrandSlamClient
 
         NSDictionary tokens = PlistCodec.GetDictionary(tokenPlist, "t");
         NSDictionary appEntry = PlistCodec.GetDictionary(tokens, XcodeAuthApp);
-        if (_logger.IsEnabled(LogLevel.Debug))
-            _logger.LogDebug(
-                "GrandSlam app-token minted for {App} (fields [{Fields}])",
-                XcodeAuthApp, string.Join(",", appEntry.Keys));
+        _logger.LogDebug("GrandSlam app-token minted for {App}", XcodeAuthApp);
         return PlistCodec.GetString(appEntry, "token");
     }
 
@@ -245,38 +258,156 @@ internal sealed class GrandSlamClient
 
     private async Task<NSDictionary> SendAsync(Dictionary<string, object> parameters, CancellationToken ct)
     {
-        AnisetteHeaders anisette = await _anisette.GetHeadersAsync(ct);
-        var body = new Dictionary<string, object>
-        {
-            ["Header"] = new Dictionary<string, object> { ["Version"] = GrandSlamEndpoints.ProtocolVersion },
-            ["Request"] = BuildRequest(parameters, anisette),
-        };
+        string operation = parameters["o"] as string
+            ?? throw new InvalidOperationException("GrandSlam operation is missing");
+        bool retryableOperation = operation is "init" or "apptokens";
+        int maximumAttempts = retryableOperation ? 3 : 1;
+        var exchangeTimer = Stopwatch.StartNew();
+        using var exchangeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        exchangeCts.CancelAfter(_options.ExchangeTimeout);
 
-        byte[] payload = PlistCodec.ToXmlBytes(body);
-        using var request = new HttpRequestMessage(HttpMethod.Post, GrandSlamEndpoints.GsService2)
+        for (int attempt = 1; attempt <= maximumAttempts; attempt++)
         {
+            using var attemptCts =
+                CancellationTokenSource.CreateLinkedTokenSource(exchangeCts.Token);
+            attemptCts.CancelAfter(_options.AttemptTimeout);
+            var attemptTimer = Stopwatch.StartNew();
+            HttpResponseMessage response;
+            try
+            {
+                // OTPs and their timestamps belong to one request, including retries.
+                AnisetteHeaders anisette = await _anisette.GetHeadersAsync(attemptCts.Token);
+                var body = new Dictionary<string, object>
+                {
+                    ["Header"] = new Dictionary<string, object> { ["Version"] = GrandSlamEndpoints.ProtocolVersion },
+                    ["Request"] = BuildRequest(parameters, anisette),
+                };
+                using HttpRequestMessage request =
+                    CreateGrandSlamRequest(PlistCodec.ToXmlBytes(body), anisette);
+                response = await _http.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token);
+            }
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                string budget = exchangeCts.IsCancellationRequested ? "exchange" : "attempt";
+                throw new GrandSlamException(
+                    $"GrandSlam {operation} timed out within the {budget} budget " +
+                    $"(attempt {attempt}/{maximumAttempts})", ex);
+            }
+
+            using (response)
+            {
+                string contentType = response.Content.Headers.ContentType?.MediaType ?? "none";
+                _logger.LogInformation(
+                    "GrandSlam {Operation} attempt {Attempt}/{MaximumAttempts} returned HTTP {Status} " +
+                    "content-type {ContentType} HTTP/{HttpVersion} in {ElapsedMs}ms",
+                    operation, attempt, maximumAttempts, (int)response.StatusCode, contentType,
+                    response.Version, attemptTimer.ElapsedMilliseconds);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    byte[] responseBody;
+                    try
+                    {
+                        responseBody =
+                            await response.Content.ReadAsByteArrayAsync(attemptCts.Token);
+                    }
+                    catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+                    {
+                        string budget =
+                            exchangeCts.IsCancellationRequested ? "exchange" : "attempt";
+                        throw new GrandSlamException(
+                            $"GrandSlam {operation} timed out within the {budget} budget " +
+                            $"(attempt {attempt}/{maximumAttempts})", ex);
+                    }
+                    NSDictionary parsed = PlistCodec.ParseDictionary(responseBody);
+                    return PlistCodec.GetDictionary(parsed, "Response");
+                }
+
+                bool retryableStatus = response.StatusCode is
+                    System.Net.HttpStatusCode.BadGateway or
+                    System.Net.HttpStatusCode.ServiceUnavailable or
+                    System.Net.HttpStatusCode.GatewayTimeout;
+                if (!retryableStatus || attempt == maximumAttempts)
+                    throw HttpFailure(operation, attempt, response, contentType);
+
+                TimeSpan delay = GetRetryDelay(response, attempt);
+                TimeSpan remaining = _options.ExchangeTimeout - exchangeTimer.Elapsed;
+                if (delay > _options.MaximumRetryDelay || delay >= remaining)
+                {
+                    throw new GrandSlamException(
+                        $"GrandSlam {operation} HTTP {(int)response.StatusCode} " +
+                        $"(attempt {attempt}/{maximumAttempts}, retry delay exceeds budget, " +
+                        $"content-type {contentType}, HTTP/{response.Version})",
+                        statusCode: response.StatusCode);
+                }
+
+                _logger.LogWarning(
+                    "GrandSlam {Operation} retry scheduled after {DelayMs}ms " +
+                    "(attempt {Attempt}/{MaximumAttempts}, status {Status})",
+                    operation, delay.TotalMilliseconds, attempt, maximumAttempts,
+                    (int)response.StatusCode);
+                response.Dispose();
+                try
+                {
+                    await Task.Delay(delay, exchangeCts.Token);
+                }
+                catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+                {
+                    throw new GrandSlamException(
+                        $"GrandSlam {operation} timed out within the exchange budget " +
+                        $"(attempt {attempt}/{maximumAttempts})", ex);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("GrandSlam retry loop completed unexpectedly");
+    }
+
+    private static GrandSlamException HttpFailure(
+        string operation,
+        int attempt,
+        HttpResponseMessage response,
+        string contentType) =>
+        new(
+            $"GrandSlam {operation} HTTP {(int)response.StatusCode} " +
+            $"(attempt {attempt}, content-type {contentType}, HTTP/{response.Version})",
+            statusCode: response.StatusCode);
+
+    private TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+    {
+        if (response.Headers.RetryAfter?.Delta is { } delta)
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+
+        if (response.Headers.RetryAfter?.Date is { } date)
+        {
+            TimeSpan dateDelay = date - DateTimeOffset.UtcNow;
+            return dateDelay < TimeSpan.Zero ? TimeSpan.Zero : dateDelay;
+        }
+
+        double multiplier = Math.Pow(2, attempt - 1);
+        return TimeSpan.FromMilliseconds(_options.RetryDelay.TotalMilliseconds * multiplier);
+    }
+
+    private static HttpRequestMessage CreateGrandSlamRequest(
+        byte[] payload, AnisetteHeaders anisette)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, GrandSlamEndpoints.GsService2)
+        {
+            Version = System.Net.HttpVersion.Version11,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
             Content = new ByteArrayContent(payload),
         };
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue(GrandSlamEndpoints.PlistContentType);
-        request.Headers.UserAgent.ParseAdd(GrandSlamEndpoints.AkdUserAgent);
+        request.Content.Headers.ContentType =
+            new MediaTypeHeaderValue(GrandSlamEndpoints.PlistContentType);
+        request.Headers.UserAgent.ParseAdd(GrandSlamEndpoints.AuthKitUserAgent);
         request.Headers.Accept.ParseAdd("*/*");
-        // Mirror the anisette-provided client-info when present (trust inheritance),
-        // else the built-in Xcode client emulation.
         request.Headers.TryAddWithoutValidation(
             "X-MMe-Client-Info",
-            string.IsNullOrEmpty(anisette.ClientInfo) ? GrandSlamHeaders.ClientInfo : anisette.ClientInfo);
-
-        using HttpResponseMessage response = await _http.SendAsync(request, ct);
-        byte[] responseBody = await response.Content.ReadAsByteArrayAsync(ct);
-
-        if (!response.IsSuccessStatusCode)
-            throw new GrandSlamException(
-                $"GrandSlam HTTP {(int)response.StatusCode} {response.ReasonPhrase} " +
-                $"(content-type {response.Content.Headers.ContentType?.MediaType ?? "none"})",
-                statusCode: response.StatusCode);
-
-        NSDictionary parsed = PlistCodec.ParseDictionary(responseBody);
-        return PlistCodec.GetDictionary(parsed, "Response");
+            string.IsNullOrEmpty(anisette.ClientInfo)
+                ? GrandSlamHeaders.ClientInfo
+                : anisette.ClientInfo);
+        return request;
     }
 
     private Dictionary<string, object> BuildRequest(
@@ -335,7 +466,7 @@ internal sealed class GrandSlamClient
         {
             "trustedDeviceSecondaryAuth" => TwoFactorKind.TrustedDevice,
             "secondaryAuth" => TwoFactorKind.Sms,
-            _ => throw new GrandSlamException($"unknown secondary-auth method '{au}'"),
+            _ => throw new GrandSlamException("GrandSlam returned an unknown secondary-auth method"),
         };
     }
 
@@ -352,8 +483,7 @@ internal sealed class GrandSlamClient
         if (code == 0)
             return;
 
-        string message = status.ContainsKey("em") ? status["em"].ToString()! : "unknown error";
-        throw new GrandSlamException($"GrandSlam error {code}: {message}", code);
+        throw new GrandSlamException($"GrandSlam error {code}", code);
     }
 
     /// <summary>Redact most of an identifier for logs (keep a short prefix).</summary>

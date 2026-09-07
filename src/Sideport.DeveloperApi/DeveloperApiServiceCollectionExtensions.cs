@@ -50,21 +50,8 @@ public static class DeveloperApiServiceCollectionExtensions
         // disabling verification like the rest of the ecosystem. The insecure
         // opt-out exists only for proxy-based protocol debugging/capture.
         services.AddHttpClient<GrandSlamClient>()
-            .ConfigurePrimaryHttpMessageHandler(() =>
-            {
-                var handler = new HttpClientHandler();
-                if (allowInsecureTls)
-                {
-                    handler.ServerCertificateCustomValidationCallback =
-                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-                }
-                else
-                {
-                    handler.ServerCertificateCustomValidationCallback =
-                        (_, cert, chain, _) => AppleCaPinning.Validate(cert, chain);
-                }
-                return handler;
-            });
+            .ConfigurePrimaryHttpMessageHandler(
+                () => GrandSlamTransport.CreateHandler(allowInsecureTls));
 
         // developerservices2.apple.com is served from a PUBLICLY trusted cert
         // (unlike GSA's private CA), so the developer-services client validates

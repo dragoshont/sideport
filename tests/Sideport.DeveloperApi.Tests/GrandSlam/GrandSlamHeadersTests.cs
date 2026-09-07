@@ -39,6 +39,10 @@ public class GrandSlamHeadersTests
 
         Assert.True(headers.ContainsKey("X-Mme-Client-Info"));
         Assert.Equal("com.apple.gs.xcode.auth", headers["X-Apple-App-Info"]);
+        Assert.Equal("26.5 (17F42)", headers["X-Xcode-Version"]);
+        Assert.Equal(
+            "<iMac11,3> <macOS;26.6;25G72> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>",
+            headers["X-Mme-Client-Info"]);
     }
 
     [Fact]

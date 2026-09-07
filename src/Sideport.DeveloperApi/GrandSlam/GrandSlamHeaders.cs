@@ -15,9 +15,9 @@ internal static class GrandSlamHeaders
 {
     // Constant client identifiers (the Xcode-on-Mac emulation pypush documents).
     public const string ClientInfo =
-        "<iMac11,3> <Mac OS X;10.15.6;19G2021> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>";
+        "<iMac11,3> <macOS;26.6;25G72> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>";
     private const string AppInfo = "com.apple.gs.xcode.auth";
-    private const string XcodeVersion = "11.2 (11B41)";
+    private const string XcodeVersion = "26.5 (17F42)";
     private const string RoutingInfo = "17106176";
     private const string SerialNumber = "0";
 

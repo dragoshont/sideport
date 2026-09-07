@@ -1149,6 +1149,30 @@ operation succeeded within 15 minutes and its cached session is still the one
 used for that validation. Status GET never signs in, fetches
 teams/certificates, or asserts that an in-memory session will renew.
 
+#### GrandSlam transport and retry boundary
+
+GSA authentication uses a dedicated HTTP/1.1 transport with no pooled connection
+reuse and modern AuthKit/Xcode client identification. Anisette-provided trusted
+identity fields remain unchanged. Each request attempt obtains fresh anisette
+headers. Custom Apple-root TLS validation also checks the server name.
+
+Only `init` and `apptokens` may retry HTTP 502, 503 or 504, with at most three
+total attempts per exchange. Defaults bound an attempt to 15 seconds, an
+exchange including backoff to 40 seconds, and the entire login to 45 seconds.
+Backoff begins at 250 milliseconds; `Retry-After` is respected only if it fits
+within the remaining budget and the five-second maximum delay. Otherwise the
+failure is returned rather than retrying sooner than requested. Caller
+cancellation stops pending requests and waits.
+
+SRP `complete`, 2FA submission and prompts are never automatically replayed.
+Authentication/protocol errors, malformed responses, TLS/transport failures and
+HTTP 401/403/429 are not retried. This policy does not apply to certificate
+issuance, revocation, developer-service writes or device installation.
+
+Diagnostics retain the operation, attempt, status, content type, HTTP version
+and timing, not raw bodies or authentication material. A retry budget exhausted
+at Apple is not proof of an account problem or an Apple-wide outage.
+
 #### Managed credential establishment
 
 `POST /api/apple-access/personal/connect` is planned and is not part of the

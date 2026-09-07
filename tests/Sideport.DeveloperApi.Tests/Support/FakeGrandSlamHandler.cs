@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using Claunia.PropertyList;
 using Sideport.GrandSlam.Crypto;
 
@@ -28,9 +29,37 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
 
     // The app-token GCM session key delivered in the SPD (deterministic for tests).
     private readonly byte[] _appSk = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+    private readonly Dictionary<string, int> _operationCalls = [];
 
     /// <summary>The app token the apptokens <c>et</c> blob will carry.</summary>
     public string AppToken { get; init; } = "fake-app-token";
+
+    public int AppTokenFailuresRemaining { get; set; }
+
+    public HttpStatusCode AppTokenFailureStatus { get; init; } = HttpStatusCode.ServiceUnavailable;
+
+    public TimeSpan? AppTokenRetryAfter { get; init; }
+
+    public TimeSpan AppTokenDelay { get; init; }
+
+    public TaskCompletionSource AppTokenStarted { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public HttpStatusCode? CompleteHttpStatus { get; init; }
+
+    public HttpStatusCode? CodeValidationHttpStatus { get; init; }
+    public HttpStatusCode? TrustedDeviceHttpStatus { get; init; }
+    public int CodeValidationCalls { get; private set; }
+    public int TrustedDevicePromptCalls { get; private set; }
+
+    public int OperationCalls(string operation) =>
+        _operationCalls.TryGetValue(operation, out int count) ? count : 0;
+
+    public Version? LastHttpVersion { get; private set; }
+
+    public string? LastUserAgent { get; private set; }
+
+    public string? LastClientInfo { get; private set; }
 
     /// <summary>
     /// Optional decrypted SPD bytes used to exercise malformed-secret handling.
@@ -94,12 +123,20 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
 
         if (url.Contains("/auth/verify/trusteddevice"))
         {
+            TrustedDevicePromptCalls++;
             TrustedDevicePromptTriggered = true;
+            if (TrustedDeviceHttpStatus is { } promptStatus)
+                return new HttpResponseMessage(promptStatus);
             return Ok(new ByteArrayContent("<html>prompt</html>"u8.ToArray()));
         }
 
         if (url.Contains("/GsService2/validate"))
+        {
+            CodeValidationCalls++;
+            if (CodeValidationHttpStatus is { } codeStatus)
+                return new HttpResponseMessage(codeStatus);
             return ValidateCode(request);
+        }
 
         if (url.Contains("/grandslam/GsService2"))
             return await HandleSrpAsync(request, cancellationToken);
@@ -111,17 +148,68 @@ internal sealed class FakeGrandSlamHandler : HttpMessageHandler
         HttpRequestMessage request, CancellationToken ct)
     {
         byte[] requestBytes = await request.Content!.ReadAsByteArrayAsync(ct);
+        LastHttpVersion = request.Version;
+        LastUserAgent = request.Headers.UserAgent.ToString();
+        LastClientInfo = request.Headers.TryGetValues("X-MMe-Client-Info", out var clientInfo)
+            ? clientInfo.Single()
+            : null;
         var body = (NSDictionary)PropertyListParser.Parse(requestBytes);
         var requestDict = (NSDictionary)body["Request"];
         string operation = requestDict["o"].ToString()!;
+        _operationCalls[operation] = OperationCalls(operation) + 1;
 
         return operation switch
         {
             "init" => Ok(PlistContent(BuildInitResponse(requestDict))),
+            "complete" when CompleteHttpStatus is { } status =>
+                new HttpResponseMessage(status),
             "complete" => Ok(PlistContent(BuildCompleteResponse(requestDict))),
-            "apptokens" => Ok(PlistContent(BuildAppTokensResponse())),
+            "apptokens" => await HandleAppTokensAsync(requestDict, ct),
             _ => new HttpResponseMessage(HttpStatusCode.BadRequest),
         };
+    }
+
+    private async Task<HttpResponseMessage> HandleAppTokensAsync(
+        NSDictionary request, CancellationToken ct)
+    {
+        AppTokenStarted.TrySetResult();
+        if (AppTokenDelay > TimeSpan.Zero)
+            await Task.Delay(AppTokenDelay, ct);
+
+        if (AppTokenFailuresRemaining > 0)
+        {
+            AppTokenFailuresRemaining--;
+            var failure = new HttpResponseMessage(AppTokenFailureStatus);
+            if (AppTokenRetryAfter is { } retryAfter)
+                failure.Headers.RetryAfter =
+                    new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter);
+            return failure;
+        }
+
+        if (!ValidateAppTokenRequest(request))
+            return new HttpResponseMessage(HttpStatusCode.BadRequest);
+
+        return Ok(PlistContent(BuildAppTokensResponse()));
+    }
+
+    private bool ValidateAppTokenRequest(NSDictionary request)
+    {
+        if (request["u"].ToString() != _adsid ||
+            request["t"].ToString() != _idmsToken ||
+            request["c"] is not NSData cookie ||
+            !cookie.Bytes.AsSpan().SequenceEqual("apptoken-cookie"u8) ||
+            request["app"] is not NSArray apps ||
+            apps.Count != 1 ||
+            apps[0].ToString() != "com.apple.gs.xcode.auth" ||
+            request["checksum"] is not NSData checksum)
+        {
+            return false;
+        }
+
+        byte[] message = System.Text.Encoding.UTF8.GetBytes(
+            "apptokens" + _adsid + "com.apple.gs.xcode.auth");
+        byte[] expected = HMACSHA256.HashData(_appSk, message);
+        return CryptographicOperations.FixedTimeEquals(expected, checksum.Bytes);
     }
 
     private NSDictionary BuildInitResponse(NSDictionary request)

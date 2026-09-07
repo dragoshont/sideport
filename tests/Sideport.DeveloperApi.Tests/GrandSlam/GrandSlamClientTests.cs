@@ -33,6 +33,14 @@ public class GrandSlamClientTests
             NullLogger<GrandSlamClient>.Instance);
     }
 
+    private static GrandSlamClient ClientFor(
+        HttpMessageHandler handler, GrandSlamClientOptions options) =>
+        new(
+            new HttpClient(handler),
+            new StubAnisetteProvider(),
+            options,
+            NullLogger<GrandSlamClient>.Instance);
+
     [Fact]
     public async Task Authenticate_HappyPath_ReturnsUsableSession()
     {
@@ -49,6 +57,14 @@ public class GrandSlamClientTests
         Assert.Equal("fake-app-token", success.Session.IdmsToken);
         Assert.Equal("Test Person", success.Session.AccountName);
         Assert.Equal(32, success.Session.SessionKey.Length);
+        Assert.NotEqual("test-idms-token", success.Session.IdmsToken);
+        Assert.Equal(HttpVersion.Version11, handler.LastHttpVersion);
+        Assert.Equal(
+            "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)",
+            handler.LastUserAgent);
+        Assert.Equal(
+            "<iMac11,3> <macOS;26.6;25G72> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>",
+            handler.LastClientInfo);
     }
 
     [Fact]
@@ -171,6 +187,255 @@ public class GrandSlamClientTests
             () => client.AuthenticateAsync(Username, Password));
         Assert.Contains("502", ex.Message);
         Assert.Equal(HttpStatusCode.BadGateway, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Authenticate_AppToken503Then200_RetriesOnlyAppTokenExchange()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenFailuresRemaining = 1,
+        };
+        GrandSlamClient client = ClientFor(handler);
+
+        var result = Assert.IsType<AppleLoginResult.Success>(
+            await client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal("fake-app-token", result.Session.IdmsToken);
+        Assert.Equal(1, handler.OperationCalls("init"));
+        Assert.Equal(1, handler.OperationCalls("complete"));
+        Assert.Equal(2, handler.OperationCalls("apptokens"));
+    }
+
+    [Fact]
+    public async Task Authenticate_AppToken503Exhaustion_IsBoundedToThreeAttempts()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenFailuresRemaining = 3,
+        };
+        GrandSlamClient client = ClientFor(handler);
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ex.StatusCode);
+        Assert.Equal(3, handler.OperationCalls("apptokens"));
+    }
+
+    [Fact]
+    public async Task Authenticate_Complete503_IsNeverRetried()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            CompleteHttpStatus = HttpStatusCode.ServiceUnavailable,
+        };
+        GrandSlamClient client = ClientFor(handler);
+
+        await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal(1, handler.OperationCalls("init"));
+        Assert.Equal(1, handler.OperationCalls("complete"));
+        Assert.Equal(0, handler.OperationCalls("apptokens"));
+    }
+
+    [Fact]
+    public async Task SubmitCode_503_IsNeverRetried()
+    {
+        var handler = new FakeGrandSlamHandler(
+            Username, PasswordKey(), Salt, Iterations,
+            FakeGrandSlamHandler.TwoFactorMode.TrustedDevice)
+        {
+            CodeValidationHttpStatus = HttpStatusCode.ServiceUnavailable,
+        };
+        GrandSlamClient client = ClientFor(handler);
+        var challenge = Assert.IsType<AppleLoginResult.TwoFactorRequired>(
+            await client.AuthenticateAsync(Username, Password));
+
+        await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.SubmitTwoFactorCodeAsync(challenge.Challenge, "123456"));
+
+        Assert.Equal(1, handler.CodeValidationCalls);
+    }
+
+    [Fact]
+    public async Task Authenticate_TrustedDevicePrompt503_IsNeverRetried()
+    {
+        var handler = new FakeGrandSlamHandler(
+            Username, PasswordKey(), Salt, Iterations,
+            FakeGrandSlamHandler.TwoFactorMode.TrustedDevice)
+        {
+            TrustedDeviceHttpStatus = HttpStatusCode.ServiceUnavailable,
+        };
+
+        Assert.IsType<AppleLoginResult.TwoFactorRequired>(
+            await ClientFor(handler).AuthenticateAsync(Username, Password));
+
+        Assert.Equal(1, handler.TrustedDevicePromptCalls);
+        Assert.Equal(0, handler.OperationCalls("apptokens"));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task Authenticate_NonRetryableInitStatus_IsAttemptedOnce(HttpStatusCode status)
+    {
+        var handler = new CountingStatusHandler(status);
+        GrandSlamClient client = ClientFor(handler, FastOptions());
+
+        await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Authenticate_CallerCancellation_StopsAppTokenRetry()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenFailuresRemaining = 3,
+            AppTokenRetryAfter = TimeSpan.FromSeconds(1),
+        };
+        GrandSlamClient client = ClientFor(handler);
+        using var cts = new CancellationTokenSource();
+        Task<AppleLoginResult> authentication = client.AuthenticateAsync(Username, Password, cts.Token);
+        await handler.AppTokenStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => authentication);
+
+        Assert.Equal(1, handler.OperationCalls("apptokens"));
+    }
+
+    [Fact]
+    public async Task Authenticate_AppTokenRetry_FetchesFreshAnisetteForEachAttempt()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenFailuresRemaining = 1,
+        };
+        var anisette = new StubAnisetteProvider();
+        GrandSlamClient client = ClientFor(handler, anisette);
+
+        Assert.IsType<AppleLoginResult.Success>(await client.AuthenticateAsync(Username, Password));
+        Assert.Equal(2, handler.OperationCalls("apptokens"));
+        Assert.Equal(4, anisette.HeaderCalls);
+    }
+
+    [Fact]
+    public async Task Authenticate_OverallBudget_CoversAnisette()
+    {
+        var handler = new CountingStatusHandler(HttpStatusCode.OK);
+        var client = new GrandSlamClient(
+            new HttpClient(handler),
+            new WaitingAnisetteProvider(),
+            new GrandSlamClientOptions
+            {
+                DeviceId = "test",
+                AuthenticationTimeout = TimeSpan.FromMilliseconds(50),
+                AttemptTimeout = TimeSpan.FromSeconds(10),
+                ExchangeTimeout = TimeSpan.FromSeconds(20),
+            },
+            NullLogger<GrandSlamClient>.Instance);
+
+        GrandSlamException error = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Contains("overall login budget", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    private sealed class WaitingAnisetteProvider : IAnisetteProvider
+    {
+        public Task<AnisetteClientInfo> GetClientInfoAsync(CancellationToken ct = default) =>
+            Task.FromResult(new AnisetteClientInfo("test", "test"));
+
+        public async Task<AnisetteHeaders> GetHeadersAsync(CancellationToken ct = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            throw new InvalidOperationException("The test wait must end by cancellation.");
+        }
+    }
+
+    [Fact]
+    public async Task Authenticate_AttemptTimeout_IsBoundedAndSanitized()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenDelay = TimeSpan.FromSeconds(5),
+        };
+        GrandSlamClient client = ClientFor(handler, new GrandSlamClientOptions
+        {
+            DeviceId = "test",
+            AttemptTimeout = TimeSpan.FromSeconds(1),
+            ExchangeTimeout = TimeSpan.FromSeconds(10),
+            RetryDelay = TimeSpan.FromMilliseconds(5),
+            MaximumRetryDelay = TimeSpan.FromMilliseconds(100),
+        });
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Contains("apptokens timed out", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(Username, ex.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Password, ex.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("test-idms-token", ex.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Authenticate_RetryAfterBeyondBudget_FailsRatherThanRetryingEarly()
+    {
+        var handler = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations)
+        {
+            AppTokenFailuresRemaining = 1,
+            AppTokenRetryAfter = TimeSpan.FromSeconds(10),
+        };
+        GrandSlamClient client = ClientFor(handler, FastOptions());
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Contains("retry delay exceeds budget", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(1, handler.OperationCalls("apptokens"));
+    }
+
+    [Fact]
+    public async Task Authenticate_TamperedAppTokenChecksum_IsRejectedByIndependentOracle()
+    {
+        var oracle = new FakeGrandSlamHandler(Username, PasswordKey(), Salt, Iterations);
+        GrandSlamClient client = ClientFor(
+            new TamperAppTokenChecksumHandler(oracle), FastOptions());
+
+        GrandSlamException ex = await Assert.ThrowsAsync<GrandSlamException>(
+            () => client.AuthenticateAsync(Username, Password));
+
+        Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
+        Assert.Equal(1, oracle.OperationCalls("apptokens"));
+    }
+
+    private static GrandSlamClientOptions FastOptions() => new()
+    {
+        DeviceId = "test",
+        AttemptTimeout = TimeSpan.FromMilliseconds(250),
+        ExchangeTimeout = TimeSpan.FromSeconds(1),
+        RetryDelay = TimeSpan.FromMilliseconds(5),
+        MaximumRetryDelay = TimeSpan.FromMilliseconds(100),
+    };
+
+    private sealed class CountingStatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(status));
+        }
     }
 
     [Fact]

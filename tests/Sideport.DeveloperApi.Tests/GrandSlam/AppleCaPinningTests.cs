@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Net.Security;
 using Sideport.DeveloperApi.GrandSlam;
 
 namespace Sideport.DeveloperApi.Tests.GrandSlam;
@@ -32,6 +33,27 @@ public class AppleCaPinningTests
         // does not chain to a pinned Apple root.
         using X509Certificate2 rogue = MakeSelfSigned("CN=evil.example.com");
         Assert.False(AppleCaPinning.Validate(rogue, null));
+    }
+
+    [Fact]
+    public void ProductionCallback_HostnameMismatch_RejectsOtherwiseAcceptedCertificate()
+    {
+        using X509Certificate2 anchor = AppleCaPinning.Roots[0];
+        using var handler = GrandSlamTransport.CreateHandler(allowInsecureTls: false);
+        RemoteCertificateValidationCallback callback =
+            Assert.IsType<RemoteCertificateValidationCallback>(handler.SslOptions.RemoteCertificateValidationCallback);
+
+        // The same trusted fixture must pass without the name error, so chain
+        // rejection cannot hide a missing hostname guard or lost callback error.
+        Assert.True(callback(this, anchor, null, SslPolicyErrors.None));
+        Assert.False(callback(this, anchor, null, SslPolicyErrors.RemoteCertificateNameMismatch));
+    }
+
+    [Fact]
+    public void Validate_MissingCertificate_Rejected()
+    {
+        Assert.False(AppleCaPinning.Validate(
+            null, null, SslPolicyErrors.RemoteCertificateNotAvailable));
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
 namespace Sideport.DeveloperApi.GrandSlam;
@@ -34,9 +35,14 @@ internal static class AppleCaPinning
     /// A <see cref="System.Net.Http.HttpClientHandler.ServerCertificateCustomValidationCallback"/>
     /// that accepts a leaf only if it builds a valid chain to a pinned Apple root.
     /// </summary>
-    public static bool Validate(X509Certificate2? leaf, X509Chain? builtChain)
+    public static bool Validate(
+        X509Certificate2? leaf,
+        X509Chain? builtChain,
+        SslPolicyErrors policyErrors = SslPolicyErrors.None)
     {
-        if (leaf is null)
+        if (leaf is null ||
+            (policyErrors & (SslPolicyErrors.RemoteCertificateNameMismatch |
+                             SslPolicyErrors.RemoteCertificateNotAvailable)) != 0)
             return false;
 
         using var chain = new X509Chain();

@@ -3,10 +3,11 @@ using System.Net;
 namespace Sideport.DeveloperApi.GrandSlam;
 
 /// <summary>
-/// A GrandSlam protocol error: the server returned a non-zero status code
-/// (<c>Status.ec</c>) with a message (<c>Status.em</c>), or the response was
-/// otherwise unusable. <see cref="ErrorCode"/> is <c>null</c> for transport- or
-/// parse-level failures that did not carry an Apple error code.
+/// A GrandSlam protocol error: the server returned a non-zero status code or
+/// the response was otherwise unusable. Server-provided messages are omitted
+/// because they are not safe diagnostic material. <see cref="ErrorCode"/> is
+/// <c>null</c> for transport- or parse-level failures that did not carry an
+/// Apple error code.
 /// </summary>
 public sealed class GrandSlamException : Exception
 {
