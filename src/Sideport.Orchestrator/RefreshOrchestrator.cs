@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sideport.Core;
@@ -64,15 +65,25 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
     public bool HasCachedAppleSession(string appleId) =>
         !string.IsNullOrWhiteSpace(appleId) && _sessions.TryGetCachedSession(appleId) is not null;
 
-    public async Task<RefreshResult> RefreshAsync(
+    public Task<RefreshResult> RefreshAsync(
         string udid,
         string bundleId,
         RefreshExecutionPolicy executionPolicy,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        RefreshCoreAsync(udid, bundleId, executionPolicy, executionPolicy.Recovery, ct);
+
+    private async Task<RefreshResult> RefreshCoreAsync(
+        string udid,
+        string bundleId,
+        RefreshExecutionPolicy executionPolicy,
+        RefreshRecoveryPlan? recovery,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(udid);
         ArgumentException.ThrowIfNullOrEmpty(bundleId);
         ArgumentNullException.ThrowIfNull(executionPolicy);
+        if (recovery is not null && executionPolicy.AllowCertificateCreation)
+            throw new ArgumentException("Recovery cannot authorize certificate creation.", nameof(executionPolicy));
 
         AppRegistration? registration = await _registry.FindAsync(udid, bundleId, ct);
         if (registration is null)
@@ -84,7 +95,7 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
         bool releaseLease = true;
         try
         {
-            return await RunLockedAsync(registration, executionPolicy, ct);
+            return await RunLockedAsync(registration, executionPolicy, recovery, ct);
         }
         catch (InstallOutcomeUnknownException unknown)
         {
@@ -118,12 +129,25 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
     private async Task<RefreshResult> RunLockedAsync(
         AppRegistration app,
         RefreshExecutionPolicy executionPolicy,
+        RefreshRecoveryPlan? recovery,
         CancellationToken ct)
     {
         _logger.LogInformation("refreshing {Bundle} on {Udid}", app.BundleId, app.DeviceUdid);
 
         if (!File.Exists(app.InputIpaPath))
             return Record(app, null, false, $"input IPA not found: {app.InputIpaPath}");
+
+        string signInputPath = app.InputIpaPath;
+        string? pinnedSha = null;
+        if (recovery is not null)
+        {
+            (string? pinnedPath, string? pinnedHash, RefreshResult? pinFailure) =
+                await PinArtifactSnapshotAsync(app, recovery.ExpectedArtifactSha256, ct).ConfigureAwait(false);
+            if (pinFailure is not null)
+                return pinFailure;
+            signInputPath = pinnedPath!;
+            pinnedSha = pinnedHash;
+        }
 
         AppleSession session;
         try
@@ -175,7 +199,7 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
             try
             {
                 sign = await _signer.SignAsync(new SignRequest(
-                    app.InputIpaPath, outputIpa,
+                    signInputPath, outputIpa,
                     inputs.Pkcs12Path, inputs.ProvisioningProfilePath,
                     inputs.Pkcs12Password), ct);
             }
@@ -187,6 +211,38 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
 
             if (!sign.Success)
                 return Record(app, null, false, sign.Error ?? "signing failed");
+
+            if (recovery is not null)
+            {
+                // The prepared expiry + pinned lineage + mutation-start marker
+                // must be durable BEFORE the iPhone is changed. A store failure
+                // fails the attempt closed without any device mutation.
+                try
+                {
+                    await recovery.PersistMutationStartAsync(
+                        new RefreshMutationCheckpoint(
+                            app.DeviceUdid,
+                            app.BundleId,
+                            inputs.ExpiresAt,
+                            pinnedSha!,
+                            Path.GetFileName(Path.GetDirectoryName(signInputPath))),
+                        ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("recovery checkpoint store failed ({ErrorType})", ex.GetType().Name);
+                    return Record(
+                        app,
+                        inputs.ExpiresAt,
+                        false,
+                        "Sideport could not durably record the recovery checkpoint before installing.",
+                        "recovery-checkpoint-store-failed");
+                }
+            }
 
             try
             {
@@ -217,6 +273,61 @@ public sealed class RefreshOrchestrator : IRefreshOrchestrator
                 app.BundleId, app.DeviceUdid, inputs.ExpiresAt);
             return Record(app, inputs.ExpiresAt, true, null);
         }
+    }
+
+    private async Task<(string? PinnedPath, string? PinnedSha256, RefreshResult? Failure)> PinArtifactSnapshotAsync(
+        AppRegistration app,
+        string expectedArtifactSha256,
+        CancellationToken ct)
+    {
+        string sourceSha;
+        try
+        {
+            sourceSha = await ComputeSha256Async(app.InputIpaPath, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, null, Record(app, null, false, "Sideport could not read the saved app to pin it for recovery.", "recovery-artifact-unreadable"));
+        }
+        if (!string.Equals(sourceSha, expectedArtifactSha256, StringComparison.OrdinalIgnoreCase))
+            return (null, null, Record(app, null, false, "The saved app changed before Sideport could pin it for recovery.", "recovery-artifact-lineage-changed"));
+
+        string directory = Path.Combine(_options.WorkDirectory, app.DeviceUdid, "recovery", Guid.NewGuid().ToString("N"));
+        string pinnedPath = Path.Combine(directory, $"{app.BundleId}.ipa");
+        string pinnedSha;
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            await using (var source = new FileStream(app.InputIpaPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            await using (var destination = new FileStream(pinnedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                await source.CopyToAsync(destination, ct).ConfigureAwait(false);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(pinnedPath, UnixFileMode.UserRead);
+            pinnedSha = await ComputeSha256Async(pinnedPath, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, null, Record(app, null, false, "Sideport could not create a private signing snapshot for recovery.", "recovery-artifact-unreadable"));
+        }
+        if (!string.Equals(pinnedSha, expectedArtifactSha256, StringComparison.OrdinalIgnoreCase))
+            return (null, null, Record(app, null, false, "Sideport's private signing snapshot did not match the expected app.", "recovery-artifact-lineage-changed"));
+
+        return (pinnedPath, pinnedSha, null);
+    }
+
+    private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
+    {
+        await using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        byte[] hash = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+        return Convert.ToHexStringLower(hash);
     }
 
     private async Task InstallWithWatchdogAsync(

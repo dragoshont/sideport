@@ -135,7 +135,59 @@ public sealed record InstallPreflightStaleDto(
     string Message,
     OperationPreflightDto ReplacementPreflight);
 
-public sealed record OperationActionRequest(string? IdempotencyKey = null, string? Reason = null);
+public sealed record OperationActionRequest(
+    string? IdempotencyKey = null,
+    string? Reason = null,
+    SupersedingRenewalRequest? SupersedingRenewal = null);
+
+/// <summary>
+/// Typed, explicit superseding-renewal intent carried on an unknown operation's
+/// rerun. The Owner names the exact renewal-eligible reconciliation receipt and
+/// echoes the lineage it observed so Sideport can reject any drift before it
+/// prepares a device mutation. Authority is always re-resolved from the workspace
+/// authorization services, never inferred from a caller-supplied string.
+/// </summary>
+public sealed record SupersedingRenewalRequest(
+    string ReceiptOperationId,
+    bool Confirm,
+    string? DeviceUdid = null,
+    string? BundleId = null,
+    string? Version = null,
+    string? TeamId = null,
+    string? AccountProfileId = null,
+    string? CatalogSha256 = null,
+    DateTimeOffset? ExpectedExpiresAt = null);
+
+/// <summary>
+/// The immutable recovery intent stamped on the single refresh child a receipt
+/// authorizes. It identifies the named predecessor and receipt plus the exact
+/// lineage the child must keep agreeing with at execution. It is never rewritten,
+/// so an identical resubmission replays the same child and any change conflicts.
+/// </summary>
+public sealed record OperationRecoveryIntentDto(
+    string Kind,
+    string ReceiptOperationId,
+    string PredecessorOperationId,
+    string DeviceUdid,
+    string BundleId,
+    string TeamId,
+    string AccountProfileId,
+    string Version,
+    string CatalogSha256,
+    DateTimeOffset PredecessorExpectedExpiresAt,
+    int? CatalogVersion = null,
+    string? CatalogAppId = null);
+
+/// <summary>
+/// Durable mutation-start evidence written through the orchestrator seam BEFORE
+/// the recovery install touches the iPhone. Its presence marks the child as
+/// having (possibly) mutated a device, so restart recovery never replays it.
+/// </summary>
+public sealed record OperationRecoveryCheckpointDto(
+    DateTimeOffset PreparedExpiresAt,
+    string PinnedArtifactSha256,
+    DateTimeOffset MutationStartedAt,
+    string? ArtifactSnapshotId = null);
 
 public sealed record OperationStageDto(
     string Id,
@@ -169,7 +221,8 @@ public sealed record OperationResultDto(
     string? SchedulerSettingsVersion = null,
     string? Version = null,
     bool? SafeToRerun = null,
-    string? ReconciledOperationId = null);
+    string? ReconciledOperationId = null,
+    bool? RenewalEligible = null);
 
 public sealed record OperationRecordDto(
     string OperationId,
@@ -198,7 +251,9 @@ public sealed record OperationRecordDto(
     InstallOperationIntentDto? InstallIntent = null,
     string? ActorMemberId = null,
     string? OwnerMemberId = null,
-    SigningCutoverIntentDto? SigningCutoverIntent = null);
+    SigningCutoverIntentDto? SigningCutoverIntent = null,
+    OperationRecoveryIntentDto? RecoveryIntent = null,
+    OperationRecoveryCheckpointDto? RecoveryCheckpoint = null);
 
 public sealed record RenewalItemDto(
     string Id,

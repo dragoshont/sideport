@@ -28,7 +28,7 @@ namespace Sideport.Api.Tests;
 /// the real middleware pipeline + endpoints run, with anisette stubbed (the
 /// container sidecar isn't present in CI).
 /// </summary>
-public class ApiSmokeTests
+public partial class ApiSmokeTests
 {
     private static WebApplicationFactory<Program> Factory(
         string? apiToken = null,
@@ -3738,7 +3738,7 @@ public class ApiSmokeTests
         string stateDir = Path.Combine(dir, "state");
         Directory.CreateDirectory(stateDir);
         await File.WriteAllTextAsync(Path.Combine(stateDir, "operations.json"), "{not-json");
-        using var factory = Factory(apiToken: "s3cr3t-token", stateDirectory: stateDir);
+        using var factory = Factory(apiToken: "s3cr3t-token", stateDirectory: stateDir, operationWorker: false);
         using HttpClient client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "s3cr3t-token");
 

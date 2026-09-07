@@ -1584,7 +1584,12 @@ public sealed class OperationService(
             return;
         }
         if (string.Equals(record.Type, "refresh", StringComparison.Ordinal))
-            await ProcessQueuedRefreshAsync(operationId, ct).ConfigureAwait(false);
+        {
+            if (record.RecoveryIntent is not null)
+                await ProcessQueuedSupersedingRenewalAsync(operationId, ct).ConfigureAwait(false);
+            else
+                await ProcessQueuedRefreshAsync(operationId, ct).ConfigureAwait(false);
+        }
     }
 
     public async Task<(OnboardingCompletionReceipt? Receipt, bool Created, string? Error, string? Message)> CompleteOnboardingAsync(
@@ -2366,10 +2371,12 @@ public sealed class OperationService(
             if (!await EnsureExecutionAuthorizedAsync(record, "verify", ct).ConfigureAwait(false))
                 return;
             (string? deviceError, string? deviceMessage, _) =
-                await ValidateInstallDeviceAsync(
-                    deviceUdid,
-                    source.InstallIntent?.AllowWifiFirstInstall == true,
-                    ct).ConfigureAwait(false);
+                string.Equals(source.Type, "refresh", StringComparison.Ordinal)
+                    ? await ValidateRefreshDeviceAsync(deviceUdid, ct).ConfigureAwait(false)
+                    : await ValidateInstallDeviceAsync(
+                        deviceUdid,
+                        source.InstallIntent?.AllowWifiFirstInstall == true,
+                        ct).ConfigureAwait(false);
             if (deviceError is not null)
             {
                 await BlockReconciliationAsync(
@@ -2439,12 +2446,34 @@ public sealed class OperationService(
                 return;
             }
 
+            bool versionMatches = !string.IsNullOrWhiteSpace(installed.Version) &&
+                string.Equals(installed.Version.Trim(), record.Target.Version, StringComparison.Ordinal);
             bool expiryMatches = installed.SignatureExpiresAt is { } installedExpiry &&
                 installedExpiry > DateTimeOffset.UtcNow &&
                 Math.Abs((installedExpiry - source.Result.ExpiresAt.Value).TotalSeconds) <= 60;
-            if (string.IsNullOrWhiteSpace(installed.Version) ||
-                !string.Equals(installed.Version.Trim(), record.Target.Version, StringComparison.Ordinal) ||
-                !expiryMatches)
+
+            // Contract 1: an unknown REFRESH of an existing ACTIVE verified
+            // registration whose exact version is still installed but whose
+            // signing profile is now expired or unavailable, and whose expected
+            // expiry has elapsed, yields an explicit Owner-renewal-eligible
+            // observation. It never claims success, never sets SafeToRerun, never
+            // releases quarantine and never activates the registration; the app
+            // stays unknown until an authorized successor is device-verified.
+            if (versionMatches && !expiryMatches &&
+                IsOwnerRenewalEligibleObservation(source, installed, DateTimeOffset.UtcNow))
+            {
+                if (registration.IsPendingInstall ||
+                    FindVerifiedRegistrationEvidence(operations, registration) is null)
+                {
+                    await BlockReconciliationAsync(record.OperationId, "registration-verification-invalid",
+                        "The active registration lacks matching durable verification evidence.", ct).ConfigureAwait(false);
+                    return;
+                }
+                await CompleteRenewalEligibleReconciliationAsync(record, source, installed, ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (!versionMatches || !expiryMatches)
             {
                 await BlockReconciliationAsync(
                     record.OperationId,
@@ -2783,12 +2812,648 @@ public sealed class OperationService(
         }
     }
 
+    public async Task ProcessQueuedSupersedingRenewalAsync(string operationId, CancellationToken ct = default)
+    {
+        await _operationGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            OperationRecordDto? submitted = await store.FindAsync(operationId, ct).ConfigureAwait(false);
+            if (submitted is null ||
+                !string.Equals(submitted.Type, "refresh", StringComparison.Ordinal) ||
+                submitted.RecoveryIntent is null)
+            {
+                return;
+            }
+
+            if (submitted.Status == "succeeded")
+                return;
+
+            // Idempotent finalization when durable device evidence already exists
+            // (for example after a restart between verification and completion).
+            if (HasVerifiedRecoveryEvidence(submitted))
+            {
+                OperationRecordDto? already = await store.FindAsync(submitted.RecoveryIntent.PredecessorOperationId, ct).ConfigureAwait(false);
+                if (already is not null)
+                    await FinalizeVerifiedSupersedingRenewalAsync(submitted, already, ct).ConfigureAwait(false);
+                else
+                    await BlockSupersedingRenewalAsync(operationId, "recovery-predecessor-missing", "The unknown refresh this recovery targets no longer exists.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (submitted.RecoveryCheckpoint is { } existingCheckpoint)
+            {
+                await MarkSupersedingRenewalUnknownAsync(operationId,
+                    "This renewal has already crossed its mutation checkpoint and cannot be replayed.",
+                    existingCheckpoint.PreparedExpiresAt, ct).ConfigureAwait(false);
+                return;
+            }
+
+            WorkspaceExecutionDecision? decision =
+                await EnsureExecutionAuthorizationDecisionAsync(submitted, "renew", ct).ConfigureAwait(false);
+            if (decision is { IsAllowed: false })
+                return;
+            if (decision is null || !decision.CanUseOwnerManagedAppleAuthority)
+            {
+                await BlockSupersedingRenewalAsync(operationId, "owner-recovery-authority-required", "Only the home Owner or current recovery authority may run this superseding renewal.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+            bool executionClaimed = false;
+            OperationRecordDto? record = await store.TransitionAsync(operationId, existing =>
+            {
+                if (!string.Equals(existing.Type, "refresh", StringComparison.Ordinal) ||
+                    existing.RecoveryIntent is null ||
+                    existing.RecoveryCheckpoint is not null ||
+                    existing.Status is not ("queued" or "waiting"))
+                {
+                    return null;
+                }
+                executionClaimed = true;
+                return existing with
+                {
+                    Status = "running",
+                    StartedAt = existing.StartedAt ?? startedAt,
+                    UpdatedAt = startedAt,
+                    Cancelable = false,
+                    Stages = existing.Stages.Select(stage => string.Equals(stage.Id, "renew", StringComparison.Ordinal)
+                        ? stage with { Status = "running", StartedAt = stage.StartedAt ?? startedAt, Message = "Rechecking device, trust and lineage before renewing." }
+                        : stage).ToArray(),
+                };
+            }, ct).ConfigureAwait(false);
+            if (!executionClaimed || record is null || !string.Equals(record.Status, "running", StringComparison.Ordinal))
+                return;
+
+            OperationRecoveryIntentDto intent = record.RecoveryIntent!;
+            OperationRecordDto? predecessor = await store.FindAsync(intent.PredecessorOperationId, ct).ConfigureAwait(false);
+            if (predecessor is null ||
+                !string.Equals(predecessor.Type, "refresh", StringComparison.Ordinal) ||
+                !string.Equals(predecessor.Status, "unknown", StringComparison.Ordinal))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-predecessor-invalid", "The original unknown refresh is missing or no longer eligible for recovery.", ct).ConfigureAwait(false);
+                return;
+            }
+            if (!string.Equals(record.OwnerMemberId, predecessor.OwnerMemberId, StringComparison.Ordinal))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "resource-ownership-changed", "The iPhone ownership snapshot no longer matches the original refresh.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            IReadOnlyList<OperationRecordDto> operations = await store.ListAsync(limit: null, ct: ct).ConfigureAwait(false);
+            if (OperationReconciliationEvidence.IsResolved(predecessor, operations))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "operation-already-resolved", "The unknown refresh was already resolved by a verified successor.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            OperationRecordDto? receipt = await store.FindAsync(intent.ReceiptOperationId, ct).ConfigureAwait(false);
+            bool receiptConsumedByAnother = operations.Any(op =>
+                !string.Equals(op.OperationId, record.OperationId, StringComparison.Ordinal) &&
+                op.RecoveryIntent is not null &&
+                string.Equals(op.RecoveryIntent.ReceiptOperationId, intent.ReceiptOperationId, StringComparison.Ordinal));
+            if (!IsValidRenewalReceipt(receipt, predecessor) || receiptConsumedByAnother)
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-receipt-invalid", "The renewal receipt is missing, stale, or already consumed by another successor.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            string deviceUdid = intent.DeviceUdid;
+            string bundleId = intent.BundleId;
+            if (orchestrator.IsDeviceMutationActive(deviceUdid) ||
+                operations.Any(op =>
+                    !string.Equals(op.OperationId, record.OperationId, StringComparison.Ordinal) &&
+                    !string.Equals(op.OperationId, predecessor.OperationId, StringComparison.Ordinal) &&
+                    string.Equals(op.Target.DeviceUdid, deviceUdid, StringComparison.OrdinalIgnoreCase) &&
+                    (op.Status is "queued" or "waiting" or "running" ||
+                     OperationReconciliationEvidence.IsUnresolvedMutation(op, operations))))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "device-operation-still-active", "Another operation still owns or has unresolved state for this iPhone.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            (string? deviceError, string? deviceMessage, DeviceConnection? requiredConnection) =
+                await ValidateRefreshDeviceAsync(deviceUdid, ct).ConfigureAwait(false);
+            if (deviceError is not null)
+            {
+                await BlockSupersedingRenewalAsync(operationId, deviceError, deviceMessage!, ct).ConfigureAwait(false);
+                return;
+            }
+
+            AppRegistration? registration = await registry.FindAsync(deviceUdid, bundleId, ct).ConfigureAwait(false);
+            if (registration is null || registration.IsPendingInstall ||
+                FindVerifiedRegistrationEvidence(operations, registration) is null ||
+                !RecoveryRegistrationMatches(intent, registration))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-registration-lineage-changed", "The app registration changed after the unknown refresh; Sideport did not renew it.", ct).ConfigureAwait(false);
+                return;
+            }
+            (string? expectedVersion, OperationIssueDto? artifactError) = InspectRegistrationArtifact(registration);
+            if (artifactError is not null ||
+                !string.Equals(expectedVersion, intent.Version, StringComparison.Ordinal) ||
+                !await RecoveryArtifactHashMatchesAsync(intent, registration, ct).ConfigureAwait(false))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-artifact-lineage-changed", "The saved IPA no longer matches the artifact recorded by the unknown refresh.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            // AllowCertificateCreation=false: if the saved identity is not
+            // reusable, fail closed rather than mint a certificate.
+            SigningIdentityInspection inspection;
+            try
+            {
+                inspection = await signingIdentity.InspectAsync(registration.AppleId, registration.TeamId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-signer-unavailable", "Sideport could not read the saved signing identity before renewing.", ct).ConfigureAwait(false);
+                return;
+            }
+            if (!string.Equals(inspection.State, "reusable", StringComparison.Ordinal) ||
+                (inspection.ExpiresAt is { } signerExpiry && signerExpiry <= DateTimeOffset.UtcNow))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-signer-not-reusable", "The saved Sideport signing identity is not reusable; certificate creation is disabled for recovery.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            // Fresh, uncached inventory: any drift in the still-installed version
+            // blocks before mutation.
+            IReadOnlyList<InstalledApp> installedApps;
+            try
+            {
+                installedApps = await devices.ListInstalledAppsFreshAsync(deviceUdid, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-device-read-unavailable", "Sideport could not read installed apps from the iPhone before renewing.", ct).ConfigureAwait(false);
+                return;
+            }
+            InstalledApp? installedNow = installedApps.FirstOrDefault(app =>
+                string.Equals(app.BundleId, bundleId, StringComparison.Ordinal));
+            if (installedNow is null ||
+                string.IsNullOrWhiteSpace(installedNow.Version) ||
+                !string.Equals(installedNow.Version.Trim(), intent.Version, StringComparison.Ordinal) ||
+                !IsOwnerRenewalEligibleObservation(predecessor, installedNow, DateTimeOffset.UtcNow))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "recovery-device-version-drift", "The installed app version changed after the unknown refresh; Sideport did not renew it.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (orchestrator.IsDeviceMutationActive(deviceUdid))
+            {
+                await BlockSupersedingRenewalAsync(operationId, "device-operation-still-active", "A device mutation became active before Sideport could renew.", ct).ConfigureAwait(false);
+                return;
+            }
+
+            var recoveryPlan = new RefreshRecoveryPlan(
+                intent.CatalogSha256,
+                async (checkpoint, hookCt) =>
+                {
+                    OperationRecordDto? liveRecord = await store.FindAsync(record.OperationId, hookCt).ConfigureAwait(false);
+                    OperationRecordDto? liveSource = await store.FindAsync(intent.PredecessorOperationId, hookCt).ConfigureAwait(false);
+                    IReadOnlyList<OperationRecordDto> liveOperations = await store.ListAsync(limit: null, ct: hookCt).ConfigureAwait(false);
+                    AppRegistration? current = await registry.FindAsync(deviceUdid, bundleId, hookCt).ConfigureAwait(false);
+                    WorkspaceExecutionDecision? currentAuthority = liveRecord is null
+                        ? null
+                        : await EnsureExecutionAuthorizationDecisionAsync(liveRecord, "renew", hookCt).ConfigureAwait(false);
+                    if (liveRecord is null || liveRecord.Actor != record.Actor ||
+                        liveRecord.ActorMemberId != record.ActorMemberId ||
+                        liveSource is null || liveSource.Status != "unknown" ||
+                        !OperationReconciliationEvidence.IsSuccessorLink(liveRecord, liveSource) ||
+                        currentAuthority is null || !currentAuthority.IsAllowed ||
+                        !currentAuthority.CanUseOwnerManagedAppleAuthority ||
+                        current is null || !RecoveryRegistrationMatches(intent, current) ||
+                        FindVerifiedRegistrationEvidence(liveOperations, current) is null ||
+                        !string.Equals(current.LastVerifiedOperationId, registration.LastVerifiedOperationId, StringComparison.Ordinal) ||
+                        !await RecoveryArtifactHashMatchesAsync(intent, current, hookCt).ConfigureAwait(false) ||
+                        !string.Equals(checkpoint.DeviceUdid, intent.DeviceUdid, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(checkpoint.BundleId, intent.BundleId, StringComparison.Ordinal) ||
+                        !string.Equals(checkpoint.PinnedArtifactSha256, intent.CatalogSha256, StringComparison.OrdinalIgnoreCase) ||
+                        checkpoint.PreparedExpiresAt <= DateTimeOffset.UtcNow)
+                    {
+                        throw new InvalidOperationException("Recovery authority or lineage changed before device mutation.");
+                    }
+                    DateTimeOffset checkpointAt = DateTimeOffset.UtcNow;
+                    bool checkpointWritten = false;
+                    OperationRecordDto? updated = await store.TransitionAsync(record.OperationId, existing =>
+                    {
+                        if (existing.Status != "running" || existing.RecoveryCheckpoint is not null ||
+                            existing.RecoveryIntent is null || !RecoveryIntentsMatch(existing.RecoveryIntent, intent))
+                            return null;
+                        checkpointWritten = true;
+                        return existing with
+                        {
+                            UpdatedAt = checkpointAt,
+                            RecoveryCheckpoint = new OperationRecoveryCheckpointDto(
+                                checkpoint.PreparedExpiresAt,
+                                checkpoint.PinnedArtifactSha256,
+                                checkpointAt,
+                                checkpoint.ArtifactSnapshotId),
+                            Stages = existing.Stages.Select(stage => string.Equals(stage.Id, "renew", StringComparison.Ordinal)
+                                ? stage with { Status = "running", Message = "Installing the renewed signature on the iPhone." }
+                                : stage).ToArray(),
+                        };
+                    }, hookCt).ConfigureAwait(false);
+                    if (!checkpointWritten || updated?.RecoveryCheckpoint is null)
+                        throw new OperationStoreException("The recovery record could not be checkpointed.", new InvalidOperationException(record.OperationId));
+                });
+
+            RefreshExecutionPolicy recoveryPolicy = RefreshExecutionPolicy.RecoveryRenewal with
+            {
+                Recovery = recoveryPlan,
+                RequiredInstallConnection = requiredConnection,
+            };
+            RefreshResult result = signerAuthorityGate is null
+                ? await orchestrator.RefreshAsync(deviceUdid, bundleId, recoveryPolicy, ct).ConfigureAwait(false)
+                : await signerAuthorityGate.RunAsync(
+                    gateCt => orchestrator.RefreshAsync(deviceUdid, bundleId, recoveryPolicy, gateCt), ct).ConfigureAwait(false);
+
+            OperationRecordDto? afterRun = await store.FindAsync(operationId, ct).ConfigureAwait(false);
+            bool mutationStarted = afterRun?.RecoveryCheckpoint is not null;
+            if (result.Success && !mutationStarted)
+            {
+                await MarkSupersedingRenewalUnknownAsync(
+                    operationId,
+                    "The renewal returned without its required mutation checkpoint; device outcome is not established.",
+                    result.NewExpiry,
+                    ct).ConfigureAwait(false);
+                return;
+            }
+            if (!result.Success)
+            {
+                bool outcomeUnknown = result.ErrorCode is "install-outcome-unknown" or "install-verification-unknown";
+                if (outcomeUnknown || mutationStarted)
+                {
+                    await MarkSupersedingRenewalUnknownAsync(
+                        operationId,
+                        result.Error ?? "The iPhone stopped responding during recovery; Sideport cannot prove whether it changed.",
+                        result.NewExpiry ?? afterRun?.RecoveryCheckpoint?.PreparedExpiresAt,
+                        ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await FailSupersedingRenewalAsync(
+                        operationId,
+                        result.ErrorCode ?? "recovery-failed",
+                        result.Error ?? "The superseding renewal failed before changing the iPhone.",
+                        ct).ConfigureAwait(false);
+                }
+                return;
+            }
+
+            // Fresh exact verification: same bundle + version + a NEW future expiry.
+            AppRegistration? verifyRegistration = await registry.FindAsync(deviceUdid, bundleId, ct).ConfigureAwait(false);
+            if (verifyRegistration is null || !RecoveryRegistrationMatches(intent, verifyRegistration) ||
+                !await RecoveryArtifactHashMatchesAsync(intent, verifyRegistration, ct).ConfigureAwait(false))
+            {
+                await MarkSupersedingRenewalUnknownAsync(operationId,
+                    "Registration lineage changed while the device mutation was in progress.",
+                    result.NewExpiry, ct).ConfigureAwait(false);
+                return;
+            }
+            (string? verifyExpectedVersion, OperationIssueDto? verifyArtifactError) = InspectRegistrationArtifact(verifyRegistration);
+            IReadOnlyList<InstalledApp>? verifyApps = null;
+            if (verifyArtifactError is null)
+            {
+                try
+                {
+                    verifyApps = await devices.ListInstalledAppsFreshAsync(deviceUdid, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    verifyArtifactError = new OperationIssueDto(
+                        "install-verification-unknown",
+                        "The renewal transfer stopped, but Sideport could not read the installed app back from the iPhone.");
+                }
+            }
+            InstalledApp? verified = verifyApps?.FirstOrDefault(app =>
+                string.Equals(app.BundleId, bundleId, StringComparison.Ordinal));
+            bool expiryVerified = verified?.SignatureExpiresAt is { } verifiedExpiry &&
+                verifiedExpiry > DateTimeOffset.UtcNow &&
+                result.NewExpiry is { } preparedExpiry &&
+                Math.Abs((verifiedExpiry - preparedExpiry).TotalSeconds) <= 60;
+            if (verifyArtifactError is not null ||
+                verified is null ||
+                string.IsNullOrWhiteSpace(verified.Version) ||
+                !string.Equals(verified.Version.Trim(), verifyExpectedVersion, StringComparison.Ordinal) ||
+                !string.Equals(verified.Version.Trim(), intent.Version, StringComparison.Ordinal) ||
+                !expiryVerified)
+            {
+                await MarkSupersedingRenewalUnknownAsync(
+                    operationId,
+                    verifyArtifactError?.Message ?? "The renewal transfer stopped, but the installed bundle, version, or new expiry did not verify.",
+                    result.NewExpiry,
+                    ct).ConfigureAwait(false);
+                return;
+            }
+
+            DateTimeOffset verifiedAt = DateTimeOffset.UtcNow;
+            record = (await store.TransitionAsync(operationId, existing => existing with
+            {
+                Status = "running",
+                UpdatedAt = verifiedAt,
+                CompletedAt = null,
+                Result = new OperationResultDto(
+                    Success: true,
+                    BundleId: bundleId,
+                    ExpiresAt: verified.SignatureExpiresAt,
+                    Error: null,
+                    Version: verified.Version.Trim()),
+                Error = null,
+                Cancelable = false,
+                Retryable = false,
+                Rerunnable = false,
+                Stages = existing.Stages.Select(stage => stage.Id switch
+                {
+                    "renew" => stage with
+                    {
+                        Status = "succeeded",
+                        CompletedAt = verifiedAt,
+                        Message = "The renewed signature was installed on the iPhone.",
+                        Error = null,
+                    },
+                    "verify" => stage with
+                    {
+                        Status = "succeeded",
+                        StartedAt = stage.StartedAt ?? verifiedAt,
+                        CompletedAt = verifiedAt,
+                        Message = "The installed bundle, version, and new future expiry were verified on the iPhone.",
+                        Error = null,
+                    },
+                    "activate-registration" => stage with
+                    {
+                        Status = "running",
+                        StartedAt = stage.StartedAt ?? verifiedAt,
+                        Message = "Saving the verified renewal and closing the predecessor quarantine.",
+                        Error = null,
+                    },
+                    _ => stage,
+                }).ToArray(),
+            }, ct).ConfigureAwait(false))!;
+
+            await FinalizeVerifiedSupersedingRenewalAsync(record, predecessor, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            OperationRecordDto? persisted = null;
+            try
+            {
+                persisted = await store.FindAsync(operationId, ct).ConfigureAwait(false);
+            }
+            catch (OperationStoreException)
+            {
+                // The worker logger retains the durable-store failure.
+            }
+
+            if (persisted is not null && HasVerifiedRecoveryEvidence(persisted))
+            {
+                await MarkSupersedingRenewalFinalizationPendingAsync(operationId, ct).ConfigureAwait(false);
+                return;
+            }
+            if (persisted?.RecoveryCheckpoint is not null)
+            {
+                await MarkSupersedingRenewalUnknownAsync(
+                    operationId,
+                    "Sideport lost the device response during the superseding renewal; the outcome is unknown.",
+                    persisted.RecoveryCheckpoint.PreparedExpiresAt,
+                    ct).ConfigureAwait(false);
+                return;
+            }
+
+            await FailSupersedingRenewalAsync(operationId, "recovery-failed", "Sideport could not complete the superseding renewal.", ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private async Task FinalizeVerifiedSupersedingRenewalAsync(
+        OperationRecordDto record,
+        OperationRecordDto predecessor,
+        CancellationToken ct)
+    {
+        if (!HasVerifiedRecoveryEvidence(record) || record.RecoveryIntent is null ||
+            !OperationReconciliationEvidence.IsSuccessorLink(record, predecessor))
+            throw new InvalidOperationException("Superseding renewal finalization has no durable device evidence.");
+
+        OperationRecoveryIntentDto intent = record.RecoveryIntent;
+        if (record.Result!.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            await BlockSupersedingRenewalAsync(record.OperationId, "recovery-profile-expired-after-verification", "The renewed signing profile expired before Sideport could save it.", ct).ConfigureAwait(false);
+            return;
+        }
+
+        AppRegistration? registration = await registry.FindAsync(intent.DeviceUdid, intent.BundleId, ct).ConfigureAwait(false);
+        if (registration is null || registration.IsPendingInstall || !RecoveryRegistrationMatches(intent, registration))
+        {
+            await BlockSupersedingRenewalAsync(record.OperationId, "recovery-registration-lineage-changed", "The app registration changed after the iPhone was verified.", ct).ConfigureAwait(false);
+            return;
+        }
+        (string? expectedVersion, OperationIssueDto? artifactError) = InspectRegistrationArtifact(registration);
+        if (artifactError is not null ||
+            !string.Equals(expectedVersion, record.Result.Version, StringComparison.Ordinal) ||
+            !await RecoveryArtifactHashMatchesAsync(intent, registration, ct).ConfigureAwait(false))
+        {
+            await BlockSupersedingRenewalAsync(record.OperationId, "recovery-artifact-lineage-changed", "The saved IPA changed after the iPhone was verified.", ct).ConfigureAwait(false);
+            return;
+        }
+
+        DateTimeOffset verifiedAt = record.Stages
+            .First(stage => string.Equals(stage.Id, "verify", StringComparison.Ordinal))
+            .CompletedAt!.Value;
+
+        // Only now, after device verification, is LastVerifiedOperationId linked
+        // to the child. It is never fabricated at mutation-start.
+        if (!string.Equals(registration.LastVerifiedOperationId, record.OperationId, StringComparison.Ordinal))
+        {
+            await registry.UpsertAsync(registration with
+            {
+                Lifecycle = "active",
+                ActivatedAt = registration.ActivatedAt ?? verifiedAt,
+                LastVerifiedOperationId = record.OperationId,
+            }, ct).ConfigureAwait(false);
+        }
+
+        // Terminal completion. The predecessor stays durably "unknown"; it is
+        // closed only through the shared resolution predicate, never rewritten.
+        DateTimeOffset completedAt = DateTimeOffset.UtcNow;
+        await store.TransitionAsync(record.OperationId, existing => existing with
+        {
+            Status = "succeeded",
+            UpdatedAt = completedAt,
+            CompletedAt = completedAt,
+            Error = null,
+            Cancelable = false,
+            Retryable = false,
+            Rerunnable = false,
+            Stages = existing.Stages.Select(stage => string.Equals(stage.Id, "activate-registration", StringComparison.Ordinal)
+                ? stage with
+                {
+                    Status = "succeeded",
+                    StartedAt = stage.StartedAt ?? completedAt,
+                    CompletedAt = completedAt,
+                    Message = "The registration points at the verified renewal; the predecessor is resolved.",
+                    Error = null,
+                }
+                : stage).ToArray(),
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task BlockSupersedingRenewalAsync(
+        string operationId,
+        string code,
+        string message,
+        CancellationToken ct)
+    {
+        DateTimeOffset completedAt = DateTimeOffset.UtcNow;
+        var issue = new OperationIssueDto(code, message);
+        await store.TransitionAsync(operationId, existing => existing with
+        {
+            Status = "blocked",
+            UpdatedAt = completedAt,
+            CompletedAt = completedAt,
+            Result = existing.Result,
+            Error = issue,
+            Cancelable = false,
+            Retryable = false,
+            Rerunnable = false,
+            Stages = existing.Stages.Select(stage =>
+                string.Equals(stage.Status, "running", StringComparison.Ordinal)
+                    ? stage with { Status = "blocked", CompletedAt = completedAt, Message = message, Error = issue }
+                    : stage).ToArray(),
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task FailSupersedingRenewalAsync(
+        string operationId,
+        string code,
+        string message,
+        CancellationToken ct)
+    {
+        DateTimeOffset failedAt = DateTimeOffset.UtcNow;
+        var issue = new OperationIssueDto(code, message);
+        await store.TransitionAsync(operationId, existing => existing with
+        {
+            Status = "failed",
+            UpdatedAt = failedAt,
+            CompletedAt = failedAt,
+            Result = new OperationResultDto(false, existing.Target.BundleId, existing.Result?.ExpiresAt, message),
+            Error = issue,
+            Cancelable = false,
+            Retryable = false,
+            Rerunnable = false,
+            Stages = existing.Stages.Select(stage =>
+                string.Equals(stage.Status, "running", StringComparison.Ordinal)
+                    ? stage with { Status = "failed", CompletedAt = failedAt, Message = message, Error = issue }
+                    : stage).ToArray(),
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task MarkSupersedingRenewalUnknownAsync(
+        string operationId,
+        string message,
+        DateTimeOffset? signingExpiry,
+        CancellationToken ct)
+    {
+        DateTimeOffset observedAt = DateTimeOffset.UtcNow;
+        var issue = new OperationIssueDto("install-outcome-unknown", message);
+        await store.TransitionAsync(operationId, existing => existing with
+        {
+            Status = "unknown",
+            UpdatedAt = observedAt,
+            CompletedAt = null,
+            Result = new OperationResultDto(false, existing.Target.BundleId, signingExpiry, message),
+            Error = issue,
+            Cancelable = false,
+            Retryable = false,
+            Rerunnable = false,
+            Stages = existing.Stages.Select(stage => stage.Status is "running" or "pending"
+                ? stage with
+                {
+                    Status = string.Equals(stage.Status, "running", StringComparison.Ordinal) ? "unknown" : stage.Status,
+                    CompletedAt = null,
+                    Message = string.Equals(stage.Status, "running", StringComparison.Ordinal) ? message : stage.Message,
+                    Error = string.Equals(stage.Status, "running", StringComparison.Ordinal) ? issue : stage.Error,
+                }
+                : stage).ToArray(),
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task MarkSupersedingRenewalFinalizationPendingAsync(
+        string operationId,
+        CancellationToken ct)
+    {
+        DateTimeOffset observedAt = DateTimeOffset.UtcNow;
+        var issue = new OperationIssueDto(
+            "recovery-finalization-pending",
+            "The iPhone evidence is saved, but Sideport still needs to finish durable registration state.");
+        await store.TransitionAsync(operationId, existing => existing with
+        {
+            Status = "waiting",
+            UpdatedAt = observedAt,
+            CompletedAt = null,
+            Error = issue,
+            Cancelable = false,
+            Retryable = true,
+            Rerunnable = false,
+        }, ct).ConfigureAwait(false);
+    }
+
+    private static bool HasVerifiedRecoveryEvidence(OperationRecordDto record) =>
+        OperationReconciliationEvidence.HasVerifiedRecoveryEvidence(record);
+
+    private static bool RecoveryRegistrationMatches(
+        OperationRecoveryIntentDto intent,
+        AppRegistration registration) =>
+        string.Equals(registration.DeviceUdid, intent.DeviceUdid, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(registration.BundleId, intent.BundleId, StringComparison.Ordinal) &&
+        string.Equals(registration.TeamId, intent.TeamId, StringComparison.Ordinal) &&
+        string.Equals(
+            AppleAccountIdentity.ProfileIdFor(registration.AppleId),
+            intent.AccountProfileId,
+            StringComparison.Ordinal) &&
+        (intent.CatalogAppId is null ||
+            string.Equals(registration.CatalogAppId, intent.CatalogAppId, StringComparison.OrdinalIgnoreCase)) &&
+        (intent.CatalogVersion is null || registration.CatalogVersion == intent.CatalogVersion) &&
+        (string.IsNullOrWhiteSpace(registration.CatalogSha256) ||
+            string.Equals(registration.CatalogSha256, intent.CatalogSha256, StringComparison.OrdinalIgnoreCase));
+
+    private static async Task<bool> RecoveryArtifactHashMatchesAsync(
+        OperationRecoveryIntentDto intent,
+        AppRegistration registration,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(intent.CatalogSha256))
+            return false;
+        if (!string.IsNullOrWhiteSpace(registration.CatalogSha256) &&
+            !string.Equals(registration.CatalogSha256, intent.CatalogSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        try
+        {
+            string actual = await ComputeFileSha256Async(registration.InputIpaPath, ct).ConfigureAwait(false);
+            return string.Equals(actual, intent.CatalogSha256, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     public async Task RequeuePendingAsync(CancellationToken ct = default)
     {
         IReadOnlyList<OperationRecordDto> records = await store.ListAsync(limit: null, ct: ct).ConfigureAwait(false);
         foreach (OperationRecordDto record in records.Where(record =>
                      (string.Equals(record.Type, "refresh", StringComparison.Ordinal) &&
-                      record.Status is "queued" or "waiting") ||
+                      (record.Status is "queued" or "waiting" ||
+                       (record.Status is "running" or "recovery-required" &&
+                        record.RecoveryIntent is not null &&
+                        HasVerifiedRecoveryEvidence(record)))) ||
                      (string.Equals(record.Type, "install", StringComparison.Ordinal) &&
                       (record.Status is "queued" or "waiting" ||
                        (string.Equals(record.Status, "running", StringComparison.Ordinal) &&
@@ -2828,7 +3493,7 @@ public sealed class OperationService(
                 Error = canceled,
                 Cancelable = false,
                 Retryable = false,
-                Rerunnable = string.Equals(existing.Type, "refresh", StringComparison.Ordinal),
+                Rerunnable = string.Equals(existing.Type, "refresh", StringComparison.Ordinal) && existing.RecoveryIntent is null,
             };
         }, ct).ConfigureAwait(false);
         if (updated is null)
@@ -2854,6 +3519,28 @@ public sealed class OperationService(
         OperationRecordDto? source = await store.FindAsync(operationId, ct).ConfigureAwait(false);
         if (source is null)
             return (null, false, "operation-not-found");
+        if (source.RecoveryIntent is not null)
+        {
+            if (!HasVerifiedRecoveryEvidence(source) ||
+                source.Status is not ("recovery-required" or "queued" or "running" or "succeeded") ||
+                executionAuthorization is null)
+                return (source, false, "operation-not-retryable");
+            if (ownerMemberId is not null && ownerMemberId != source.OwnerMemberId)
+                return (null, false, "resource-not-found");
+            WorkspaceExecutionDecision authorization = await executionAuthorization.AuthorizeOperationAsync(
+                source with { Actor = actor, ActorMemberId = actorMemberId }, ct: ct).ConfigureAwait(false);
+            if (!authorization.IsAllowed || !authorization.CanUseOwnerManagedAppleAuthority)
+                return (null, false, authorization.ErrorCode ?? "owner-recovery-authority-required");
+            if (source.Status == "succeeded")
+                return (source, false, null);
+            OperationRecordDto? pending = await store.TransitionAsync(source.OperationId, current =>
+                HasVerifiedRecoveryEvidence(current) && current.Status == "recovery-required"
+                    ? current with { Status = "queued", Retryable = false, UpdatedAt = DateTimeOffset.UtcNow }
+                    : current, ct).ConfigureAwait(false);
+            if (pending is not null && pending.Status is "queued" or "running")
+                queue.Enqueue(pending.OperationId);
+            return (pending, false, null);
+        }
         if (!string.Equals(source.Type, "refresh", StringComparison.Ordinal) || !source.Retryable)
             return (source, false, "operation-not-retryable");
         return await RefreshFromSourceAsync(
@@ -2884,6 +3571,8 @@ public sealed class OperationService(
         OperationRecordDto? source = await store.FindAsync(operationId, ct).ConfigureAwait(false);
         if (source is null)
             return (null, false, "operation-not-found");
+        if (source.RecoveryIntent is not null)
+            return (source, false, "operation-not-rerunnable");
 
         if (string.Equals(source.Type, OperationReconciliationEvidence.OperationType, StringComparison.Ordinal) &&
             string.Equals(source.Status, "succeeded", StringComparison.Ordinal) &&
@@ -2967,6 +3656,299 @@ public sealed class OperationService(
             ct).ConfigureAwait(false);
         return (record, created, null);
     }
+
+    // --- Owner-authorized superseding renewal (recovery of an unknown refresh) ---
+
+    /// <summary>
+    /// Submits the single Owner-authorized superseding-renewal child for an
+    /// unknown refresh, bound to an explicit renewal-eligible reconciliation
+    /// receipt. Authority is re-resolved from the workspace authorization
+    /// services (never a caller string). At most one child is issued per receipt
+    /// and per predecessor: an identical resubmission replays it, a changed
+    /// intent conflicts, and another key cannot consume the same receipt.
+    /// </summary>
+    public async Task<(OperationRecordDto? Record, bool Created, string? Error)> SubmitSupersedingRenewalAsync(
+        string predecessorOperationId,
+        SupersedingRenewalRequest request,
+        OperationActorDto actor,
+        string? idempotencyKey,
+        string? actorMemberId,
+        string? ownerMemberId,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(request);
+        predecessorOperationId = RequiredIntentValue(predecessorOperationId, nameof(predecessorOperationId));
+        string receiptOperationId = RequiredIntentValue(request.ReceiptOperationId, nameof(request.ReceiptOperationId));
+        string rawKey = RequiredIntentValue(idempotencyKey, nameof(idempotencyKey));
+        if (rawKey.Length > 256)
+            throw new ArgumentException("Idempotency key must be 256 characters or fewer.", nameof(idempotencyKey));
+        if (string.IsNullOrWhiteSpace(actor.Kind) || string.IsNullOrWhiteSpace(actor.DisplayName))
+            throw new ArgumentException("A verified operation actor is required.", nameof(actor));
+        if (!request.Confirm)
+            return (null, false, "superseding-renewal-confirmation-required");
+        actorMemberId = NormalizeOwnershipId(actorMemberId);
+        ownerMemberId = NormalizeOwnershipId(ownerMemberId);
+        string storedKey = $"superseding-renewal:{rawKey}";
+
+        await _submissionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            OperationRecordDto? predecessor = await store.FindAsync(predecessorOperationId, ct).ConfigureAwait(false);
+            if (predecessor is null)
+                return (null, false, "operation-not-found");
+            if (!string.Equals(predecessor.Type, "refresh", StringComparison.Ordinal) ||
+                !string.Equals(predecessor.Status, "unknown", StringComparison.Ordinal))
+            {
+                return (predecessor, false, "operation-not-recoverable");
+            }
+
+            // Ownership + Owner/current-recovery authority: never inferred from a
+            // caller-supplied actor string or reason text.
+            if (ownerMemberId is not null &&
+                !string.Equals(ownerMemberId, predecessor.OwnerMemberId, StringComparison.Ordinal))
+            {
+                return (null, false, "resource-not-found");
+            }
+            if (executionAuthorization is null)
+                return (null, false, "owner-recovery-authority-required");
+            if (executionAuthorization is not null)
+            {
+                WorkspaceExecutionDecision authorization = await executionAuthorization
+                    .AuthorizeOperationAsync(predecessor with
+                    {
+                        Actor = actor,
+                        ActorMemberId = actorMemberId,
+                    }, ct: ct)
+                    .ConfigureAwait(false);
+                if (!authorization.IsAllowed)
+                    return (null, false, authorization.ErrorCode ?? "operation-access-revoked");
+                if (!authorization.CanUseOwnerManagedAppleAuthority)
+                    return (null, false, "owner-recovery-authority-required");
+            }
+            ownerMemberId = predecessor.OwnerMemberId;
+
+            OperationRecordDto? keyed = await store.FindByActorAndIdempotencyAsync(
+                "refresh", actor, storedKey, ct).ConfigureAwait(false);
+            if (keyed is not null)
+            {
+                return keyed.RecoveryIntent is { } previousIntent &&
+                    string.Equals(previousIntent.PredecessorOperationId, predecessorOperationId, StringComparison.Ordinal) &&
+                    string.Equals(previousIntent.ReceiptOperationId, receiptOperationId, StringComparison.Ordinal) &&
+                    BoundLineageMatches(request, predecessor)
+                        ? (keyed, false, null)
+                        : (null, false, "idempotency-target-conflict");
+            }
+
+            IReadOnlyList<OperationRecordDto> records = await store.ListAsync(limit: null, ct: ct).ConfigureAwait(false);
+            if (OperationReconciliationEvidence.IsResolved(predecessor, records))
+                return (predecessor, false, "operation-already-resolved");
+
+            OperationRecordDto? receipt = await store.FindAsync(receiptOperationId, ct).ConfigureAwait(false);
+            (OperationRecoveryIntentDto? intent, string? intentError) =
+                BuildSupersedingRenewalIntent(predecessor, receipt, request);
+            if (intentError is not null || intent is null)
+                return (null, false, intentError ?? "recovery-receipt-invalid");
+
+            // Idempotency: identical resubmission replays the same child; a
+            // reused key with a changed intent conflicts.
+            keyed = await store.FindByActorAndIdempotencyAsync(
+                "refresh",
+                actor,
+                storedKey,
+                ct).ConfigureAwait(false);
+            if (keyed is not null)
+            {
+                return keyed.RecoveryIntent is not null && RecoveryIntentsMatch(keyed.RecoveryIntent, intent)
+                    ? (keyed, false, null)
+                    : (null, false, "idempotency-target-conflict");
+            }
+
+            // A receipt authorizes exactly one child; another key cannot reuse it.
+            if (records.Any(op => op.RecoveryIntent is not null &&
+                    string.Equals(op.RecoveryIntent.ReceiptOperationId, receiptOperationId, StringComparison.Ordinal)))
+            {
+                return (null, false, "recovery-receipt-consumed");
+            }
+
+            // At most one non-failed successor per predecessor.
+            if (records.Any(op => op.RecoveryIntent is not null &&
+                    string.Equals(op.RecoveryIntent.PredecessorOperationId, predecessorOperationId, StringComparison.Ordinal) &&
+                    op.Status is "queued" or "waiting" or "running" or "succeeded"))
+            {
+                return (null, false, "recovery-successor-exists");
+            }
+
+            string deviceUdid = predecessor.Target.DeviceUdid!;
+            if (orchestrator.IsDeviceMutationActive(deviceUdid) ||
+                records.Any(op =>
+                    !string.Equals(op.OperationId, predecessor.OperationId, StringComparison.Ordinal) &&
+                    string.Equals(op.Target.DeviceUdid, deviceUdid, StringComparison.OrdinalIgnoreCase) &&
+                    (op.Status is "queued" or "waiting" or "running" ||
+                     OperationReconciliationEvidence.IsUnresolvedMutation(op, records))))
+            {
+                return (null, false, "device-operation-still-active");
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            string operationId = NewOperationId(now);
+            OperationTargetDto target = predecessor.Target with { Kind = "app" };
+            var record = new OperationRecordDto(
+                operationId,
+                "refresh",
+                "queued",
+                now,
+                StartedAt: null,
+                now,
+                CompletedAt: null,
+                actor,
+                storedKey,
+                Attempt: 1,
+                target,
+                [
+                    new OperationStageDto(
+                        "preflight",
+                        "Recovery preflight",
+                        "succeeded",
+                        now,
+                        now,
+                        "The unknown refresh is eligible for one Owner-authorized superseding renewal."),
+                    new OperationStageDto(
+                        "renew",
+                        "Renew and install",
+                        "pending",
+                        StartedAt: null,
+                        CompletedAt: null,
+                        "Waiting for the single-flight signer."),
+                    new OperationStageDto(
+                        "verify",
+                        "Verify on iPhone",
+                        "pending",
+                        StartedAt: null,
+                        CompletedAt: null,
+                        "Waiting for a fresh device read."),
+                    new OperationStageDto(
+                        "activate-registration",
+                        "Save verification",
+                        "pending",
+                        StartedAt: null,
+                        CompletedAt: null,
+                        "Waiting for device verification."),
+                ],
+                Result: null,
+                Error: null,
+                Cancelable: true,
+                Retryable: false,
+                Rerunnable: false,
+                CorrelationId: operationId,
+                ParentOperationId: predecessor.OperationId,
+                ActorMemberId: actorMemberId,
+                OwnerMemberId: ownerMemberId,
+                RecoveryIntent: intent);
+
+            (OperationRecordDto stored, bool created) =
+                await store.AddIfIdempotentMissingAsync(record, ct).ConfigureAwait(false);
+            if (!created)
+            {
+                return stored.RecoveryIntent is not null && RecoveryIntentsMatch(stored.RecoveryIntent, intent)
+                    ? (stored, false, null)
+                    : (null, false, "idempotency-target-conflict");
+            }
+
+            queue.Enqueue(stored.OperationId);
+            return (stored, true, null);
+        }
+        finally
+        {
+            _submissionGate.Release();
+        }
+    }
+
+    private static (OperationRecoveryIntentDto? Intent, string? Error) BuildSupersedingRenewalIntent(
+        OperationRecordDto predecessor,
+        OperationRecordDto? receipt,
+        SupersedingRenewalRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(predecessor.Target.DeviceUdid) ||
+            string.IsNullOrWhiteSpace(predecessor.Target.BundleId) ||
+            string.IsNullOrWhiteSpace(predecessor.Target.TeamId) ||
+            string.IsNullOrWhiteSpace(predecessor.Target.AccountProfileId) ||
+            string.IsNullOrWhiteSpace(predecessor.Target.Version) ||
+            string.IsNullOrWhiteSpace(predecessor.Target.CatalogSha256) ||
+            predecessor.Result?.ExpiresAt is null)
+        {
+            return (null, "operation-reconciliation-evidence-missing");
+        }
+        if (!IsValidRenewalReceipt(receipt, predecessor))
+            return (null, "recovery-receipt-invalid");
+
+        // The Owner echoes the lineage observed at the receipt; any drift blocks
+        // before a device mutation is prepared.
+        if (!BoundLineageMatches(request, predecessor))
+            return (null, "recovery-lineage-mismatch");
+
+        var intent = new OperationRecoveryIntentDto(
+            OperationReconciliationEvidence.SupersedingRenewalKind,
+            receipt!.OperationId,
+            predecessor.OperationId,
+            predecessor.Target.DeviceUdid!,
+            predecessor.Target.BundleId!,
+            predecessor.Target.TeamId!,
+            predecessor.Target.AccountProfileId!,
+            predecessor.Target.Version!,
+            predecessor.Target.CatalogSha256!,
+            predecessor.Result.ExpiresAt.Value,
+            predecessor.Target.CatalogVersion,
+            predecessor.Target.CatalogAppId);
+        return (intent, null);
+    }
+
+    private static bool BoundLineageMatches(SupersedingRenewalRequest request, OperationRecordDto predecessor) =>
+        string.Equals(request.DeviceUdid, predecessor.Target.DeviceUdid, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(request.BundleId, predecessor.Target.BundleId, StringComparison.Ordinal) &&
+        string.Equals(request.Version, predecessor.Target.Version, StringComparison.Ordinal) &&
+        string.Equals(request.TeamId, predecessor.Target.TeamId, StringComparison.Ordinal) &&
+        string.Equals(request.AccountProfileId, predecessor.Target.AccountProfileId, StringComparison.Ordinal) &&
+        string.Equals(request.CatalogSha256, predecessor.Target.CatalogSha256, StringComparison.OrdinalIgnoreCase) &&
+        request.ExpectedExpiresAt is { } expected && predecessor.Result?.ExpiresAt is { } expiry &&
+        Math.Abs((expected - expiry).TotalSeconds) <= 1;
+
+    private static bool IsValidRenewalReceipt(OperationRecordDto? receipt, OperationRecordDto predecessor) =>
+        receipt is not null &&
+        receipt.CompletedAt is { } observedAt &&
+        observedAt <= DateTimeOffset.UtcNow &&
+        DateTimeOffset.UtcNow - observedAt <= TimeSpan.FromMinutes(5) &&
+        string.Equals(receipt.Type, OperationReconciliationEvidence.OperationType, StringComparison.Ordinal) &&
+        string.Equals(receipt.Status, "succeeded", StringComparison.Ordinal) &&
+        receipt.Result?.RenewalEligible == true &&
+        receipt.Result.Success != true &&
+        receipt.Result.SafeToRerun != true &&
+        receipt.Stages.Any(stage => stage.Id == "verify" && stage.Status == "succeeded" && stage.CompletedAt is not null) &&
+        string.Equals(receipt.Result.Version, predecessor.Target.Version, StringComparison.Ordinal) &&
+        receipt.Target.CatalogVersion == predecessor.Target.CatalogVersion &&
+        string.Equals(receipt.Target.CatalogAppId, predecessor.Target.CatalogAppId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(receipt.ParentOperationId, predecessor.OperationId, StringComparison.Ordinal) &&
+        string.Equals(receipt.Result.ReconciledOperationId, predecessor.OperationId, StringComparison.Ordinal) &&
+        string.Equals(receipt.Target.DeviceUdid, predecessor.Target.DeviceUdid, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(receipt.Target.BundleId, predecessor.Target.BundleId, StringComparison.Ordinal) &&
+        string.Equals(receipt.Target.TeamId, predecessor.Target.TeamId, StringComparison.Ordinal) &&
+        string.Equals(receipt.Target.AccountProfileId, predecessor.Target.AccountProfileId, StringComparison.Ordinal) &&
+        string.Equals(receipt.Target.Version, predecessor.Target.Version, StringComparison.Ordinal) &&
+        string.Equals(receipt.Target.CatalogSha256, predecessor.Target.CatalogSha256, StringComparison.OrdinalIgnoreCase);
+
+    private static bool RecoveryIntentsMatch(OperationRecoveryIntentDto left, OperationRecoveryIntentDto right) =>
+        string.Equals(left.Kind, right.Kind, StringComparison.Ordinal) &&
+        string.Equals(left.ReceiptOperationId, right.ReceiptOperationId, StringComparison.Ordinal) &&
+        string.Equals(left.PredecessorOperationId, right.PredecessorOperationId, StringComparison.Ordinal) &&
+        string.Equals(left.DeviceUdid, right.DeviceUdid, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.BundleId, right.BundleId, StringComparison.Ordinal) &&
+        string.Equals(left.TeamId, right.TeamId, StringComparison.Ordinal) &&
+        string.Equals(left.AccountProfileId, right.AccountProfileId, StringComparison.Ordinal) &&
+        string.Equals(left.Version, right.Version, StringComparison.Ordinal) &&
+        string.Equals(left.CatalogSha256, right.CatalogSha256, StringComparison.OrdinalIgnoreCase) &&
+        Math.Abs((left.PredecessorExpectedExpiresAt - right.PredecessorExpectedExpiresAt).TotalSeconds) <= 1 &&
+        left.CatalogVersion == right.CatalogVersion &&
+        string.Equals(left.CatalogAppId, right.CatalogAppId, StringComparison.OrdinalIgnoreCase);
 
     public async Task<IReadOnlyList<RenewalItemDto>> RenewalsAsync(CancellationToken ct = default)
     {
@@ -3616,6 +4598,74 @@ public sealed class OperationService(
             Cancelable = false,
             Retryable = false,
             Rerunnable = false,
+        }, ct).ConfigureAwait(false);
+    }
+
+    private static bool IsOwnerRenewalEligibleObservation(
+        OperationRecordDto source,
+        InstalledApp installed,
+        DateTimeOffset now) =>
+        // Only an unknown REFRESH of an existing ACTIVE verified registration.
+        string.Equals(source.Type, "refresh", StringComparison.Ordinal) &&
+        // The expected (prepared) expiry must have already elapsed.
+        source.Result?.ExpiresAt is { } expectedExpiry &&
+        expectedExpiry <= now &&
+        // The installed profile is expired or unavailable (observed-null). A
+        // different known expiry is a mismatch even when it has expired.
+        (installed.SignatureExpiresAt is null ||
+         installed.SignatureExpiresAt.Value <= now &&
+         Math.Abs((installed.SignatureExpiresAt.Value - expectedExpiry).TotalSeconds) <= 60);
+
+    private async Task CompleteRenewalEligibleReconciliationAsync(
+        OperationRecordDto record,
+        OperationRecordDto source,
+        InstalledApp installed,
+        CancellationToken ct)
+    {
+        DateTimeOffset completedAt = DateTimeOffset.UtcNow;
+        string? observedVersion = string.IsNullOrWhiteSpace(installed.Version) ? null : installed.Version.Trim();
+        // Preserve observed-null as unknown, never as "pruned": keep the observed
+        // expiry only if the device actually reported one (expired).
+        DateTimeOffset? observedExpiry = installed.SignatureExpiresAt;
+        await store.TransitionAsync(record.OperationId, existing => existing with
+        {
+            Status = "succeeded",
+            UpdatedAt = completedAt,
+            CompletedAt = completedAt,
+            Result = new OperationResultDto(
+                Success: false,
+                BundleId: existing.Target.BundleId,
+                ExpiresAt: observedExpiry,
+                Error: null,
+                Version: observedVersion,
+                SafeToRerun: false,
+                ReconciledOperationId: source.OperationId,
+                RenewalEligible: true),
+            Error = null,
+            Cancelable = false,
+            Retryable = false,
+            Rerunnable = false,
+            Stages = existing.Stages.Select(stage => stage.Id switch
+            {
+                "verify" => stage with
+                {
+                    Status = "succeeded",
+                    CompletedAt = completedAt,
+                    Message = observedExpiry is null
+                        ? "The exact app version is still installed but its signing profile is unavailable; the prepared expiry has elapsed."
+                        : "The exact app version is still installed but its signing profile has expired; the prepared expiry has elapsed.",
+                    Error = null,
+                },
+                "activate-registration" => stage with
+                {
+                    Status = "succeeded",
+                    StartedAt = completedAt,
+                    CompletedAt = completedAt,
+                    Message = "Owner-authorized renewal is eligible; the app stays unknown and quarantined until a verified successor runs.",
+                    Error = null,
+                },
+                _ => stage,
+            }).ToArray(),
         }, ct).ConfigureAwait(false);
     }
 

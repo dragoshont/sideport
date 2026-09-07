@@ -12,6 +12,7 @@ public sealed class OperationStore
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private List<OperationRecordDto>? _records;
+    private bool _usesRecoveryEnvelope;
 
     public OperationStore(string path)
     {
@@ -248,7 +249,24 @@ public sealed class OperationStore
         try
         {
             using FileStream stream = File.OpenRead(_path);
-            _records = (JsonSerializer.Deserialize<List<OperationRecordDto>>(stream, JsonOptions) ?? [])
+            using JsonDocument document = JsonDocument.Parse(stream);
+            JsonElement records = document.RootElement;
+            if (records.ValueKind == JsonValueKind.Object)
+            {
+                if (!records.TryGetProperty("schemaVersion", out JsonElement version) ||
+                    version.ValueKind != JsonValueKind.Number ||
+                    !version.TryGetInt32(out int schemaVersion) || schemaVersion != 2 ||
+                    !records.TryGetProperty("operations", out JsonElement operations) ||
+                    operations.ValueKind != JsonValueKind.Array)
+                {
+                    throw new JsonException("Unsupported operation history schema.");
+                }
+                records = operations;
+                _usesRecoveryEnvelope = true;
+            }
+            if (records.ValueKind != JsonValueKind.Array)
+                throw new JsonException("Operation history must contain an array of records.");
+            _records = (records.Deserialize<List<OperationRecordDto>>(JsonOptions) ?? [])
                 .Select(NormalizeForPersistence)
                 .ToList();
         }
@@ -269,7 +287,7 @@ public sealed class OperationStore
         try
         {
             EnsureLoaded();
-            await ReconcileStaleRunningOperationsCoreAsync(ct).ConfigureAwait(false);
+            await ReconcileStaleRunningOperationsCoreAsync(DateTimeOffset.UtcNow.AddMinutes(-30), ct).ConfigureAwait(false);
         }
         finally
         {
@@ -277,9 +295,28 @@ public sealed class OperationStore
         }
     }
 
-    private async Task ReconcileStaleRunningOperationsCoreAsync(CancellationToken ct)
+    /// <summary>
+    /// Immediate startup recovery for operations that belong to a prior process.
+    /// At startup nothing is legitimately running in this process yet, so every
+    /// running record is reconciled now — eliminating the 30-minute gap — before
+    /// the API serves any new mutation or scheduling.
+    /// </summary>
+    public async Task RecoverPriorProcessOperationsAsync(CancellationToken ct = default)
     {
-        DateTimeOffset cutoff = DateTimeOffset.UtcNow.AddMinutes(-30);
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            EnsureLoaded();
+            await ReconcileStaleRunningOperationsCoreAsync(DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task ReconcileStaleRunningOperationsCoreAsync(DateTimeOffset cutoff, CancellationToken ct)
+    {
         bool changed = false;
         for (int i = 0; i < _records!.Count; i++)
         {
@@ -293,10 +330,42 @@ public sealed class OperationStore
             if (string.Equals(operation.Type, DeviceInventory.DeviceEnrollmentService.OperationType, StringComparison.Ordinal) ||
                 IsRecoverableInstallFinalization(operation) ||
                 IsRecoverableExistingRegistrationVerification(operation) ||
-                IsRecoverableReconciliationFinalization(operation))
+                IsRecoverableReconciliationFinalization(operation) ||
+                IsRecoverableSupersedingRenewalFinalization(operation))
                 continue;
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            // A superseding renewal that never wrote a mutation-start checkpoint
+            // definitely did not change the iPhone. Fail it closed so the Owner
+            // must present fresh evidence and new authorization — never an
+            // unattended retry — instead of quarantining the device a second time.
+            if (string.Equals(operation.Type, "refresh", StringComparison.Ordinal) &&
+                operation.RecoveryIntent is not null &&
+                operation.RecoveryCheckpoint is null)
+            {
+                var interrupted = new OperationIssueDto(
+                    "recovery-interrupted-before-mutation",
+                    "The API restarted before the superseding renewal changed the iPhone. Re-run it with fresh evidence.");
+                OperationStageDto[] failedStages = operation.Stages.Select(stage =>
+                    string.Equals(stage.Status, "running", StringComparison.Ordinal)
+                        ? stage with { Status = "failed", CompletedAt = now, Message = interrupted.Message, Error = interrupted }
+                        : stage).ToArray();
+                _records[i] = operation with
+                {
+                    Status = "failed",
+                    UpdatedAt = now,
+                    CompletedAt = now,
+                    Stages = failedStages,
+                    Error = interrupted,
+                    Cancelable = false,
+                    Retryable = false,
+                    Rerunnable = false,
+                };
+                changed = true;
+                continue;
+            }
+
             var error = new OperationIssueDto(
                 "operation-terminal-state-unknown",
                 "The API restarted or lost the final device response. Sideport cannot prove whether the install changed the iPhone; reconcile the device before running it again.");
@@ -311,6 +380,9 @@ public sealed class OperationStore
                 CompletedAt = null,
                 Stages = stages,
                 Error = error,
+                Result = operation.Result ?? (operation.RecoveryCheckpoint is { } checkpoint
+                    ? new OperationResultDto(false, operation.Target.BundleId, checkpoint.PreparedExpiresAt, error.Message)
+                    : null),
                 Cancelable = false,
                 Retryable = false,
                 Rerunnable = false,
@@ -358,6 +430,11 @@ public sealed class OperationStore
         string.Equals(result.ReconciledOperationId, operation.ParentOperationId, StringComparison.Ordinal) &&
         !string.IsNullOrWhiteSpace(operation.Target.DeviceUdid);
 
+    // A superseding renewal whose device evidence is already durable resumes to
+    // idempotent finalization instead of being rewritten to an uncertain state.
+    private static bool IsRecoverableSupersedingRenewalFinalization(OperationRecordDto operation) =>
+        OperationReconciliationEvidence.HasVerifiedRecoveryEvidence(operation);
+
     private async Task SaveAsync(CancellationToken ct)
     {
         try
@@ -367,16 +444,33 @@ public sealed class OperationStore
                 Directory.CreateDirectory(directory);
 
             string tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+            bool recoveryEnvelope = _usesRecoveryEnvelope || _records!.Any(record =>
+                record.RecoveryIntent is not null || record.RecoveryCheckpoint is not null ||
+                record.Result?.RenewalEligible == true);
             await using (FileStream stream = File.Create(tempPath))
             {
-                await JsonSerializer.SerializeAsync(
-                    stream,
-                    _records!.OrderBy(operation => operation.CreatedAt).ThenBy(operation => operation.OperationId, StringComparer.Ordinal).ToArray(),
-                    JsonOptions,
-                    ct).ConfigureAwait(false);
+                OperationRecordDto[] ordered = _records!.OrderBy(operation => operation.CreatedAt)
+                    .ThenBy(operation => operation.OperationId, StringComparer.Ordinal).ToArray();
+                if (recoveryEnvelope)
+                {
+                    // Older builds expect an array and must refuse this document
+                    // instead of silently dropping one-shot recovery intent.
+                    using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+                    writer.WriteStartObject();
+                    writer.WriteNumber("schemaVersion", 2);
+                    writer.WritePropertyName("operations");
+                    JsonSerializer.Serialize(writer, ordered, JsonOptions);
+                    writer.WriteEndObject();
+                    await writer.FlushAsync(ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await JsonSerializer.SerializeAsync(stream, ordered, JsonOptions, ct).ConfigureAwait(false);
+                }
             }
 
             File.Move(tempPath, _path, overwrite: true);
+            _usesRecoveryEnvelope = recoveryEnvelope;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {

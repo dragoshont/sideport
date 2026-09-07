@@ -359,6 +359,9 @@ builder.Services.AddSingleton<SchedulerStatusService>();
 builder.Services.AddSingleton<OperationQueue>();
 builder.Services.AddSingleton<OperationService>();
 builder.Services.AddSingleton<PendingRegistrationService>();
+// Recovery barrier runs to completion in StartAsync BEFORE the worker/scheduler
+// serve mutations, so prior-process operations are reconciled with no 30-min gap.
+builder.Services.AddHostedService<OperationRecoveryBarrier>();
 builder.Services.AddHostedService<OperationWorker>();
 builder.Services.AddHostedService<OperationScheduler>();
 builder.Services.AddSingleton(_ => new KnownDeviceStore(Path.Combine(stateDirectory, "known-devices.json")));
@@ -3265,6 +3268,32 @@ app.MapPost("/api/operations/{operationId}/rerun", async (
     try
     {
         WorkspaceRequestPrincipal principal = WorkspaceApiSecurity.PrincipalFrom(context);
+
+        // A typed superseding-renewal intent is an Owner/recovery-only recovery of
+        // an unknown refresh: Family callers and unverified actors cannot submit it.
+        if (request.SupersedingRenewal is not null)
+        {
+            if (principal.Kind == WorkspaceRequestPrincipalKind.Family ||
+                !TryVerifiedActorFrom(context, out _))
+            {
+                return MutationProtectionRequired("running a superseding renewal");
+            }
+
+            (OperationRecordDto? renewalRecord, bool renewalCreated, string? renewalError) =
+                await operations.SubmitSupersedingRenewalAsync(
+                    operationId,
+                    request.SupersedingRenewal,
+                    ActorFrom(context),
+                    request.IdempotencyKey,
+                    ActorMemberIdFrom(context),
+                    await OwnerMemberIdForOperationAsync(
+                        operationId,
+                        familyAccess,
+                        ct).ConfigureAwait(false),
+                    ct).ConfigureAwait(false);
+            return SupersedingRenewalResult(renewalRecord, renewalCreated, renewalError);
+        }
+
         OperationRecordDto? source = null;
         if (principal.Kind == WorkspaceRequestPrincipalKind.Family)
         {
@@ -3305,6 +3334,10 @@ app.MapPost("/api/operations/{operationId}/rerun", async (
             "Operation is not rerunnable yet.",
             familyAccess,
             ct).ConfigureAwait(false);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new OperationErrorDto("validation-failed", ex.Message));
     }
     catch (OperationStoreException ex)
     {
@@ -3893,6 +3926,50 @@ static IResult OperationActionResult(OperationRecordDto? record, bool created, s
         _ => Results.UnprocessableEntity(new OperationErrorDto(error, "Operation action failed.")),
     };
 }
+
+static IResult SupersedingRenewalResult(OperationRecordDto? record, bool created, string? error)
+{
+    if (error is null)
+    {
+        return created && record is not null
+            ? Results.Accepted($"/api/operations/{record.OperationId}", record)
+            : Results.Ok(record);
+    }
+
+    var payload = new OperationErrorDto(error, SupersedingRenewalMessage(error));
+    return error switch
+    {
+        "operation-not-found" or "resource-not-found" or "recovery-receipt-not-found" =>
+            Results.NotFound(payload),
+        "owner-recovery-authority-required" or "operation-access-revoked" =>
+            Results.Json(payload, statusCode: StatusCodes.Status403Forbidden),
+        "idempotency-target-conflict" or "recovery-receipt-consumed" or
+            "recovery-successor-exists" or "device-operation-still-active" or
+            "operation-already-resolved" or "operation-not-recoverable" =>
+            Results.Conflict(payload),
+        _ => Results.UnprocessableEntity(payload),
+    };
+}
+
+static string SupersedingRenewalMessage(string error) => error switch
+{
+    "operation-not-found" => "The unknown refresh to recover was not found.",
+    "operation-not-recoverable" => "Only an unknown refresh can be recovered with a superseding renewal.",
+    "operation-already-resolved" => "The unknown refresh was already resolved by a verified successor.",
+    "resource-not-found" => "The requested Sideport item was not found.",
+    "owner-recovery-authority-required" => "Only the home Owner or current recovery authority may run a superseding renewal.",
+    "operation-access-revoked" => "Sideport access changed before this recovery could start.",
+    "superseding-renewal-confirmation-required" => "Explicit confirmation is required to run a superseding renewal.",
+    "recovery-receipt-not-found" => "The renewal-eligible reconciliation receipt was not found.",
+    "recovery-receipt-invalid" => "The renewal receipt is not a fresh, renewal-eligible observation for this unknown refresh.",
+    "recovery-receipt-consumed" => "This renewal receipt already authorized a successor.",
+    "recovery-successor-exists" => "This unknown refresh already has an in-flight or completed superseding renewal.",
+    "recovery-lineage-mismatch" => "The submitted lineage does not match the unknown refresh.",
+    "operation-reconciliation-evidence-missing" => "The unknown refresh does not retain the exact evidence needed for a safe renewal.",
+    "idempotency-target-conflict" => "This idempotency key was already used for a different recovery.",
+    "device-operation-still-active" => "Another operation still owns or has unresolved state for this iPhone.",
+    _ => "The superseding renewal could not be submitted.",
+};
 
 static async Task<IResult> OperationActionResultForRequestAsync(
     WorkspaceRequestPrincipal principal,
