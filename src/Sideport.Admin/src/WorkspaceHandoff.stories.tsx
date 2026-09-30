@@ -8,8 +8,8 @@ function mockInvitationFetch(enrollmentEnabled: boolean): typeof window.fetch {
     if (path === '/api/authentication/options') {
       return Response.json({
         provider: 'authentik',
-        providerLabel: 'Microsoft via Authentik',
-        loginLabel: 'Continue with Microsoft',
+        providerLabel: 'Sideport account',
+        loginLabel: 'Sign in with a passkey',
         enrollmentLabel: 'Create passkey',
         preferredMethod: 'passkey',
         enrollmentEnabled,
@@ -48,8 +48,8 @@ export const PasskeyFirstWithExistingAccountFallback: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Create passkey' })).toBeVisible())
-    await expect(canvas.getByRole('button', { name: 'Continue with Microsoft' })).toBeVisible()
-    await expect(canvas.getByText(/Microsoft via Authentik/)).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible()
+    await expect(canvas.getByText(/Sideport account/)).toBeVisible()
   },
 }
 
@@ -57,7 +57,7 @@ export const ExistingAccountOnlyWhenEnrollmentIsUnavailable: Story = {
   beforeEach: () => installMock(false),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Continue with Microsoft' })).toBeVisible())
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible())
     await expect(canvas.queryByRole('button', { name: 'Create passkey' })).not.toBeInTheDocument()
   },
 }
@@ -68,6 +68,6 @@ export const OwnerCanCreatePasskey: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Create passkey' })).toBeVisible())
-    await expect(canvas.getByRole('button', { name: 'Continue with Microsoft' })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible()
   },
 }

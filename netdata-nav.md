@@ -1,0 +1,421 @@
+- generic [ref=e2]:
+  - generic:
+    - region "Notifications Alt+T"
+  - generic [ref=e193]:
+    - generic [ref=e195]:
+      - generic [ref=e196]:
+        - img [ref=e197]
+        - button "conversationSubject" [disabled]:
+          - generic:
+            - img "conversationSubject"
+        - generic [ref=e203] [cursor=pointer]: h
+        - button "gear" [ref=e206] [cursor=pointer]:
+          - img "gear" [ref=e208]
+      - generic [ref=e210]:
+        - img [ref=e213]
+        - img [ref=e217] [cursor=pointer]
+    - generic [ref=e220]:
+      - banner [ref=e222]:
+        - generic [ref=e223]:
+          - generic [ref=e225]:
+            - img
+            - generic [ref=e227]:
+              - generic [ref=e228]: local
+              - img [ref=e229]
+          - generic [ref=e232]:
+            - button "gear" [disabled]:
+              - generic:
+                - img "gear"
+        - generic [ref=e233]:
+          - generic [ref=e236]:
+            - generic [ref=e237] [cursor=pointer]:
+              - img [ref=e238]
+              - generic [ref=e240]: Playing
+            - button [ref=e241] [cursor=pointer]:
+              - img [ref=e242]
+            - generic [ref=e1453] [cursor=pointer]:
+              - generic [ref=e1454]:
+                - generic [ref=e1455]: 08/07/2026 • 20:50
+                - img [ref=e1456]
+                - generic [ref=e1458]: 21:05
+                - generic [ref=e1459]: EEST
+              - generic [ref=e1460]:
+                - generic [ref=e1461]: •
+                - generic [ref=e1463]: last
+                - generic [ref=e1464]: 15min
+          - generic [ref=e258] [cursor=pointer]:
+            - img [ref=e259]
+            - generic [ref=e263]:
+              - generic [ref=e264]: Live
+              - generic [ref=e266]: "1"
+          - button "Sign In" [ref=e1465] [cursor=pointer]:
+            - generic [ref=e1466]: Sign In
+      - main [ref=e269]:
+        - generic [ref=e272]:
+          - generic [ref=e274] [cursor=pointer]:
+            - img [ref=e276]
+            - generic [ref=e279]: Nodes
+          - generic [ref=e281] [cursor=pointer]:
+            - img [ref=e283]
+            - generic [ref=e286]: Metrics
+          - generic [ref=e288] [cursor=pointer]:
+            - img [ref=e290]
+            - generic [ref=e293]: Live
+          - generic [ref=e295] [cursor=pointer]:
+            - img [ref=e297]
+            - generic [ref=e300]: Logs
+          - generic [ref=e302] [cursor=pointer]:
+            - img [ref=e304]
+            - generic [ref=e307]: Dashboard
+          - generic [ref=e309] [cursor=pointer]:
+            - img [ref=e311]
+            - generic [ref=e313]:
+              - generic [ref=e314]: Alerts
+              - generic [ref=e316]:
+                - generic [ref=e318]: "0"
+                - generic [ref=e320]: "0"
+          - generic [ref=e322] [cursor=pointer]:
+            - img [ref=e324]
+            - generic [ref=e327]: Events
+          - generic [active] [ref=e329] [cursor=pointer]:
+            - img [ref=e331]
+            - generic [ref=e334]: Anomalies
+          - generic [ref=e336] [cursor=pointer]:
+            - img [ref=e338]
+            - generic [ref=e341]: AI Insights
+          - button "local-custom-dashboard" [ref=e1470] [cursor=pointer]:
+            - img [ref=e1472]
+            - generic [ref=e1475]: local-custom-dashboard
+            - img [ref=e1476]
+        - generic [ref=e1480]:
+          - generic [ref=e1481]:
+            - generic [ref=e1483]:
+              - generic [ref=e1484]:
+                - generic [ref=e1487]: Anomaly Rate
+                - generic [ref=e1488]:
+                  - button "Generate report" [ref=e1490] [cursor=pointer]:
+                    - generic [ref=e1491]: Generate report
+                  - generic [ref=e1493]:
+                    - button "heart_hollow" [disabled]:
+                      - generic:
+                        - img "heart_hollow"
+              - generic [ref=e1494]:
+                - generic [ref=e1496]:
+                  - heading "Anomaly advisor" [level=3] [ref=e1497]
+                  - generic [ref=e1498]:
+                    - img [ref=e1499]
+                    - generic [ref=e1501]:
+                      - text: Highlight a time-frame of interest to explore potential anomalies. Learn more on
+                      - link "how to" [ref=e1502] [cursor=pointer]:
+                        - /url: https://learn.netdata.cloud/docs/dashboards-and-charts/anomaly-advisor-tab
+                      - text: use Anomaly Advisor.
+                - generic [ref=e1504]:
+                  - generic [ref=e1505]: Anomaly Rate
+                  - document [ref=e1506]: This is the percentage of metrics that are anomalous.
+                - generic [ref=e1508]:
+                  - generic [ref=e1509]:
+                    - img "Paused" [ref=e1512]
+                    - generic [ref=e1514]:
+                      - generic [ref=e1515]: Percentage of anomalous dimensions
+                      - generic [ref=e1517] [cursor=pointer]: • anomaly_detection.anomaly_rate
+                      - generic [ref=e1518]: • [percent]
+                    - generic [ref=e1519]:
+                      - button [disabled] [ref=e1520] [cursor=pointer]:
+                        - img [ref=e1521]
+                      - button [disabled] [ref=e1523] [cursor=pointer]:
+                        - img [ref=e1524]
+                      - button [disabled] [ref=e1526] [cursor=pointer]:
+                        - img [ref=e1527]
+                  - generic [ref=e1529]:
+                    - generic [ref=e1530]:
+                      - button [ref=e1531] [cursor=pointer]:
+                        - img [ref=e1532]
+                      - button "Group by node" [ref=e1534] [cursor=pointer]:
+                        - generic [ref=e1535]: Group by
+                        - generic [ref=e1536]: node
+                        - img [ref=e1537]
+                      - button "the AVG()" [ref=e1539] [cursor=pointer]:
+                        - generic [ref=e1540]: the
+                        - generic [ref=e1541]: AVG()
+                        - img [ref=e1542]
+                      - button "1 node" [ref=e1544] [cursor=pointer]:
+                        - generic [ref=e1546]: 1 node
+                        - img [ref=e1547]
+                      - button "1 system" [ref=e1549] [cursor=pointer]:
+                        - generic [ref=e1551]: 1 system
+                        - img [ref=e1552]
+                      - button "1 dimension" [ref=e1554] [cursor=pointer]:
+                        - generic [ref=e1556]: 1 dimension
+                        - img [ref=e1557]
+                      - button "2 labels" [ref=e1559] [cursor=pointer]:
+                        - generic [ref=e1561]: 2 labels
+                        - img [ref=e1562]
+                      - button "each as AVG() every 1s" [ref=e1565] [cursor=pointer]:
+                        - generic [ref=e1566]: each as
+                        - generic [ref=e1567]: AVG()
+                        - generic [ref=e1568]: every 1s
+                        - img [ref=e1569]
+                    - button "Reset" [disabled]:
+                      - generic: Reset
+                  - generic [ref=e1572]:
+                    - generic [ref=e1574]:
+                      - generic [ref=e1577]: "%"
+                      - generic "Anomaly detection percent (%)" [ref=e1580]:
+                        - img [ref=e1581]
+                      - generic [ref=e1584]: "0"
+                      - generic [ref=e1586]: "0.02"
+                      - generic [ref=e1588]: "0.04"
+                      - generic [ref=e1590]: "0.06"
+                      - generic [ref=e1592]: "0.08"
+                      - generic [ref=e1594]: "0.1"
+                      - generic [ref=e1596]: "0.12"
+                      - generic [ref=e1598]: "0.14"
+                      - generic [ref=e1600]: "0.16"
+                      - generic [ref=e1602]: 20:51:00
+                      - generic [ref=e1604]: 20:52:00
+                      - generic [ref=e1606]: 20:53:00
+                      - generic [ref=e1608]: 20:54:00
+                      - generic [ref=e1610]: 20:55:00
+                      - generic [ref=e1612]: 20:56:00
+                      - generic [ref=e1614]: 20:57:00
+                      - generic [ref=e1616]: 20:58:00
+                      - generic [ref=e1618]: 20:59:00
+                      - generic [ref=e1620]: 21:00:00
+                      - generic [ref=e1622]: 21:01:00
+                      - generic [ref=e1624]: 21:02:00
+                      - generic [ref=e1626]: 21:03:00
+                      - generic [ref=e1628]: 21:04:00
+                      - generic [ref=e1630]: 21:05:00
+                    - generic [ref=e1631]:
+                      - button [ref=e1632] [cursor=pointer]:
+                        - img [ref=e1633]
+                      - button [ref=e1635] [cursor=pointer]:
+                        - img [ref=e1636]
+                      - generic [ref=e1638]:
+                        - button [ref=e1639] [cursor=pointer]:
+                          - img [ref=e1640]
+                        - button [ref=e1642] [cursor=pointer]:
+                          - img [ref=e1643]
+                      - button [ref=e1645] [cursor=pointer]:
+                        - img [ref=e1646]
+                      - button [ref=e1648] [cursor=pointer]:
+                        - img [ref=e1649]
+                      - button [disabled] [ref=e1651] [cursor=pointer]:
+                        - img [ref=e1652]
+                  - generic [ref=e1654]:
+                    - generic [ref=e1656]:
+                      - generic [ref=e1657]: "Latest:"
+                      - generic [ref=e1658]: Wed, 08 Jul 2026 • 21:05:23
+                    - generic [ref=e1659]:
+                      - button [ref=e1661] [cursor=pointer]:
+                        - img [ref=e1662]
+                      - generic [ref=e1669] [cursor=pointer]:
+                        - generic [ref=e1670]: home
+                        - generic [ref=e1672]:
+                          - generic [ref=e1673]: "0.07"
+                          - generic [ref=e1674]: "%"
+                - generic [ref=e1676]:
+                  - generic [ref=e1677]: Count of Anomalous Metrics
+                  - document [ref=e1678]: Variance in the amount of anomalous metrics over time could indicate unexpected behavior that merits investigation.
+                - generic [ref=e1680]:
+                  - generic [ref=e1681]:
+                    - img "Paused" [ref=e1684]
+                    - generic [ref=e1686]:
+                      - generic [ref=e1687]: Anomaly detection dimensions
+                      - generic [ref=e1689] [cursor=pointer]: • anomaly_detection.dimensions
+                      - generic [ref=e1690]: • [dimensions]
+                    - generic [ref=e1691]:
+                      - button [disabled] [ref=e1692] [cursor=pointer]:
+                        - img [ref=e1693]
+                      - button [disabled] [ref=e1695] [cursor=pointer]:
+                        - img [ref=e1696]
+                      - button [disabled] [ref=e1698] [cursor=pointer]:
+                        - img [ref=e1699]
+                  - generic [ref=e1701]:
+                    - generic [ref=e1702]:
+                      - button [ref=e1703] [cursor=pointer]:
+                        - img [ref=e1704]
+                      - button "Group by node" [ref=e1706] [cursor=pointer]:
+                        - generic [ref=e1707]: Group by
+                        - generic [ref=e1708]: node
+                        - img [ref=e1709]
+                      - button "the AVG()" [ref=e1711] [cursor=pointer]:
+                        - generic [ref=e1712]: the
+                        - generic [ref=e1713]: AVG()
+                        - img [ref=e1714]
+                      - button "1 node" [ref=e1716] [cursor=pointer]:
+                        - generic [ref=e1718]: 1 node
+                        - img [ref=e1719]
+                      - button "1 system" [ref=e1721] [cursor=pointer]:
+                        - generic [ref=e1723]: 1 system
+                        - img [ref=e1724]
+                      - button "1 dimension" [ref=e1726] [cursor=pointer]:
+                        - generic [ref=e1728]: 1 dimension
+                        - img [ref=e1729]
+                      - button "2 labels" [ref=e1731] [cursor=pointer]:
+                        - generic [ref=e1733]: 2 labels
+                        - img [ref=e1734]
+                      - button "each as AVG() every 1s" [ref=e1737] [cursor=pointer]:
+                        - generic [ref=e1738]: each as
+                        - generic [ref=e1739]: AVG()
+                        - generic [ref=e1740]: every 1s
+                        - img [ref=e1741]
+                    - button "Reset" [disabled]:
+                      - generic: Reset
+                  - generic [ref=e1746]:
+                    - generic [ref=e1749]: dimensions
+                    - generic "Anomaly detection percent (%)" [ref=e1752]:
+                      - img [ref=e1753]
+                    - generic [ref=e1756]: "0"
+                    - generic [ref=e1758]: "5"
+                    - generic [ref=e1760]: "10"
+                    - generic [ref=e1762]: "15"
+                    - generic [ref=e1764]: "20"
+                    - generic [ref=e1766]: "25"
+                    - generic [ref=e1768]: 20:51:00
+                    - generic [ref=e1770]: 20:52:00
+                    - generic [ref=e1772]: 20:53:00
+                    - generic [ref=e1774]: 20:54:00
+                    - generic [ref=e1776]: 20:55:00
+                    - generic [ref=e1778]: 20:56:00
+                    - generic [ref=e1780]: 20:57:00
+                    - generic [ref=e1782]: 20:58:00
+                    - generic [ref=e1784]: 20:59:00
+                    - generic [ref=e1786]: 21:00:00
+                    - generic [ref=e1788]: 21:01:00
+                    - generic [ref=e1790]: 21:02:00
+                    - generic [ref=e1792]: 21:03:00
+                    - generic [ref=e1794]: 21:04:00
+                    - generic [ref=e1796]: 21:05:00
+                  - generic [ref=e1797]:
+                    - generic [ref=e1799]:
+                      - generic [ref=e1800]: "Latest:"
+                      - generic [ref=e1801]: Wed, 08 Jul 2026 • 21:05:23
+                    - generic [ref=e1802]:
+                      - button [ref=e1804] [cursor=pointer]:
+                        - img [ref=e1805]
+                      - generic [ref=e1812] [cursor=pointer]:
+                        - generic [ref=e1813]: home
+                        - generic [ref=e1815]:
+                          - generic [ref=e1816]: "12"
+                          - generic [ref=e1817]: dimensions
+                - generic [ref=e1819]:
+                  - generic [ref=e1820]: Anomaly Events Detected
+                  - document [ref=e1821]: An anomaly event is a period of time when a node has persistently elevated anomaly rates across all metrics. This may indicate unexpected behavior that merits investigation.
+                - generic [ref=e1823]:
+                  - generic [ref=e1824]:
+                    - img "Paused" [ref=e1827]
+                    - generic [ref=e1829]:
+                      - generic [ref=e1830]: Anomaly detection events
+                      - generic [ref=e1832] [cursor=pointer]: • anomaly_detection.detector_events
+                      - generic [ref=e1833]: • [status]
+                    - generic [ref=e1834]:
+                      - button [disabled] [ref=e1835] [cursor=pointer]:
+                        - img [ref=e1836]
+                      - button [disabled] [ref=e1838] [cursor=pointer]:
+                        - img [ref=e1839]
+                      - button [disabled] [ref=e1841] [cursor=pointer]:
+                        - img [ref=e1842]
+                  - generic [ref=e1844]:
+                    - generic [ref=e1845]:
+                      - button [ref=e1846] [cursor=pointer]:
+                        - img [ref=e1847]
+                      - button "Group by node" [ref=e1849] [cursor=pointer]:
+                        - generic [ref=e1850]: Group by
+                        - generic [ref=e1851]: node
+                        - img [ref=e1852]
+                      - button "the AVG()" [ref=e1854] [cursor=pointer]:
+                        - generic [ref=e1855]: the
+                        - generic [ref=e1856]: AVG()
+                        - img [ref=e1857]
+                      - button "1 node" [ref=e1859] [cursor=pointer]:
+                        - generic [ref=e1861]: 1 node
+                        - img [ref=e1862]
+                      - button "1 system" [ref=e1864] [cursor=pointer]:
+                        - generic [ref=e1866]: 1 system
+                        - img [ref=e1867]
+                      - button "2 dimensions" [ref=e1869] [cursor=pointer]:
+                        - generic [ref=e1871]: 2 dimensions
+                        - img [ref=e1872]
+                      - button "2 labels" [ref=e1874] [cursor=pointer]:
+                        - generic [ref=e1876]: 2 labels
+                        - img [ref=e1877]
+                      - button "each as AVG() every 1s" [ref=e1880] [cursor=pointer]:
+                        - generic [ref=e1881]: each as
+                        - generic [ref=e1882]: AVG()
+                        - generic [ref=e1883]: every 1s
+                        - img [ref=e1884]
+                    - button "Reset" [disabled]:
+                      - generic: Reset
+                  - generic [ref=e1889]:
+                    - generic "Anomaly detection percent (%)" [ref=e1894]:
+                      - img [ref=e1895]
+                    - generic [ref=e1898]: "0"
+                    - generic [ref=e1900]: "0.1"
+                    - generic [ref=e1902]: "0.2"
+                    - generic [ref=e1904]: "0.3"
+                    - generic [ref=e1906]: "0.4"
+                    - generic [ref=e1908]: "0.5"
+                    - generic [ref=e1910]: "0.6"
+                    - generic [ref=e1912]: "0.7"
+                    - generic [ref=e1914]: "0.8"
+                    - generic [ref=e1916]: "0.9"
+                    - generic [ref=e1918]: "1"
+                    - generic [ref=e1920]: 20:51:00
+                    - generic [ref=e1922]: 20:52:00
+                    - generic [ref=e1924]: 20:53:00
+                    - generic [ref=e1926]: 20:54:00
+                    - generic [ref=e1928]: 20:55:00
+                    - generic [ref=e1930]: 20:56:00
+                    - generic [ref=e1932]: 20:57:00
+                    - generic [ref=e1934]: 20:58:00
+                    - generic [ref=e1936]: 20:59:00
+                    - generic [ref=e1938]: 21:00:00
+                    - generic [ref=e1940]: 21:01:00
+                    - generic [ref=e1942]: 21:02:00
+                    - generic [ref=e1944]: 21:03:00
+                    - generic [ref=e1946]: 21:04:00
+                    - generic [ref=e1948]: 21:05:00
+                  - generic [ref=e1949]:
+                    - generic [ref=e1951]:
+                      - generic [ref=e1952]: "Latest:"
+                      - generic [ref=e1953]: Wed, 08 Jul 2026 • 21:05:23
+                    - generic [ref=e1954]:
+                      - button [ref=e1956] [cursor=pointer]:
+                        - img [ref=e1957]
+                      - generic [ref=e1964] [cursor=pointer]:
+                        - generic [ref=e1965]: home
+                        - generic [ref=e1968]: "0"
+            - generic [ref=e1969]:
+              - heading "Anomalous metrics" [level=4] [ref=e1971]
+              - generic [ref=e1972]: You haven't highlighted any timeframe yet.
+              - img [ref=e1973]
+          - generic [ref=e1981]:
+            - generic [ref=e1982]:
+              - generic [ref=e1983]:
+                - img [ref=e1984]
+                - generic [ref=e1986]: Anomalies
+              - img [ref=e1987] [cursor=pointer]
+            - generic [ref=e1990]:
+              - navigation [ref=e1992]:
+                - img [ref=e1994] [cursor=pointer]
+                - img [ref=e1997] [cursor=pointer]
+              - complementary [ref=e2000]:
+                - listitem [ref=e2001]:
+                  - listitem [ref=e2002] [cursor=pointer]:
+                    - generic [ref=e2003]:
+                      - img [ref=e2004]
+                      - generic [ref=e2006]: Anomaly advisor
+                  - complementary [ref=e2007]:
+                    - listitem [ref=e2008]:
+                      - listitem [ref=e2009] [cursor=pointer]:
+                        - generic [ref=e2010]:
+                          - img [ref=e2011]
+                          - generic [ref=e2015]: anomaly_detection.anomaly_rate
+                    - listitem [ref=e2016]:
+                      - listitem [ref=e2017] [cursor=pointer]:
+                        - generic [ref=e2021]: anomaly_detection.dimensions
+                    - listitem [ref=e2022]:
+                      - listitem [ref=e2023] [cursor=pointer]:
+                        - generic [ref=e2027]: anomaly_detection.detector_events
+  - status [ref=e1451]

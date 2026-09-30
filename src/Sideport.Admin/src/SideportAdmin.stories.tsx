@@ -471,28 +471,9 @@ const enrollmentRecoverySource = {
   error: { code: 'device-enrollment-recovery-required', message: 'Reconnect this iPhone so Sideport can check the existing Trust request.' },
 }
 const startEnrollmentRecoveryStory = fn(async () => enrollmentRecoverySource)
-const retryEnrollmentRecoveryStory = fn(async (operationId: string) => {
-  void operationId
-  return {
-    operationId: 'op-enroll-recovery-child',
-    status: 'waiting',
-    retryable: false,
-    stages: [
-      { id: 'request-pairing', status: 'succeeded', message: 'The earlier Trust request will not be repeated.' },
-      { id: 'verify-lockdown', status: 'waiting', message: 'Checking Trust.' },
-    ],
-  }
-})
-const readEnrollmentRecoveryStory = fn(async () => ({
-  operationId: 'op-enroll-recovery-child',
-  status: 'succeeded',
-  stages: [{ id: 'accept-device', status: 'succeeded', message: 'iPhone added.' }],
-  result: { deviceEnrollment: { selectedDeviceUdid: '000081-recovery', inventoryState: 'accepted' } },
-}))
 const enrollmentRecoveryServices: AddIPhoneServices = {
   start: startEnrollmentRecoveryStory,
-  retry: retryEnrollmentRecoveryStory,
-  read: readEnrollmentRecoveryStory,
+  read: async () => enrollmentRecoverySource,
 }
 
 const routeStory = (initialRoute: RouteId, name: string): Story => ({
@@ -558,7 +539,7 @@ export const FirstRunConnectIPhoneActionable: Story = {
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await waitFor(() => expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1))
     await expect(within(dialog).getByRole('button', { name: 'Close Add iPhone' })).toHaveFocus()
-    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
+    await expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
     await expect(within(dialog).queryByRole('button', { name: 'Connect iPhone' })).not.toBeInTheDocument()
     await new Promise((resolve) => window.setTimeout(resolve, 1_200))
     await expect(startOnboardingIPhoneStory).toHaveBeenCalledTimes(1)
@@ -576,7 +557,7 @@ export const FirstRunConnectIPhoneResumesWithoutStartingAgain: Story = {
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await waitFor(() => expect(readResumedOnboardingIPhoneStory).toHaveBeenCalled())
     await expect(startResumedOnboardingIPhoneStory).not.toHaveBeenCalled()
-    await expect(within(dialog).getByRole('button', { name: 'Waiting for iPhone…' })).toBeDisabled()
+    await expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
   },
 }
 export const LiveOnboarding: Story = {
@@ -1060,7 +1041,7 @@ export const AddIPhoneRuntimeBound: Story = {
     const dialog = page.getByRole('dialog', { name: 'Add an iPhone' })
     await userEvent.click(within(dialog).getByRole('button', { name: 'Connect iPhone' }))
     await waitFor(() => expect(within(dialog).getByText('iPhone added to Sideport')).toBeVisible(), { timeout: 3_000 })
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Choose an app' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Continue' }))
     await expect(canvas.getByRole('heading', { name: 'Apps' })).toBeVisible()
     await expect(page.queryByRole('dialog', { name: 'Add an iPhone' })).not.toBeInTheDocument()
   },
@@ -1086,13 +1067,13 @@ export const AddIPhoneResumeAfterClose: Story = {
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Connect iPhone' }))
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Close' }))
     const resumedDialog = await openDialog()
-    await expect(within(resumedDialog).getByRole('button', { name: /Waiting for iPhone/ })).toBeDisabled()
+    await expect(within(resumedDialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
     await waitFor(() => expect(within(resumedDialog).getByText('iPhone added to Sideport')).toBeVisible(), { timeout: 3_000 })
   },
 }
 
 export const AddIPhoneRecoveryRetry: Story = {
-  name: 'Signed in - iPhone recovery verifies Trust without pairing again',
+  name: 'Signed in - iPhone recovery stays automatic with Continue disabled',
   args: {
     data: fixtures,
     apiStatus: { ...tokenRequiredStatus, baseUrl: 'storybook://device-enrollment-recovery' },
@@ -1101,8 +1082,6 @@ export const AddIPhoneRecoveryRetry: Story = {
   },
   play: async ({ canvasElement }) => {
     startEnrollmentRecoveryStory.mockClear()
-    retryEnrollmentRecoveryStory.mockClear()
-    readEnrollmentRecoveryStory.mockClear()
     const canvas = within(canvasElement)
     const page = within(canvasElement.ownerDocument.body)
     const openDialog = async () => {
@@ -1113,16 +1092,15 @@ export const AddIPhoneRecoveryRetry: Story = {
 
     const firstDialog = await openDialog()
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Connect iPhone' }))
-    await expect(await within(firstDialog).findByRole('button', { name: 'Check Trust and continue' })).toBeEnabled()
-    await expect(within(firstDialog).getByText(/will not ask iOS to pair again/)).toBeVisible()
+    const waitingContinue = await within(firstDialog).findByRole('button', { name: 'Continue' })
+    await expect(waitingContinue).toBeDisabled()
+    await expect(within(firstDialog).queryByRole('button', { name: 'Check Trust and continue' })).not.toBeInTheDocument()
+    await expect(within(firstDialog).getByText(/checking the existing Trust request automatically/i)).toBeVisible()
     await userEvent.click(within(firstDialog).getByRole('button', { name: 'Close' }))
 
     const resumedDialog = await openDialog()
-    const recover = within(resumedDialog).getByRole('button', { name: 'Check Trust and continue' })
-    await expect(recover).toBeEnabled()
-    await userEvent.click(recover)
+    await expect(within(resumedDialog).getByRole('button', { name: 'Continue' })).toBeDisabled()
     await expect(startEnrollmentRecoveryStory).toHaveBeenCalledTimes(1)
-    await expect(retryEnrollmentRecoveryStory).toHaveBeenCalledWith(enrollmentRecoverySource.operationId)
   },
 }
 

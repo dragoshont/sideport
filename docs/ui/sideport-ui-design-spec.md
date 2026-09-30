@@ -597,15 +597,21 @@ Minimum stories:
   authority is replaced by an opaque handoff before OIDC; the actual signed-in
   account and permissions are confirmed with **Join Sideport**; expired, used,
   suspended, and Authentik-owned recovery states.
+- Owner claim and invitation authentication are passkey-first: **Create
+  passkey** for a new Sideport account and **Sign in with a passkey** for an
+  existing account. Authentik may offer Microsoft as a fallback inside its
+  Sideport-only flow, but Sideport does not brand the primary action as
+  Microsoft or imply official Sign in with Apple.
 - Owner claim: short-lived setup and recovery links outside the shell; no API
   key field; actual signed-in account and Owner impact confirmed before setup or
   replacement continues.
 - One-cable member assistant: cable/unlock/Trust/passcode guidance together;
   detection, pairing, Trust verification, and Sideport acceptance automatic
   after one start action; Developer Mode/restart/reconnect guidance before app
-  choice; unified approved app library; one **Install** action; verified chime
-  attempt plus **Installed — you can unplug**; automatic home-Wi-Fi refresh with
-  honest cable fallback.
+  choice; no **Check Trust** or recovery confirmation; one disabled gray
+  **Continue** action until the server accepts the iPhone; unified approved app
+  library; one **Install** action; verified chime attempt plus **Installed — you
+  can unplug**; automatic home-Wi-Fi refresh with honest cable fallback.
 - Owner setup outside the shell: fresh Docker and Apple Container explanations
   in plain language, deployment-specific repair disclosure, one Apple signer,
   Apple-returned team selection only when multiple teams exist, and handoff to

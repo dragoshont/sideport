@@ -505,7 +505,6 @@ export function SideportAdminApp({ data, apiStatus, initialRoute = 'home', initi
   const runtimeAddIPhoneServices = useMemo<AddIPhoneServices>(() => ({
     start: async (deviceUdid) => operationToEnrollment(await startDeviceEnrollment({ idempotencyKey: newUiIdempotencyKey('device-enrollment'), deviceUdid })),
     read: async (operationId) => operationToEnrollment(await getSideportOperation(operationId)),
-    retry: async (operationId) => operationToEnrollment(await retryOperation(operationId)),
     selectCandidate: async (candidate) => {
       const deviceUdid = authoritativeCandidateUdid(candidate, await listReachableDevices())
       if (!deviceUdid) throw new Error('Sideport could not safely match that iPhone. Leave only one new iPhone connected over USB, close this window, then start again.')

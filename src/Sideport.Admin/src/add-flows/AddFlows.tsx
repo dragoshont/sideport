@@ -100,7 +100,6 @@ export interface EnrollmentOperation {
 export interface AddIPhoneServices {
   start: (deviceUdid?: string) => Promise<EnrollmentOperation>
   read: (operationId: string) => Promise<EnrollmentOperation>
-  retry?: (operationId: string) => Promise<EnrollmentOperation>
   selectCandidate?: (candidate: EnrollmentCandidate) => Promise<EnrollmentOperation>
 }
 
@@ -275,22 +274,6 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
     void beginEnrollment()
   }
 
-  const retryEnrollment = async () => {
-    if (!operation || !services?.retry || !canMutate) return
-    setError(null)
-    setPhase('waiting')
-    try {
-      const next = await services.retry(operation.operationId)
-      setOperation(next)
-      setPhase(enrollmentPhase(next))
-      setError(next.error?.message ?? null)
-      rememberEnrollmentOperationId(storageKey, isResumableEnrollment(next) ? next.operationId : null)
-    } catch (reason) {
-      setPhase(operation.status === 'recovery-required' ? 'recovery' : 'failed')
-      setError(reason instanceof Error ? reason.message : 'Sideport could not safely continue this iPhone connection.')
-    }
-  }
-
   const chooseCandidate = async (candidate: EnrollmentCandidate) => {
     setError(null)
     if (demoMode) {
@@ -315,7 +298,6 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
   }
 
   const activeIndex = phase === 'idle' || phase === 'waiting' || phase === 'selection' || phase === 'failed' || phase === 'recovery' ? 0 : phase === 'trust' ? 1 : phase === 'verifying' ? 2 : 3
-  const retryExistingOperation = Boolean(operation && (phase === 'recovery' || (phase === 'failed' && operation.retryable)))
   const progress = [
     { label: 'Connect', detail: phase === 'waiting' ? 'Waiting for iPhone' : 'USB' },
     { label: 'Trust', detail: 'On iPhone' },
@@ -378,7 +360,7 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
             </div>
           ) : phase === 'recovery' ? (
             <div className="add-flow-guide">
-              <div><span><ShieldCheck size={17} /></span><div><strong>Check the existing Trust request</strong><small>Reconnect and unlock this iPhone. Sideport will verify Trust first and will not ask iOS to pair again.</small></div></div>
+              <div><span><RefreshCw className="stage-spin" size={17} /></span><div><strong>Keep the iPhone connected</strong><small>Sideport is checking the existing Trust request automatically. Keep the iPhone unlocked; pairing will not be requested again.</small></div></div>
             </div>
           ) : (
             <div className="add-flow-guide">
@@ -405,16 +387,21 @@ export function AddIPhoneDialog({ open, onOpenChange, demoMode, autoStart = fals
 
           <div className="dialog-actions add-flow-actions">
             <Dialog.Close asChild><button className="ghost-action add-flow-button" type="button">Close</button></Dialog.Close>
-            {phase === 'accepted' && onContinue && <button className="primary-action add-flow-button" onClick={onContinue} type="button"><Package size={17} /> Choose an app</button>}
-            {phase !== 'accepted' && phase !== 'selection' && (
+            {phase === 'accepted' && onContinue && <button className="primary-action add-flow-button" onClick={onContinue} type="button">Continue <ChevronRight size={17} /></button>}
+            {phase !== 'accepted' && phase !== 'selection' && phase !== 'idle' && phase !== 'failed' && (
+              <button className="primary-action add-flow-button" disabled type="button">
+                Continue <ChevronRight size={17} />
+              </button>
+            )}
+            {(phase === 'idle' || phase === 'failed') && (
               <button
                 className="primary-action add-flow-button"
                 data-testid="connect-iphone-intent"
-                disabled={(!demoMode && (!services || !canMutate || (retryExistingOperation && !services.retry))) || !['idle', 'failed', 'recovery'].includes(phase)}
-                onClick={() => void (retryExistingOperation ? retryEnrollment() : beginEnrollment())}
+                disabled={!demoMode && (!services || !canMutate)}
+                onClick={() => void beginEnrollment()}
                 type="button"
               >
-                <Cable size={17} /> {phase === 'recovery' ? 'Check Trust and continue' : phase === 'idle' || phase === 'failed' ? phase === 'failed' ? 'Try again' : 'Connect iPhone' : phase === 'trust' ? 'Waiting for Trust…' : phase === 'verifying' ? 'Adding iPhone…' : 'Waiting for iPhone…'}
+                <Cable size={17} /> {phase === 'failed' ? 'Try again' : 'Connect iPhone'}
               </button>
             )}
           </div>

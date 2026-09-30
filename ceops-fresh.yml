@@ -1,0 +1,211 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "REGINA MARIA" [ref=e8] [cursor=pointer]:
+            - /url: "#/Pacient/Dashboard"
+            - img "REGINA MARIA" [ref=e9]
+          - generic [ref=e10]:
+            - menubar [ref=e12]:
+              - menuitem "Contact Center 021 9268" [ref=e13]:
+                - generic [ref=e14] [cursor=pointer]: Contact Center 021 9268
+              - menuitem "Suport" [ref=e15]:
+                - link "Suport" [ref=e16] [cursor=pointer]:
+                  - /url: /#/Pacient/Suport
+                  - img [ref=e17]
+                  - generic [ref=e18]: Suport
+              - menuitem "Reginamaria.ro" [ref=e19]:
+                - img [ref=e20] [cursor=pointer]
+                - generic [ref=e21] [cursor=pointer]: Reginamaria.ro
+              - menuitem "Shop" [ref=e22]:
+                - img [ref=e23] [cursor=pointer]
+                - generic [ref=e24] [cursor=pointer]: Shop
+            - generic:
+              - menubar
+        - menubar [ref=e27]:
+          - menuitem "Dragos Hont 100452161" [ref=e28]:
+            - img [ref=e31] [cursor=pointer]
+            - generic [ref=e32] [cursor=pointer]:
+              - generic [ref=e33]: Dragos Hont
+              - generic [ref=e34]: "100452161"
+      - generic [ref=e39]:
+        - menubar [ref=e41]:
+          - menuitem "Dosar medical" [ref=e42]:
+            - generic [ref=e43] [cursor=pointer]: Dosar medical
+          - menuitem "Clinica Virtuala" [ref=e45]:
+            - generic [ref=e46] [cursor=pointer]: Clinica Virtuala
+          - menuitem "Programari" [ref=e48]:
+            - link "Programari" [ref=e49] [cursor=pointer]:
+              - /url: /#/Pacient/Programari
+              - generic [ref=e50]: Programari
+          - menuitem "Recomandari si planuri tratament" [ref=e51]:
+            - link "Recomandari si planuri tratament" [ref=e52] [cursor=pointer]:
+              - /url: /#/Pacient/PlanuriTratament
+              - generic [ref=e53]: Recomandari si planuri tratament
+          - menuitem "Abonamente si pachete" [ref=e54]:
+            - generic [ref=e55] [cursor=pointer]: Abonamente si pachete
+          - menuitem "Facturi" [ref=e57]:
+            - link "Facturi" [ref=e58] [cursor=pointer]:
+              - /url: /#/Pacient/ZonaFinanciara
+              - generic [ref=e59]: Facturi
+          - menuitem "Utile" [ref=e60]:
+            - generic [ref=e61] [cursor=pointer]: Utile
+        - menubar [ref=e64]:
+          - menuitem [ref=e65]:
+            - link [ref=e66] [cursor=pointer]:
+              - /url: /#/Pacient/Favorite
+              - img [ref=e67]
+          - menuitem [ref=e68]:
+            - link [ref=e69] [cursor=pointer]:
+              - /url: /#/Pacient/ProgramariOnline/Cautare/JTdCJTIySXNEZW50YWwlMjIlM0F0cnVlJTdE
+              - img [ref=e70]
+          - menuitem [ref=e71]:
+            - link [ref=e72] [cursor=pointer]:
+              - /url: /#/Pacient/ProgramariOnline/Cautare
+              - img [ref=e73]
+    - text:     
+    - generic [ref=e75]:
+      - generic [ref=e77]:
+        - heading "Programarile mele" [level=1] [ref=e78]
+        - generic [ref=e79]:
+          - button "Programeaza-te" [ref=e80] [cursor=pointer]:
+            - generic [ref=e81]: Programeaza-te
+          - button "Programeaza-te in Clinica Virtuala" [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: Programeaza-te in Clinica Virtuala
+      - generic [ref=e88]:
+        - generic [ref=e89]:
+          - generic [ref=e90]:
+            - button "Programari viitoare" [ref=e91] [cursor=pointer]:
+              - generic [ref=e92]: Programari viitoare
+            - button "Programari trecute" [ref=e93] [cursor=pointer]:
+              - generic [ref=e94]: Programari trecute
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - textbox "Cauta investigatii si servicii" [ref=e97]
+              - generic: Cauta investigatii si servicii
+            - button [ref=e98] [cursor=pointer]:
+              - img [ref=e100]
+        - generic [ref=e101]:
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - combobox "Specialitate" [ref=e105]
+              - button "expand combobox" [ref=e106] [cursor=pointer]:
+                - generic: 
+            - generic: Specialitate
+          - generic [ref=e108]:
+            - generic [ref=e109]:
+              - combobox "Medic" [ref=e110]
+              - button "expand combobox" [ref=e111] [cursor=pointer]:
+                - generic: 
+            - generic: Medic
+          - generic [ref=e114]:
+            - text: 
+            - textbox "Perioada" [ref=e115]
+            - generic: Perioada
+      - generic [ref=e117]:
+        - generic [ref=e118]:
+          - generic [ref=e119]:
+            - generic [ref=e120]:
+              - img [ref=e124] [cursor=pointer]
+              - generic [ref=e125]: Maine
+              - generic [ref=e126]: Psihologie
+              - generic [ref=e127]:
+                - generic [ref=e128]:
+                  - heading "Marti, 30 Iun" [level=4] [ref=e129]
+                  - heading "10:45 - 11:30" [level=4] [ref=e130]
+                - generic [ref=e131]: Clinica Virtuala
+                - generic [ref=e132]: Confirmata
+            - generic [ref=e133]:
+              - img [ref=e135]
+              - generic [ref=e136]:
+                - link "Psiholog Panzaru Alina" [ref=e137] [cursor=pointer]:
+                  - /url: https://www.reginamaria.ro/medici/psiholog-panzaru-alina
+                - generic [ref=e138]: Psiholog
+                - generic [ref=e139]: Psihologie
+          - generic [ref=e140]:
+            - button "Vezi detalii programare" [ref=e141] [cursor=pointer]:
+              - generic [ref=e142]: Vezi detalii programare
+            - button "Adauga informatii si fisiere" [ref=e143] [cursor=pointer]:
+              - generic [ref=e144]: Adauga informatii si fisiere
+        - generic [ref=e145]:
+          - generic [ref=e146]:
+            - generic [ref=e147]:
+              - img [ref=e151] [cursor=pointer]
+              - generic [ref=e152]: In o saptamana
+              - generic [ref=e153]: Psihologie
+              - generic [ref=e154]:
+                - generic [ref=e155]:
+                  - heading "Marti, 07 Iul" [level=4] [ref=e156]
+                  - heading "09:15 - 10:00" [level=4] [ref=e157]
+                - generic [ref=e158]: Clinica Virtuala
+                - generic [ref=e159]: Confirmata
+            - generic [ref=e160]:
+              - img [ref=e162]
+              - generic [ref=e163]:
+                - link "Psiholog Panzaru Alina" [ref=e164] [cursor=pointer]:
+                  - /url: https://www.reginamaria.ro/medici/psiholog-panzaru-alina
+                - generic [ref=e165]: Psiholog
+                - generic [ref=e166]: Psihologie
+          - generic [ref=e167]:
+            - button "Vezi detalii programare" [ref=e168] [cursor=pointer]:
+              - generic [ref=e169]: Vezi detalii programare
+            - button "Adauga informatii si fisiere" [ref=e170] [cursor=pointer]:
+              - generic [ref=e171]: Adauga informatii si fisiere
+        - generic [ref=e172]:
+          - generic [ref=e173]:
+            - generic [ref=e174]:
+              - img [ref=e178] [cursor=pointer]
+              - generic [ref=e179]: In 2 saptamani
+              - generic [ref=e180]: Psihologie
+              - generic [ref=e181]:
+                - generic [ref=e182]:
+                  - heading "Marti, 14 Iul" [level=4] [ref=e183]
+                  - heading "08:30 - 09:15" [level=4] [ref=e184]
+                - generic [ref=e185]: Clinica Virtuala
+                - generic [ref=e186]: Confirmata
+            - generic [ref=e187]:
+              - img [ref=e189]
+              - generic [ref=e190]:
+                - link "Psiholog Panzaru Alina" [ref=e191] [cursor=pointer]:
+                  - /url: https://www.reginamaria.ro/medici/psiholog-panzaru-alina
+                - generic [ref=e192]: Psiholog
+                - generic [ref=e193]: Psihologie
+          - generic [ref=e194]:
+            - button "Vezi detalii programare" [ref=e195] [cursor=pointer]:
+              - generic [ref=e196]: Vezi detalii programare
+            - button "Adauga informatii si fisiere" [ref=e197] [cursor=pointer]:
+              - generic [ref=e198]: Adauga informatii si fisiere
+        - generic [ref=e199]:
+          - generic [ref=e200]:
+            - generic [ref=e201]:
+              - img [ref=e205] [cursor=pointer]
+              - generic [ref=e206]: In 4 saptamani
+              - generic [ref=e207]: Psihologie
+              - generic [ref=e208]:
+                - generic [ref=e209]:
+                  - heading "Marti, 28 Iul" [level=4] [ref=e210]
+                  - heading "08:30 - 09:15" [level=4] [ref=e211]
+                - generic [ref=e212]: Clinica Virtuala
+                - generic [ref=e213]: Confirmata
+            - generic [ref=e214]:
+              - img [ref=e216]
+              - generic [ref=e217]:
+                - link "Psiholog Panzaru Alina" [ref=e218] [cursor=pointer]:
+                  - /url: https://www.reginamaria.ro/medici/psiholog-panzaru-alina
+                - generic [ref=e219]: Psiholog
+                - generic [ref=e220]: Psihologie
+          - generic [ref=e221]:
+            - button "Vezi detalii programare" [ref=e222] [cursor=pointer]:
+              - generic [ref=e223]: Vezi detalii programare
+            - button "Adauga informatii si fisiere" [ref=e224] [cursor=pointer]:
+              - generic [ref=e225]: Adauga informatii si fisiere
+    - generic [ref=e228]:
+      - generic [ref=e229]: © 2024 Regina Maria.
+      - generic [ref=e230]: All rights reserved.
+      - button "Termeni si conditii" [ref=e231] [cursor=pointer]:
+        - generic [ref=e232]: Termeni si conditii
+    - button [ref=e233] [cursor=pointer]:
+      - img [ref=e234]
+  - generic:
+    - generic: 
