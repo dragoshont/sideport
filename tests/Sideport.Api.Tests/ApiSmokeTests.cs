@@ -5004,7 +5004,13 @@ public partial class ApiSmokeTests
                 state,
                 state == "locked" ? "The iPhone is locked." : trusted ? "Trust accepted." : "Trust was declined on the iPhone.",
                 DateTimeOffset.UtcNow,
-                trusted));
+                trusted,
+                state switch
+                {
+                    "trusted" => DevicePairingDisposition.Trusted,
+                    "locked" => DevicePairingDisposition.Locked,
+                    _ => DevicePairingDisposition.Denied,
+                }));
         }
 
         public Task<IReadOnlyList<InstalledApp>> ListInstalledAppsAsync(string udid, CancellationToken ct = default) =>

@@ -69,20 +69,8 @@ namespace Netimobiledevice.Usbmuxd
 
             int payloadSize = header.Length - Marshal.SizeOf(header);
             if (payloadSize > 0) {
-                uint rsize = 0;
-                do {
-                    Sock.SetTimeout(connectionTimeout);
-                    payloadLoc = Sock.Receive(payloadSize);
-                    int res = payloadLoc.Length;
-                    if (res < 0) {
-                        break;
-                    }
-                    rsize += (uint) res;
-                } while (rsize < payloadSize);
-                if (rsize != payloadSize) {
-                    Logger.LogError("Error receiving payload of size {payloadSize} (bytes received: {rsize})", payloadSize, rsize);
-                    throw new UsbmuxException("Bad Message");
-                }
+                Sock.SetTimeout(connectionTimeout);
+                payloadLoc = Sock.Receive(payloadSize);
             }
 
             payload = payloadLoc;

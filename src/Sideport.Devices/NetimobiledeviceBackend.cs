@@ -79,6 +79,26 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         return Task.FromResult<IReadOnlyList<BackendDevice>>(result);
     }
 
+    public Task<IReadOnlyList<BackendDevice>> ListConnectedDevicesAsync(CancellationToken ct)
+    {
+        var result = new List<BackendDevice>();
+        foreach (UsbmuxdDevice muxDevice in Usbmux.GetDeviceList())
+        {
+            ct.ThrowIfCancellationRequested();
+            result.Add(new BackendDevice(
+                muxDevice.Serial,
+                "",
+                "",
+                "",
+                muxDevice.ConnectionType == UsbmuxdConnectionType.Network
+                    ? DeviceConnection.Wifi
+                    : DeviceConnection.Usb,
+                TrustState: "unknown",
+                TrustReason: "Trust has not been checked."));
+        }
+        return Task.FromResult<IReadOnlyList<BackendDevice>>(result);
+    }
+
     public async Task<IReadOnlyList<BackendApp>> ListInstalledAppsAsync(string udid, CancellationToken ct)
     {
         UsbmuxdDevice mux = FindPreferredMuxDevice(udid);
@@ -217,7 +237,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             observation.TrustState,
             observation.TrustReason,
             observation.CheckedAt,
-            observation.UsableForInstall));
+            observation.UsableForInstall,
+            observation.Disposition));
     }
 
     public async Task<DevicePairingResult> PairAsync(
@@ -262,7 +283,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                         "untrusted",
                         "The iPhone did not accept the Trust request.",
                         _timeProvider.GetUtcNow(),
-                        UsableForInstall: false),
+                        UsableForInstall: false,
+                        DevicePairingDisposition.AwaitingTrust),
                 };
             }
 
@@ -276,7 +298,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 verified.TrustState,
                 verified.TrustReason,
                 verified.LockdownCheckedAt,
-                verified.UsableForInstall);
+                verified.UsableForInstall,
+                verified.Disposition);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -293,7 +316,10 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 "error",
                 "The Trust request timed out. Reconnect the iPhone and try again.",
                 _timeProvider.GetUtcNow(),
-                UsableForInstall: false);
+                UsableForInstall: false,
+                adapter.LastState == PairingState.PairingDialogResponsePending
+                    ? DevicePairingDisposition.AwaitingTrust
+                    : DevicePairingDisposition.TransportUnavailable);
         }
         catch (Exception ex)
         {
@@ -308,7 +334,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 state,
                 reason,
                 _timeProvider.GetUtcNow(),
-                UsableForInstall: false);
+                UsableForInstall: false,
+                ClassifyTrustFailureDisposition(ex));
         }
     }
 
@@ -335,6 +362,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                     : "No valid pairing record is available for this iPhone.",
                 _timeProvider.GetUtcNow(),
                 UsableForInstall: trusted,
+                trusted ? DevicePairingDisposition.Trusted : DevicePairingDisposition.AwaitingTrust,
                 lockdown.DeviceName,
                 lockdown.ProductType,
                 lockdown.OsVersion.ToString());
@@ -357,6 +385,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 reason,
                 _timeProvider.GetUtcNow(),
                 UsableForInstall: false,
+                ClassifyTrustFailureDisposition(ex),
                 Name: "",
                 ProductType: "",
                 OsVersion: "");
@@ -371,8 +400,10 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         {
             LockdownError: LockdownError.PasswordProtected or LockdownError.EscrowLocked,
         } => ("locked", "The iPhone is locked. Unlock it and try again."),
-        NotPairedException or FatalPairingException =>
+        NotPairedException =>
             ("untrusted", "No valid pairing record is available for this iPhone."),
+        FatalPairingException =>
+            ("error", "The saved pairing record is damaged and must be repaired before Sideport can continue."),
         LockdownException
         {
             LockdownError: LockdownError.PairingFailed
@@ -383,6 +414,29 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
                 or LockdownError.InvalidPairRecord,
         } => ("untrusted", "No valid pairing record is available for this iPhone."),
         _ => ("error", "Sideport could not complete the lockdown trust check."),
+    };
+
+    internal static DevicePairingDisposition ClassifyTrustFailureDisposition(Exception ex) => ex switch
+    {
+        PasswordRequiredException => DevicePairingDisposition.Locked,
+        LockdownException
+        {
+            LockdownError: LockdownError.PasswordProtected or LockdownError.EscrowLocked,
+        } => DevicePairingDisposition.Locked,
+        LockdownException { LockdownError: LockdownError.UserDeniedPairing } => DevicePairingDisposition.Denied,
+        NotPairedException => DevicePairingDisposition.AwaitingTrust,
+        FatalPairingException => DevicePairingDisposition.RepairRequired,
+        LockdownException
+        {
+            LockdownError: LockdownError.MissingHostId or LockdownError.MissingPairRecord,
+        } => DevicePairingDisposition.AwaitingTrust,
+        LockdownException
+        {
+            LockdownError: LockdownError.PairingFailed
+                or LockdownError.InvalidHostID
+                or LockdownError.InvalidPairRecord,
+        } => DevicePairingDisposition.RepairRequired,
+        _ => DevicePairingDisposition.TransportUnavailable,
     };
 
     internal static DevicePairingProgress MapPairingProgress(PairingState state) => state switch
@@ -403,7 +457,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             "error",
             "Connect this iPhone to the Sideport host with USB before pairing.",
             checkedAt,
-            UsableForInstall: false);
+            UsableForInstall: false,
+            DevicePairingDisposition.UsbRequired);
 
     private static DevicePairingResult TrustedPairingResult(string udid, DateTimeOffset checkedAt) =>
         new(
@@ -412,7 +467,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             "trusted",
             "Lockdown session verified over USB.",
             checkedAt,
-            UsableForInstall: true);
+            UsableForInstall: true,
+            DevicePairingDisposition.Trusted);
 
     private static DevicePairingResult DeniedPairingResult(string udid, DateTimeOffset checkedAt) =>
         new(
@@ -421,7 +477,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             "untrusted",
             "Trust was declined on the iPhone.",
             checkedAt,
-            UsableForInstall: false);
+            UsableForInstall: false,
+            DevicePairingDisposition.Denied);
 
     private static DevicePairingResult LockedPairingResult(string udid, DateTimeOffset checkedAt) =>
         new(
@@ -430,7 +487,8 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
             "locked",
             "The iPhone is locked. Unlock it and try again.",
             checkedAt,
-            UsableForInstall: false);
+            UsableForInstall: false,
+            DevicePairingDisposition.Locked);
 
     private static string ReadString(DictionaryNode dict, string key) =>
         dict.TryGetValue(key, out PropertyNode? node) ? node.AsStringNode().Value : "";
@@ -587,6 +645,7 @@ internal sealed class NetimobiledeviceBackend : IDeviceBackend
         string TrustReason,
         DateTimeOffset CheckedAt,
         bool UsableForInstall,
+        DevicePairingDisposition Disposition,
         string Name,
         string ProductType,
         string OsVersion);

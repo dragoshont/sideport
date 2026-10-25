@@ -8,7 +8,7 @@ const meta = {
   parameters: {
     docs: {
       description: {
-        component: 'Canonical Storybook-only proposal for Sideport’s six-destination trusted-people product, secure owner/invitation handoff, and one-cable iPhone journey. Fixtures make no live account, device, app, or infrastructure changes.',
+        component: 'Canonical Storybook-only proposal for Sideport’s four-job product shell, secondary inbox/account surfaces, secure owner/invitation handoff, and one-cable iPhone journey. Fixtures make no live account, device, app, or infrastructure changes.',
       },
     },
   },
@@ -27,12 +27,20 @@ export const OwnerHome: Story = {
     const navigation = within(shell).getByRole('navigation', { name: 'Sideport navigation' })
     const destinations = within(navigation).getAllByRole('button').map((button) => button.textContent?.trim())
 
-    await expect(destinations).toEqual(['Home', 'Apps', 'Devices', 'People', 'Activity', 'Settings'])
+    await expect(destinations).toEqual(['Home', 'Apps', 'Devices', 'People'])
     await expect(within(navigation).queryByRole('button', { name: /Onboarding|Renewals|Operations|Diagnostics|Apple Access|Teams|Users|Install App/i })).not.toBeInTheDocument()
-    await expect(canvas.getByRole('heading', { name: 'Apps and iPhones at a glance' })).toBeVisible()
-    await expect(canvas.getByText('Cable ready for any trusted iPhone')).toBeVisible()
-    await expect(canvas.getByText('1 update available')).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Good evening, Dragos' })).toBeVisible()
+    await expect(canvas.getByText('One thing to do')).toBeVisible()
+    await expect(canvas.getByText('Connect Sam’s iPhone')).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Activity/ })).toBeVisible()
     await expect(canvas.getByText(/Storybook fixture/)).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: /Connect Sam’s iPhone/ }))
+    await expect(canvas.getByRole('heading', { name: 'Sam’s iPhone' })).toBeVisible()
+    await expect(canvas.getByText('Connect and unlock this iPhone')).toBeVisible()
+    await userEvent.click(within(navigation).getByRole('button', { name: 'People' }))
+    await userEvent.click(canvas.getByRole('button', { name: /Mara Member/ }))
+    await expect(canvas.getByRole('heading', { name: 'Mara' })).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Mara’s iPhone' })).toBeVisible()
   },
 }
 
@@ -62,7 +70,7 @@ export const MemberHome: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const navigation = canvas.getByRole('navigation', { name: 'Sideport navigation' })
-    await expect(within(navigation).getAllByRole('button')).toHaveLength(6)
+    await expect(within(navigation).getAllByRole('button')).toHaveLength(4)
 
     await expect(canvas.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
     await expect(canvas.queryByRole('button', { name: /Add another iPhone/ })).not.toBeInTheDocument()
@@ -71,11 +79,11 @@ export const MemberHome: Story = {
     await expect(canvas.queryByRole('button', { name: 'Add iPhone' })).not.toBeInTheDocument()
     await expect(canvas.getByText('Need another iPhone?')).toBeVisible()
 
-    await userEvent.click(within(navigation).getByRole('button', { name: 'Activity' }))
+    await userEvent.click(canvas.getByRole('button', { name: /Activity/ }))
     await expect(canvas.queryByRole('button', { name: /technical details/i })).not.toBeInTheDocument()
     await expect(canvas.queryByText(/network-usbmux|onboarding_v2|op_refresh_01/)).not.toBeInTheDocument()
 
-    await userEvent.click(within(navigation).getByRole('button', { name: 'Settings' }))
+    await userEvent.click(canvas.getByRole('button', { name: /M Mara Member/ }))
     await expect(canvas.getByRole('heading', { name: 'Settings' })).toBeVisible()
     await expect(canvas.queryByRole('heading', { name: 'Signing' })).not.toBeInTheDocument()
   },
@@ -136,7 +144,7 @@ export const OwnerClaimRecovery: Story = {
     await expect(canvas.getByText(/Dragos will lose Owner access and be signed out/)).toBeVisible()
     await expect(canvas.getByText(/2 Members, 2 iPhones, 3 installed apps/)).toBeVisible()
     await userEvent.click(canvas.getByRole('button', { name: 'Recover owner access' }))
-    await expect(canvas.getByRole('heading', { name: 'Apps and iPhones at a glance' })).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Good evening, Dragos' })).toBeVisible()
   },
 }
 
@@ -222,7 +230,7 @@ export const MemberPasskeyRecovery: Story = {
     await expect(canvas.getByRole('button', { name: 'Continue to sign-in recovery' })).toBeVisible()
     await expect(canvas.getByText(/Sideport cannot create, reset, or read your passkey/)).toBeVisible()
     await userEvent.click(canvas.getByRole('button', { name: 'Continue to sign-in recovery' }))
-    await expect(canvas.getByRole('heading', { name: 'Your apps are ready' })).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Good evening, Mara' })).toBeVisible()
     await expect(canvas.queryByRole('heading', { name: 'Connect the iPhone' })).not.toBeInTheDocument()
   },
 }
@@ -256,7 +264,7 @@ export const FullMemberOneCableJourney: Story = {
 
     await userEvent.click(canvas.getByRole('button', { name: 'Open Sideport' }))
     await expect(canvas.getByRole('navigation', { name: 'Sideport navigation' })).toBeVisible()
-    await expect(canvas.getByRole('heading', { name: 'Your apps are ready' })).toBeVisible()
+    await expect(canvas.getByRole('heading', { name: 'Good evening, Mara' })).toBeVisible()
   },
 }
 
@@ -286,12 +294,15 @@ export const AppsLibraryAndSources: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByRole('heading', { name: 'Apps' })).toBeVisible()
-    await expect(canvas.getAllByRole('button', { name: 'Choose iPhone' })).toHaveLength(3)
-    await expect(canvas.getByText(/Version 0.1.0 · On this Sideport/)).toBeVisible()
-    await expect(canvas.getAllByText(/Version 0.1.0 · GitHub release/)).toHaveLength(2)
-    await expect(canvas.getByRole('button', { name: /Import app/ })).toBeVisible()
+    await expect(canvas.getByRole('tab', { name: 'Your apps' })).toHaveAttribute('aria-selected', 'true')
+    await expect(canvas.getByRole('tab', { name: 'Browse' })).toBeVisible()
+    await userEvent.click(canvas.getByRole('tab', { name: 'Browse' }))
+    await expect(canvas.getByRole('tab', { name: 'Browse' })).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(canvas.getByRole('tab', { name: 'Your apps' }))
+    await expect(canvas.getByRole('button', { name: /Dice Roll/ })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Manage sources' })).toBeVisible()
 
-    await userEvent.click(canvas.getByRole('button', { name: /Import app/ }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Manage sources' }))
     const sourceGroup = canvas.getByRole('group', { name: 'IPA source' })
     await expect(within(sourceGroup).getByRole('button', { name: /This computer/ })).toBeVisible()
     await expect(within(sourceGroup).getByRole('button', { name: /On this Sideport/ })).toBeVisible()
@@ -302,22 +313,16 @@ export const AppsLibraryAndSources: Story = {
     await expect(canvas.getByText('None')).toBeVisible()
     await userEvent.click(canvas.getByRole('button', { name: 'Close app import' }))
 
-    const diceCard = canvas.getByRole('heading', { name: 'Dice Roll' }).closest('article')
-    if (!diceCard) throw new Error('Dice Roll card was not rendered.')
-    const chooseTarget = within(diceCard).getByRole('button', { name: 'Choose iPhone' })
-    await userEvent.click(chooseTarget)
-    await expect(canvas.getByRole('heading', { name: 'Choose the iPhone by name' })).toHaveFocus()
-    const targetGroup = canvas.getByRole('group', { name: 'Target iPhone' })
-    await expect(within(targetGroup).getByRole('button', { name: 'Mara’s iPhone' })).toBeVisible()
-    await expect(within(targetGroup).getByRole('button', { name: 'Alex’s iPhone' })).toBeVisible()
-    await userEvent.click(canvas.getByRole('button', { name: 'Cancel iPhone choice' }))
-    await expect(chooseTarget).toHaveFocus()
-
     const appSearch = canvas.getByRole('searchbox', { name: 'Search apps' })
     await userEvent.type(appSearch, 'dice')
-    await expect(canvas.getByRole('heading', { name: 'Dice Roll' })).toBeVisible()
-    await expect(canvas.queryByRole('heading', { name: 'Cert Clock' })).not.toBeInTheDocument()
+    await expect(canvas.getByRole('button', { name: /Dice Roll/ })).toBeVisible()
+    await expect(canvas.queryByRole('button', { name: /Cert Clock/ })).not.toBeInTheDocument()
     await userEvent.clear(appSearch)
+    await userEvent.click(canvas.getByRole('button', { name: /Dice Roll/ }))
+    await expect(canvas.getByRole('heading', { name: 'Dice Roll' })).toBeVisible()
+    await expect(canvas.getByText('Where this app is installed')).toBeVisible()
+    await userEvent.click(within(canvas.getByRole('main')).getByRole('button', { name: 'Apps' }))
+    await expect(canvas.getByRole('heading', { name: 'Apps' })).toBeVisible()
   },
 }
 
@@ -365,11 +370,14 @@ export const ContinuousUsbMonitoring: Story = {
   args: { experience: 'shell', role: 'owner', initialRoute: 'devices' },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await expect(canvas.getByText('USB port monitor is active')).toBeVisible()
-    await expect(canvas.getByRole('heading', { name: 'Mara’s iPhone' })).toBeVisible()
-    await expect(canvas.getByRole('heading', { name: 'Alex’s iPhone' })).toBeVisible()
-    await expect(canvas.getByRole('heading', { name: 'Sam’s iPhone' })).toBeVisible()
+    await expect(canvas.getByText('Watching the Sideport cable')).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Mara’s iPhone/ })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Alex’s iPhone/ })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Sam’s iPhone/ })).toBeVisible()
     await expect(canvas.getByText('Dice Roll update waiting')).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: /Sam’s iPhone/ }))
+    await expect(canvas.getByRole('heading', { name: 'Sam’s iPhone' })).toBeVisible()
+    await expect(canvas.getByText('Connect and unlock this iPhone')).toBeVisible()
   },
 }
 
@@ -378,10 +386,9 @@ export const OneTapInstallFromApps: Story = {
   args: { experience: 'shell', role: 'member', initialRoute: 'apps', memberName: 'Mara' },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    const diceHeading = canvas.getByRole('heading', { name: 'Dice Roll' })
-    const diceCard = diceHeading.closest('article')
-    if (!diceCard) throw new Error('Dice Roll card was not rendered.')
-    await userEvent.click(within(diceCard).getByRole('button', { name: 'Install' }))
+    await userEvent.click(canvas.getByRole('button', { name: /Dice Roll/ }))
+    await expect(canvas.getByRole('heading', { name: 'Dice Roll' })).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: 'Update on Mara’s iPhone' }))
     await expect(canvas.getByRole('heading', { name: 'Connect the iPhone to install Dice Roll' })).toBeVisible()
     await expect(canvas.queryByRole('heading', { name: 'Choose an app' })).not.toBeInTheDocument()
     await waitFor(() => expect(canvas.getByRole('heading', { name: 'Installing Dice Roll' })).toBeVisible(), { timeout: 2500 })
@@ -473,7 +480,7 @@ export const MobileShell320Reflow: Story = {
     await expect(canvas.getByRole('heading', { name: 'Apps' })).toBeVisible()
     await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth)
     const mobileNavigation = canvas.getByRole('navigation', { name: 'Mobile Sideport navigation' })
-    await expect(within(mobileNavigation).getAllByRole('button')).toHaveLength(5)
+    await expect(within(mobileNavigation).getAllByRole('button')).toHaveLength(4)
     await expect(within(mobileNavigation).getByRole('button', { name: 'Apps' })).toHaveAttribute('aria-current', 'page')
   },
 }

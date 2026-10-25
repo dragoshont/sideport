@@ -13,6 +13,12 @@ namespace Sideport.Devices;
 /// </summary>
 internal interface IDeviceBackend
 {
+    /// <summary>
+    /// Enumerate connected transports without opening lockdown or reading
+    /// pairing state. Results are presence evidence only.
+    /// </summary>
+    Task<IReadOnlyList<BackendDevice>> ListConnectedDevicesAsync(CancellationToken ct);
+
     /// <summary>Enumerate reachable devices (USB and network), best-effort enriched.</summary>
     Task<IReadOnlyList<BackendDevice>> ListDevicesAsync(CancellationToken ct);
 

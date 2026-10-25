@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import {
-  Activity,
   Apple,
+  ArrowLeft,
+  Bell,
   Cable,
   Check,
   CheckCircle2,
@@ -18,7 +19,6 @@ import {
   Plus,
   RotateCw,
   Search,
-  Settings,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -65,13 +65,13 @@ interface LibraryApp {
   release: string
 }
 
+type CanonicalDeviceKey = 'mara' | 'alex' | 'sam'
+
 const NAVIGATION: readonly NavigationItem[] = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'apps', label: 'Apps', icon: Package },
   { id: 'devices', label: 'Devices', icon: Smartphone },
   { id: 'people', label: 'People', icon: Users },
-  { id: 'activity', label: 'Activity', icon: Activity },
-  { id: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
 const LIBRARY_APPS: readonly LibraryApp[] = [
@@ -155,46 +155,34 @@ function StatusPill({ children, tone = 'positive' }: { children: ReactNode; tone
   return <span className={`spc-status-pill ${tone}`}><span aria-hidden="true" className="spc-status-dot" />{children}</span>
 }
 
-function HomePage({ role, onAddIPhone, onNavigate }: { role: CanonicalRole; onAddIPhone: (trigger: HTMLButtonElement) => void; onNavigate: (route: CanonicalRoute) => void }) {
+function HomePage({ role, onAddIPhone, onNavigate, onOpenDevice }: { role: CanonicalRole; onAddIPhone: (trigger: HTMLButtonElement) => void; onNavigate: (route: CanonicalRoute) => void; onOpenDevice: (device: CanonicalDeviceKey) => void }) {
   return (
     <div className="spc-page" data-page="home">
-      <PageHeading eyebrow={role === 'owner' ? 'Your Sideport' : 'Welcome home'} title={role === 'owner' ? 'Apps and iPhones at a glance' : 'Your apps are ready'}>
-        {role === 'owner'
-          ? 'Sideport keeps watching for connected iPhones and handles approved app updates in the background.'
-          : 'Sideport will attempt refreshes over paired home Wi-Fi and use the cable as the reliable fallback.'}
+      <PageHeading title={role === 'owner' ? 'Good evening, Dragos' : 'Good evening, Mara'}>
+        {role === 'owner' ? 'Everything important across your Sideport, without the system noise.' : 'Your apps and iPhone, with help only when you need it.'}
       </PageHeading>
 
-      <section className="spc-focus-card" aria-labelledby="home-device-title">
-        <div className="spc-device-visual"><Cable aria-hidden="true" size={34} /></div>
-        <div className="spc-focus-copy">
-          <StatusPill>Watching</StatusPill>
-          <h2 id="home-device-title">{role === 'owner' ? 'Cable ready for any trusted iPhone' : 'Your iPhone is connected'}</h2>
-          <p>{role === 'owner' ? 'Leave the cable attached to the Sideport host. A trusted iPhone is detected automatically when someone plugs it in.' : 'Home Wi-Fi available · cable ready when an update needs it'}</p>
-        </div>
-        <button className="spc-button secondary" onClick={() => onNavigate('devices')} type="button">View devices</button>
+      <section className="spc-plain-section" aria-labelledby="attention-title">
+        <div className="spc-section-heading"><div><span className="spc-eyebrow">Needs attention</span><h2 id="attention-title">One thing to do</h2></div></div>
+        <button className="spc-entity-row attention" onClick={() => onOpenDevice('sam')} type="button">
+          <span className="spc-round-icon warning"><Cable aria-hidden="true" size={21} /></span>
+          <span className="spc-entity-copy"><strong>Connect Sam’s iPhone</strong><small>Dice Roll is ready to update. Plug it into the Sideport cable and unlock it.</small></span>
+          <span className="spc-row-action">View <ChevronRight aria-hidden="true" size={18} /></span>
+        </button>
       </section>
 
-      <div className="spc-two-column">
-        <section className="spc-section" aria-labelledby="home-apps-title">
-          <div className="spc-section-heading">
-            <div><span className="spc-eyebrow">Apps</span><h2 id="home-apps-title">1 update available</h2></div>
-            <button className="spc-text-button" onClick={() => onNavigate('apps')} type="button">Find apps <ChevronRight aria-hidden="true" size={16} /></button>
-          </div>
-          <div className="spc-list-row">
-            <AppIcon app={LIBRARY_APPS[1]} compact />
-            <div><strong>Dice Roll 0.1.1</strong><small>Available for Mara and Alex</small></div>
-            <StatusPill tone="warning">Update</StatusPill>
-          </div>
-        </section>
+      <section className="spc-plain-section" aria-labelledby="home-devices-title">
+        <div className="spc-section-heading"><div><span className="spc-eyebrow">Devices</span><h2 id="home-devices-title">Your iPhones</h2></div><button className="spc-text-button" onClick={() => onNavigate('devices')} type="button">See all <ChevronRight aria-hidden="true" size={16} /></button></div>
+        <button className="spc-entity-row" onClick={() => onOpenDevice('mara')} type="button"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={21} /></span><span className="spc-entity-copy"><strong>Mara’s iPhone</strong><small>3 apps · connected at home</small></span><StatusPill>Ready</StatusPill><ChevronRight aria-hidden="true" size={18} /></button>
+        {role === 'owner' ? <button className="spc-entity-row" onClick={() => onOpenDevice('alex')} type="button"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={21} /></span><span className="spc-entity-copy"><strong>Alex’s iPhone</strong><small>2 apps · last seen yesterday</small></span><StatusPill tone="quiet">Away</StatusPill><ChevronRight aria-hidden="true" size={18} /></button> : null}
+      </section>
 
-        <section className="spc-section" aria-labelledby="home-next-title">
-          <div className="spc-section-heading"><div><span className="spc-eyebrow">Devices</span><h2 id="home-next-title">3 people · 3 iPhones</h2></div></div>
-          <p className="spc-section-copy">Mara is home on Wi-Fi. Alex is away. Sam’s iPhone needs the cable for one update.</p>
-          {role === 'owner'
-            ? <button className="spc-button secondary full" onClick={(event) => onAddIPhone(event.currentTarget)} type="button"><Plus aria-hidden="true" size={17} /> Add another iPhone</button>
-            : <p className="spc-section-copy">Need another iPhone? Ask the Sideport owner to add it after checking Apple’s device limit.</p>}
-        </section>
-      </div>
+      <section className="spc-plain-section" aria-labelledby="home-recent-title">
+        <div className="spc-section-heading"><div><span className="spc-eyebrow">Recent</span><h2 id="home-recent-title">Quietly handled</h2></div><button className="spc-text-button" onClick={() => onNavigate('activity')} type="button">Open inbox <ChevronRight aria-hidden="true" size={16} /></button></div>
+        <button className="spc-entity-row" onClick={() => onNavigate('apps')} type="button"><span className="spc-round-icon success"><Check aria-hidden="true" size={20} /></span><span className="spc-entity-copy"><strong>Cert Clock updated</strong><small>Mara’s iPhone · today at 09:42</small></span><ChevronRight aria-hidden="true" size={18} /></button>
+      </section>
+
+      {role === 'owner' ? <button className="spc-button secondary spc-home-add" onClick={(event) => onAddIPhone(event.currentTarget)} type="button"><Plus aria-hidden="true" size={17} /> Add an iPhone</button> : null}
     </div>
   )
 }
@@ -218,78 +206,49 @@ function ImportAppPanel({ onClose }: { onClose: () => void }) {
 
 function AppsPage({ importOpen, memberName, onInstall, onToggleImport, role }: { importOpen: boolean; memberName: string; onInstall: (appId: string, memberName: string) => void; onToggleImport: () => void; role: CanonicalRole }) {
   const [query, setQuery] = useState('')
-  const [targetAppId, setTargetAppId] = useState<string | null>(null)
-  const targetHeadingRef = useRef<HTMLHeadingElement>(null)
-  const targetTriggerRef = useRef<HTMLButtonElement>(null)
+  const [tab, setTab] = useState<'yours' | 'browse'>('yours')
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null)
   const visibleApps = LIBRARY_APPS.filter((app) => `${app.name} ${app.description}`.toLowerCase().includes(query.toLowerCase()))
-  const targetApp = LIBRARY_APPS.find((app) => app.id === targetAppId)
-  useEffect(() => { if (targetAppId) targetHeadingRef.current?.focus() }, [targetAppId])
+  const selectedApp = LIBRARY_APPS.find((app) => app.id === selectedAppId)
+
+  if (selectedApp) return (
+    <div className="spc-page spc-detail-page" data-page="app-detail">
+      <button className="spc-back-button" onClick={() => setSelectedAppId(null)} type="button"><ArrowLeft aria-hidden="true" size={18} /> Apps</button>
+      <header className="spc-detail-hero"><AppIcon app={selectedApp} /><div><span className="spc-eyebrow">{selectedApp.source}</span><h1>{selectedApp.name}</h1><p>{selectedApp.description}</p></div></header>
+      <section className="spc-plain-section"><div className="spc-key-value"><span>Version</span><strong>{selectedApp.version}</strong></div><div className="spc-key-value"><span>Installed on</span><strong>{selectedApp.installedOn}</strong></div><div className="spc-key-value"><span>Status</span><StatusPill tone={selectedApp.release === 'Update available' ? 'warning' : 'positive'}>{selectedApp.release}</StatusPill></div></section>
+      <section className="spc-plain-section" aria-labelledby="app-devices-title"><div className="spc-section-heading"><div><span className="spc-eyebrow">Devices</span><h2 id="app-devices-title">Where this app is installed</h2></div></div><div className="spc-static-row"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={20} /></span><span className="spc-entity-copy"><strong>Mara’s iPhone</strong><small>Version {selectedApp.version} · refreshed today</small></span><StatusPill>Ready</StatusPill></div>{role === 'owner' ? <div className="spc-static-row"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={20} /></span><span className="spc-entity-copy"><strong>Alex’s iPhone</strong><small>{selectedApp.release === 'Update available' ? 'Update available' : `Version ${selectedApp.version}`}</small></span><StatusPill tone={selectedApp.release === 'Update available' ? 'warning' : 'quiet'}>{selectedApp.release === 'Update available' ? 'Update' : 'Away'}</StatusPill></div> : null}</section>
+      <button className="spc-button primary spc-detail-action" onClick={() => onInstall(selectedApp.id, role === 'owner' ? 'Mara' : memberName)} type="button">{selectedApp.release === 'Update available' ? 'Update on Mara’s iPhone' : 'Install on Mara’s iPhone'}</button>
+    </div>
+  )
 
   return (
     <div className="spc-page" data-page="apps">
-      <PageHeading
-        eyebrow="Approved by the owner"
-        title="Apps"
-        action={role === 'owner' ? <button aria-expanded={importOpen} className="spc-button secondary" onClick={onToggleImport} type="button"><FileUp aria-hidden="true" size={17} /> Import app</button> : undefined}
-      >Find an app, choose an iPhone, and install. Sideport keeps approved apps updated afterward.</PageHeading>
+      <PageHeading title="Apps" action={role === 'owner' ? <button aria-expanded={importOpen} className="spc-text-button" onClick={onToggleImport} type="button">Manage sources</button> : undefined}>Find something useful. Sideport handles approved updates afterward.</PageHeading>
       {role === 'owner' && importOpen ? <ImportAppPanel onClose={onToggleImport} /> : null}
+      <div className="spc-segmented" aria-label="App library" role="tablist"><button aria-selected={tab === 'yours'} onClick={() => setTab('yours')} role="tab" type="button">Your apps</button><button aria-selected={tab === 'browse'} onClick={() => setTab('browse')} role="tab" type="button">Browse</button></div>
       <label className="spc-page-search">
         <Search aria-hidden="true" size={18} />
         <span className="spc-visually-hidden">Search apps</span>
-        <input onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search approved apps" type="search" value={query} />
+        <input onChange={(event) => setQuery(event.currentTarget.value)} placeholder={tab === 'yours' ? 'Search your apps' : 'Search the app library'} type="search" value={query} />
       </label>
-      <div className="spc-filter-chips" aria-label="App filters" role="group"><button aria-pressed="true" type="button">All apps</button><button aria-pressed="false" type="button">Updates</button><button aria-pressed="false" type="button">Installed</button></div>
-      <div className="spc-app-grid">
-        {visibleApps.map((app) => (
-          <article className="spc-app-card" key={app.id}>
-            <div className="spc-app-card-top"><AppIcon app={app} /><StatusPill tone={app.release === 'Update available' ? 'warning' : 'quiet'}>{app.release}</StatusPill></div>
-            <div><h2>{app.name}</h2><p>{app.description}</p></div>
-            <div className="spc-app-meta"><span>Version {app.version} · {app.source}</span><span>{app.installedOn}</span></div>
-            <button className="spc-button primary full" onClick={(event) => { if (role === 'owner') { targetTriggerRef.current = event.currentTarget; setTargetAppId(app.id) } else { onInstall(app.id, memberName) } }} type="button">{role === 'owner' ? 'Choose iPhone' : 'Install'}</button>
-          </article>
-        ))}
-      </div>
-      {role === 'owner' && targetApp ? <section className="spc-target-picker" aria-labelledby="target-picker-title"><div><span className="spc-eyebrow">Install {targetApp.name}</span><h2 id="target-picker-title" ref={targetHeadingRef} tabIndex={-1}>Choose the iPhone by name</h2><p>Sideport will wait for that exact iPhone on the cable before installation starts.</p></div><div role="group" aria-label="Target iPhone"><button className="spc-button secondary" onClick={() => onInstall(targetApp.id, 'Mara')} type="button"><Smartphone aria-hidden="true" size={17} /> Mara’s iPhone</button><button className="spc-button secondary" onClick={() => onInstall(targetApp.id, 'Alex')} type="button"><Smartphone aria-hidden="true" size={17} /> Alex’s iPhone</button><button aria-label="Cancel iPhone choice" className="spc-icon-button" onClick={() => { setTargetAppId(null); targetTriggerRef.current?.focus() }} type="button"><X aria-hidden="true" size={18} /></button></div></section> : null}
-      {role === 'owner' ? (
-        <aside className="spc-inline-note"><Info aria-hidden="true" size={18} /><div><strong>Need another app?</strong><span>Import an IPA from this computer, Sideport storage, or an approved public or private GitHub repository.</span></div></aside>
-      ) : null}
+      <section className="spc-plain-section spc-entity-list" aria-label={tab === 'yours' ? 'Your apps' : 'Browse apps'}>{visibleApps.map((app) => <button className="spc-entity-row" key={app.id} onClick={() => setSelectedAppId(app.id)} type="button"><AppIcon app={app} compact /><span className="spc-entity-copy"><strong>{app.name}</strong><small>{app.description}</small><em>Version {app.version} · {tab === 'yours' ? app.installedOn : app.source}</em></span><StatusPill tone={app.release === 'Update available' ? 'warning' : 'quiet'}>{app.release}</StatusPill><ChevronRight aria-hidden="true" size={18} /></button>)}</section>
     </div>
   )
 }
 
-function DevicesPage({ role, onAddIPhone }: { role: CanonicalRole; onAddIPhone: (trigger: HTMLButtonElement) => void }) {
+function DevicesPage({ role, onAddIPhone, initialSelected = null }: { role: CanonicalRole; onAddIPhone: (trigger: HTMLButtonElement) => void; initialSelected?: CanonicalDeviceKey | null }) {
+  const [selected, setSelected] = useState<CanonicalDeviceKey | null>(initialSelected)
+  const device = selected === 'alex' ? { name: 'Alex’s iPhone', owner: 'Alex', status: 'Away', detail: 'Last seen yesterday', apps: 2 } : selected === 'sam' ? { name: 'Sam’s iPhone', owner: 'Sam', status: 'Cable needed', detail: 'Dice Roll update waiting', apps: 2 } : { name: role === 'owner' ? 'Mara’s iPhone' : 'Your iPhone', owner: role === 'owner' ? 'Mara' : 'You', status: 'Ready', detail: 'Connected at home', apps: 3 }
+  if (selected) return <div className="spc-page spc-detail-page" data-page="device-detail"><button className="spc-back-button" onClick={() => setSelected(null)} type="button"><ArrowLeft aria-hidden="true" size={18} /> Devices</button><header className="spc-detail-hero"><span className="spc-round-icon large"><Smartphone aria-hidden="true" size={28} /></span><div><span className="spc-eyebrow">{device.owner}</span><h1>{device.name}</h1><p>{device.detail}</p></div><StatusPill tone={device.status === 'Cable needed' ? 'warning' : device.status === 'Away' ? 'quiet' : 'positive'}>{device.status}</StatusPill></header>{device.status === 'Cable needed' ? <aside className="spc-inline-note warning"><Cable aria-hidden="true" size={18} /><div><strong>Connect and unlock this iPhone</strong><span>Sideport will start the waiting Dice Roll update automatically.</span></div></aside> : null}<section className="spc-plain-section"><div className="spc-key-value"><span>Owner</span><strong>{device.owner}</strong></div><div className="spc-key-value"><span>Apps</span><strong>{device.apps} installed</strong></div><div className="spc-key-value"><span>Last connection</span><strong>{device.detail}</strong></div></section><section className="spc-plain-section" aria-labelledby="installed-apps-title"><div className="spc-section-heading"><div><span className="spc-eyebrow">Apps</span><h2 id="installed-apps-title">Installed on this iPhone</h2></div></div>{LIBRARY_APPS.slice(0, device.apps).map((app) => <div className="spc-static-row" key={app.id}><AppIcon app={app} compact /><span className="spc-entity-copy"><strong>{app.name}</strong><small>Version {app.version}</small></span><StatusPill tone={device.status === 'Cable needed' && app.id === 'dice-roll' ? 'warning' : 'positive'}>{device.status === 'Cable needed' && app.id === 'dice-roll' ? 'Update' : 'Ready'}</StatusPill></div>)}</section>{role === 'owner' ? <button className="spc-disclosure" type="button"><Info aria-hidden="true" size={17} /> Show technical details <ChevronRight aria-hidden="true" size={17} /></button> : null}</div>
   return (
     <div className="spc-page" data-page="devices">
-      <PageHeading eyebrow="Always watching the Sideport cable" title="Devices" action={role === 'owner' ? <button className="spc-button primary" onClick={(event) => onAddIPhone(event.currentTarget)} type="button"><Plus aria-hidden="true" size={17} /> Add iPhone</button> : undefined}>
-        {role === 'owner' ? 'See who owns each iPhone, where Sideport can reach it, and whether an app needs attention.' : 'Your iPhone and its approved Sideport apps.'}
+      <PageHeading title="Devices" action={role === 'owner' ? <button className="spc-button primary" onClick={(event) => onAddIPhone(event.currentTarget)} type="button"><Plus aria-hidden="true" size={17} /> Add iPhone</button> : undefined}>
+        {role === 'owner' ? 'iPhones connected to this Sideport.' : 'Your iPhone and its approved apps.'}
       </PageHeading>
-      <aside aria-label="USB port monitoring status" className="spc-port-monitor" aria-live="polite"><span className="spc-pulse-dot" /><div><strong>USB port monitor is active</strong><span>Plug in an already trusted iPhone and Sideport will recognize it automatically. A new iPhone starts the guided Trust setup.</span></div></aside>
-      <section className="spc-section spc-device-list" aria-label="iPhones">
-        <article className="spc-device-row">
-          <span className="spc-round-icon"><Smartphone aria-hidden="true" size={23} /></span>
-          <div><h2>{role === 'owner' ? 'Mara’s iPhone' : 'Your iPhone'}</h2><p>{role === 'owner' ? 'Mara · Member' : 'iPhone 15'} · 3 apps installed</p></div>
-          <div className="spc-device-status"><StatusPill>Home Wi-Fi</StatusPill><small>Up to date · seen now</small></div>
-          <button aria-label="Open iPhone details" className="spc-icon-button" type="button"><ChevronRight aria-hidden="true" size={20} /></button>
-        </article>
-        {role === 'owner' ? (
-          <article className="spc-device-row">
-            <span className="spc-round-icon"><Smartphone aria-hidden="true" size={23} /></span>
-            <div><h2>Alex’s iPhone</h2><p>Alex · Member · 2 apps installed</p></div>
-            <div className="spc-device-status"><StatusPill tone="quiet">Away</StatusPill><small>Up to date · seen yesterday</small></div>
-            <button aria-label="Open Alex’s iPhone details" className="spc-icon-button" type="button"><ChevronRight aria-hidden="true" size={20} /></button>
-          </article>
-        ) : null}
-        {role === 'owner' ? (
-          <article className="spc-device-row">
-            <span className="spc-round-icon"><Smartphone aria-hidden="true" size={23} /></span>
-            <div><h2>Sam’s iPhone</h2><p>Sam · Member · 2 apps installed</p></div>
-            <div className="spc-device-status"><StatusPill tone="warning">Cable needed</StatusPill><small>Dice Roll update waiting</small></div>
-            <button aria-label="Open Sam’s iPhone details" className="spc-icon-button" type="button"><ChevronRight aria-hidden="true" size={20} /></button>
-          </article>
-        ) : null}
-      </section>
+      <aside aria-label="USB port monitoring status" className="spc-port-monitor" aria-live="polite"><span className="spc-pulse-dot" /><div><strong>Watching the Sideport cable</strong><span>Trusted iPhones appear automatically when connected.</span></div></aside>
+      {role === 'owner' ? <section className="spc-plain-section spc-entity-list" aria-labelledby="attention-devices-title"><div className="spc-section-heading"><div><span className="spc-eyebrow">Needs attention</span><h2 id="attention-devices-title">Connect when nearby</h2></div></div><button className="spc-entity-row attention" onClick={() => setSelected('sam')} type="button"><span className="spc-round-icon warning"><Smartphone aria-hidden="true" size={22} /></span><span className="spc-entity-copy"><strong>Sam’s iPhone</strong><small>Dice Roll update waiting</small></span><StatusPill tone="warning">Cable needed</StatusPill><ChevronRight aria-hidden="true" size={18} /></button></section> : null}
+      <section className="spc-plain-section spc-entity-list" aria-labelledby="ready-devices-title"><div className="spc-section-heading"><div><span className="spc-eyebrow">{role === 'owner' ? 'Ready' : 'Your device'}</span><h2 id="ready-devices-title">{role === 'owner' ? 'Available iPhones' : 'Mara’s iPhone'}</h2></div></div><button className="spc-entity-row" onClick={() => setSelected('mara')} type="button"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={22} /></span><span className="spc-entity-copy"><strong>{role === 'owner' ? 'Mara’s iPhone' : 'Your iPhone'}</strong><small>3 apps · connected at home</small></span><StatusPill>Ready</StatusPill><ChevronRight aria-hidden="true" size={18} /></button>{role === 'owner' ? <button className="spc-entity-row" onClick={() => setSelected('alex')} type="button"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={22} /></span><span className="spc-entity-copy"><strong>Alex’s iPhone</strong><small>2 apps · last seen yesterday</small></span><StatusPill tone="quiet">Away</StatusPill><ChevronRight aria-hidden="true" size={18} /></button> : null}</section>
       {role === 'member' ? <aside className="spc-inline-note"><Info aria-hidden="true" size={18} /><div><strong>Need another iPhone?</strong><span>Ask the Sideport owner. They will check available Apple device capacity before connecting it.</span></div></aside> : null}
-      <aside className="spc-inline-note"><Cable aria-hidden="true" size={18} /><div><strong>The cable is only required for setup and reliable fallback.</strong><span>Sideport tries home Wi-Fi first. If a refresh cannot finish, reconnect this iPhone to the Sideport cable.</span></div></aside>
     </div>
   )
 }
@@ -297,22 +256,27 @@ function DevicesPage({ role, onAddIPhone }: { role: CanonicalRole; onAddIPhone: 
 function PeoplePage({ role }: { role: CanonicalRole }) {
   const [email, setEmail] = useState('')
   const [invited, setInvited] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [selected, setSelected] = useState<'dragos' | 'mara' | 'alex' | null>(null)
   const submitInvite = (event: FormEvent) => {
     event.preventDefault()
     if (email.trim()) setInvited(true)
   }
 
+  const person = selected === 'dragos' ? { name: 'Dragos', access: 'Owner', devices: '1 iPhone', apps: '3 apps' } : selected === 'alex' ? { name: 'Alex', access: 'Member', devices: '1 iPhone', apps: '2 apps' } : { name: 'Mara', access: 'Member', devices: '1 iPhone', apps: '3 apps' }
+  if (selected) return <div className="spc-page spc-detail-page" data-page="person-detail"><button className="spc-back-button" onClick={() => setSelected(null)} type="button"><ArrowLeft aria-hidden="true" size={18} /> People</button><header className="spc-detail-hero"><span className="spc-avatar large">{person.name[0]}</span><div><span className="spc-eyebrow">{person.access}</span><h1>{person.name}</h1><p>{person.devices} · {person.apps}</p></div><StatusPill>Active</StatusPill></header><section className="spc-plain-section"><div className="spc-key-value"><span>Access</span><strong>{person.access}</strong></div><div className="spc-key-value"><span>Devices</span><strong>{person.devices}</strong></div><div className="spc-key-value"><span>Approved apps</span><strong>{person.apps}</strong></div></section><section className="spc-plain-section" aria-labelledby="person-device-title"><div className="spc-section-heading"><div><span className="spc-eyebrow">Device</span><h2 id="person-device-title">{person.name}’s iPhone</h2></div></div><div className="spc-static-row"><span className="spc-round-icon"><Smartphone aria-hidden="true" size={20} /></span><span className="spc-entity-copy"><strong>{person.name}’s iPhone</strong><small>{selected === 'alex' ? 'Last seen yesterday' : 'Connected at home'}</small></span><StatusPill tone={selected === 'alex' ? 'quiet' : 'positive'}>{selected === 'alex' ? 'Away' : 'Ready'}</StatusPill></div></section></div>
+
   return (
     <div className="spc-page" data-page="people">
-      <PageHeading eyebrow="Your Sideport" title="People">
-        {role === 'owner' ? 'Invite someone you trust. They sign in with a passkey and can use only approved apps on their own iPhone.' : 'People who share this Sideport with you.'}
+      <PageHeading title="People">
+        {role === 'owner' ? 'People you trust to use this Sideport.' : 'People who share this Sideport with you.'}
       </PageHeading>
       {role === 'owner' ? (
         <section className="spc-invite-card" aria-labelledby="invite-title">
           <span className="spc-round-icon accent"><Users aria-hidden="true" size={23} /></span>
           <div className="spc-invite-copy"><h2 id="invite-title">Invite someone you trust</h2><p>We’ll create a private, single-use link. They will use Face ID, Touch ID, Windows Hello, or their password manager—never your Apple signing password.</p></div>
           {invited ? (
-            <div className="spc-invite-result" role="status"><CheckCircle2 aria-hidden="true" size={20} /><div><strong>Invitation ready</strong><span>Copy the link and send it to {email}.</span></div><button className="spc-button secondary" type="button">Copy link</button></div>
+            <div className="spc-invite-result" role="status"><CheckCircle2 aria-hidden="true" size={20} /><div><strong>{copied ? 'Link copied' : 'Invitation ready'}</strong><span>{copied ? `Send the private link to ${email}.` : `Copy the link and send it to ${email}.`}</span></div><button className="spc-button secondary" onClick={() => setCopied(true)} type="button">{copied ? 'Copied' : 'Copy link'}</button></div>
           ) : (
             <form className="spc-invite-form" onSubmit={submitInvite}>
               <label htmlFor="member-email">Their email</label>
@@ -324,31 +288,27 @@ function PeoplePage({ role }: { role: CanonicalRole }) {
       ) : (
         <aside className="spc-inline-note"><ShieldCheck aria-hidden="true" size={18} /><div><strong>You have Member access.</strong><span>You can use your iPhone and install approved apps. Another iPhone requires the owner to check capacity first.</span></div></aside>
       )}
-      <section className="spc-section" aria-labelledby="people-list-title">
-        <div className="spc-section-heading"><div><span className="spc-eyebrow">Members</span><h2 id="people-list-title">3 people</h2></div></div>
-        {[
-          ['Dragos', 'Owner · signing and member access'],
-          ['Mara', role === 'member' ? 'You · Member · 1 iPhone' : 'Member · 1 iPhone'],
-          ['Alex', 'Member · 1 iPhone'],
-        ].map(([name, detail]) => <div className="spc-list-row" key={name}><span className="spc-avatar">{name[0]}</span><div><strong>{name}</strong><small>{detail}</small></div><StatusPill tone="quiet">Active</StatusPill></div>)}
+      <section className="spc-plain-section spc-entity-list" aria-labelledby="people-list-title">
+        <div className="spc-section-heading"><div><span className="spc-eyebrow">Active</span><h2 id="people-list-title">3 people</h2></div></div>
+        {([['dragos', 'Dragos', 'Owner · signing and member access'], ['mara', 'Mara', role === 'member' ? 'You · Member · 1 iPhone' : 'Member · 1 iPhone'], ['alex', 'Alex', 'Member · 1 iPhone']] as const).map(([id, name, detail]) => <button className="spc-entity-row" key={name} onClick={() => setSelected(id)} type="button"><span className="spc-avatar">{name[0]}</span><span className="spc-entity-copy"><strong>{name}</strong><small>{detail}</small></span><StatusPill tone="quiet">Active</StatusPill><ChevronRight aria-hidden="true" size={18} /></button>)}
       </section>
     </div>
   )
 }
 
-function ActivityPage({ role }: { role: CanonicalRole }) {
+function ActivityPage({ role, onOpenDevice }: { role: CanonicalRole; onOpenDevice: (device: CanonicalDeviceKey) => void }) {
   const [technical, setTechnical] = useState(false)
   const [filter, setFilter] = useState<'all' | 'attention' | 'apps' | 'devices'>('all')
   return (
     <div className="spc-page" data-page="activity">
-      <PageHeading eyebrow="What happened and who needs help" title="Activity" action={role === 'owner' ? <button aria-expanded={technical} className="spc-button secondary" onClick={() => setTechnical((value) => !value)} type="button">{technical ? 'Hide' : 'Show'} technical details</button> : undefined}>
+      <PageHeading eyebrow="Inbox" title="Activity" action={role === 'owner' ? <button aria-expanded={technical} className="spc-button secondary" onClick={() => setTechnical((value) => !value)} type="button">{technical ? 'Hide' : 'Show'} technical details</button> : undefined}>
         {role === 'owner' ? 'Updates across people, iPhones, apps, and access—in one chronological feed.' : 'Installs and updates for your iPhone, in plain language.'}
       </PageHeading>
       <div className="spc-filter-chips" aria-label="Activity filters" role="group">
         {([['all', 'All'], ['attention', 'Needs attention'], ['apps', 'Apps'], ['devices', 'Devices']] as const).map(([id, label]) => <button aria-pressed={filter === id} key={id} onClick={() => setFilter(id)} type="button">{label}</button>)}
       </div>
       <section className="spc-section spc-timeline" aria-label="Recent activity">
-        {(filter === 'all' || filter === 'attention' || filter === 'devices') ? <><h2 className="spc-timeline-group">Needs attention</h2><article className="attention"><span className="spc-timeline-icon warning"><Cable aria-hidden="true" size={17} /></span><div><h2>Sam’s iPhone needs the cable</h2><p>Dice Roll could not update over Wi-Fi. Plug it into the Sideport host; the update starts automatically.</p>{role === 'owner' && technical ? <code>refresh waiting-for-usb · member sam · retry preserved</code> : null}<button className="spc-text-button" type="button">View device <ChevronRight aria-hidden="true" size={15} /></button></div><time>10 min ago</time></article></> : null}
+        {(filter === 'all' || filter === 'attention' || filter === 'devices') ? <><h2 className="spc-timeline-group">Needs attention</h2><article className="attention"><span className="spc-timeline-icon warning"><Cable aria-hidden="true" size={17} /></span><div><h2>Sam’s iPhone needs the cable</h2><p>Dice Roll could not update over Wi-Fi. Plug it into the Sideport host; the update starts automatically.</p>{role === 'owner' && technical ? <code>refresh waiting-for-usb · member sam · retry preserved</code> : null}<button className="spc-text-button" onClick={() => onOpenDevice('sam')} type="button">View device <ChevronRight aria-hidden="true" size={15} /></button></div><time>10 min ago</time></article></> : null}
         {filter !== 'attention' ? <h2 className="spc-timeline-group">Today</h2> : null}
         {(filter === 'all' || filter === 'apps') ? <article><span className="spc-timeline-icon success"><Check aria-hidden="true" size={17} /></span><div><h2>Cert Clock updated on Mara’s iPhone</h2><p>Version 0.1.1 installed and verified.</p>{role === 'owner' && technical ? <code>operation op_refresh_01 · member mara · device evidence verified</code> : null}</div><time>09:42</time></article> : null}
         {(filter === 'all' || filter === 'devices') ? <article><span className="spc-timeline-icon"><Smartphone aria-hidden="true" size={17} /></span><div><h2>{role === 'owner' ? 'Alex’s iPhone came home' : 'Your iPhone came home'}</h2><p>Sideport can reach it over paired Wi-Fi. No update is due.</p>{role === 'owner' && technical ? <code>transport network-usbmux · lockdown trusted</code> : null}</div><time>08:15</time></article> : null}
@@ -382,10 +342,10 @@ function SettingsPage({ role }: { role: CanonicalRole }) {
     <div className="spc-page" data-page="settings">
       <PageHeading eyebrow="Simple by default" title="Settings">Your account, automatic refresh, and recovery.</PageHeading>
       <div className="spc-settings-list">
-        <section className="spc-setting-row"><span className="spc-round-icon"><ShieldCheck aria-hidden="true" size={22} /></span><div><h2>Sign-in and recovery</h2><p>Managed by Authentik · passkeys stay on your trusted devices.</p></div><button className="spc-button secondary" type="button">Open Authentik</button></section>
+        <section className="spc-setting-row"><span className="spc-round-icon"><ShieldCheck aria-hidden="true" size={22} /></span><div><h2>Sign-in and recovery</h2><p>Passkeys stay on your trusted devices. The deployment chooses the sign-in provider.</p></div><StatusPill>Protected</StatusPill></section>
         <section className="spc-setting-row"><span className="spc-round-icon"><RotateCw aria-hidden="true" size={22} /></span><div><h2>Automatic refresh</h2><p>On · paired Wi-Fi is attempted; the Sideport cable is the reliable fallback.</p></div><StatusPill>On</StatusPill></section>
         {role === 'owner' ? <section className="spc-setting-row"><span className="spc-round-icon"><Apple aria-hidden="true" size={22} /></span><div><h2>Signing</h2><p>d•••••@icloud.com · Personal Team returned by Apple</p></div><button aria-label="Review Apple signing" className="spc-button secondary" onClick={() => setSigningOpen(true)} type="button">Review</button></section> : null}
-        {role === 'owner' ? <section className="spc-setting-row"><span className="spc-round-icon"><Laptop aria-hidden="true" size={22} /></span><div><h2>Sideport setup</h2><p>Completed · current services are ready.</p></div><button className="spc-button secondary" type="button">Review</button></section> : null}
+        {role === 'owner' ? <section className="spc-setting-row"><span className="spc-round-icon"><Laptop aria-hidden="true" size={22} /></span><div><h2>Sideport setup</h2><p>Completed · current services are ready.</p></div><StatusPill>Ready</StatusPill></section> : null}
       </div>
       {role === 'owner' ? <button aria-expanded={technical} className="spc-disclosure" onClick={() => setTechnical((value) => !value)} type="button"><Info aria-hidden="true" size={17} /> {technical ? 'Hide technical details' : 'Show technical details'} <ChevronRight aria-hidden="true" size={17} /></button> : null}
       {role === 'owner' && technical ? <section className="spc-technical-panel"><h2>Technical details</h2><dl><div><dt>Deployment</dt><dd>Docker · healthy</dd></div><div><dt>Device link</dt><dd>usbmuxd · available</dd></div><div><dt>Signer</dt><dd>Ready · credential redacted</dd></div><div><dt>Observability</dt><dd>Local activity only</dd></div></dl></section> : null}
@@ -445,6 +405,7 @@ function SignedInShell({ memberName, role, initialRoute, onStartAssistant }: { m
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [phoneTargetOpen, setPhoneTargetOpen] = useState(false)
+  const [deviceTarget, setDeviceTarget] = useState<CanonicalDeviceKey | null>(null)
   const searchTriggerRef = useRef<HTMLButtonElement>(null)
   const addTriggerRef = useRef<HTMLButtonElement>(null)
   const phoneTargetTriggerRef = useRef<HTMLButtonElement>(null)
@@ -467,6 +428,13 @@ function SignedInShell({ memberName, role, initialRoute, onStartAssistant }: { m
   }
   const navigate = (nextRoute: CanonicalRoute) => {
     setRoute(nextRoute)
+    setDeviceTarget(null)
+    setAddOpen(false)
+    setPhoneTargetOpen(false)
+  }
+  const openDevice = (device: CanonicalDeviceKey) => {
+    setDeviceTarget(device)
+    setRoute('devices')
     setAddOpen(false)
     setPhoneTargetOpen(false)
   }
@@ -482,11 +450,11 @@ function SignedInShell({ memberName, role, initialRoute, onStartAssistant }: { m
   const renderPage = () => {
     switch (route) {
       case 'apps': return <AppsPage importOpen={importOpen} memberName={memberName} onInstall={(appId, targetMemberName) => onStartAssistant('install-waiting', appId, targetMemberName)} onToggleImport={() => setImportOpen((value) => !value)} role={role} />
-      case 'devices': return <DevicesPage onAddIPhone={openAddIPhone} role={role} />
+      case 'devices': return <DevicesPage initialSelected={deviceTarget} onAddIPhone={openAddIPhone} role={role} />
       case 'people': return <PeoplePage role={role} />
-      case 'activity': return <ActivityPage role={role} />
+      case 'activity': return <ActivityPage onOpenDevice={openDevice} role={role} />
       case 'settings': return <SettingsPage role={role} />
-      default: return <HomePage onAddIPhone={openAddIPhone} onNavigate={navigate} role={role} />
+      default: return <HomePage onAddIPhone={openAddIPhone} onNavigate={navigate} onOpenDevice={openDevice} role={role} />
     }
   }
 
@@ -495,7 +463,7 @@ function SignedInShell({ memberName, role, initialRoute, onStartAssistant }: { m
       <aside aria-label="Primary Sideport sidebar" className="spc-sidebar">
         <Brand />
         <nav aria-label="Sideport navigation"><ul>{NAVIGATION.map((item) => { const Icon = item.icon; return <li key={item.id}><button aria-current={route === item.id ? 'page' : undefined} className={route === item.id ? 'active' : ''} onClick={() => navigate(item.id)} type="button"><Icon aria-hidden="true" size={19} /><span>{item.label}</span></button></li> })}</ul></nav>
-        <div className="spc-sidebar-footer"><span className="spc-avatar">{role === 'owner' ? 'D' : 'M'}</span><span><strong>{role === 'owner' ? 'Dragos' : 'Mara'}</strong><small>{role === 'owner' ? 'Owner' : 'Member'}</small></span></div>
+        <div className="spc-sidebar-secondary"><button aria-current={route === 'activity' ? 'page' : undefined} onClick={() => navigate('activity')} type="button"><Bell aria-hidden="true" size={19} /><span>Activity</span><i aria-label="1 item needs attention">1</i></button><button aria-current={route === 'settings' ? 'page' : undefined} onClick={() => navigate('settings')} type="button"><span className="spc-avatar">{role === 'owner' ? 'D' : 'M'}</span><span><strong>{role === 'owner' ? 'Dragos' : 'Mara'}</strong><small>{role === 'owner' ? 'Owner' : 'Member'}</small></span></button></div>
       </aside>
 
       <div className="spc-workspace">
@@ -506,9 +474,10 @@ function SignedInShell({ memberName, role, initialRoute, onStartAssistant }: { m
             <button aria-expanded={addOpen} aria-label="Add" className="spc-button primary" onClick={() => setAddOpen((value) => !value)} ref={addTriggerRef} type="button"><Plus aria-hidden="true" size={18} /> <span>Add</span></button>
             {addOpen ? <div aria-label="Add options" className="spc-add-menu" role="group"><button onClick={(event) => openAddIPhone(event.currentTarget)} type="button"><Smartphone aria-hidden="true" size={19} /><span><strong>Add iPhone</strong><small>Choose its member, then pair once</small></span></button><button onClick={() => { setRoute('apps'); setImportOpen(true); setAddOpen(false) }} type="button"><FileUp aria-hidden="true" size={19} /><span><strong>Import app</strong><small>Computer, Sideport storage, or GitHub</small></span></button><button onClick={() => { setRoute('people'); setAddOpen(false) }} type="button"><Users aria-hidden="true" size={19} /><span><strong>Invite someone you trust</strong><small>Create a private sign-in link</small></span></button></div> : null}
           </div> : null}
-          <button aria-label="Open settings" className="spc-mobile-settings spc-icon-button" onClick={() => navigate('settings')} type="button"><Settings aria-hidden="true" size={20} /></button>
+          <button aria-label="Open activity" className="spc-mobile-settings spc-icon-button spc-notification-button" onClick={() => navigate('activity')} type="button"><Bell aria-hidden="true" size={20} /><span aria-hidden="true">1</span></button>
+          <button aria-label="Open settings" className="spc-mobile-settings spc-account-button" onClick={() => navigate('settings')} type="button"><span className="spc-avatar">{role === 'owner' ? 'D' : 'M'}</span></button>
         </header>
-        <nav aria-label="Mobile Sideport navigation" className="spc-mobile-nav"><ul>{NAVIGATION.filter((item) => item.id !== 'settings').map((item) => { const Icon = item.icon; return <li key={item.id}><button aria-current={route === item.id ? 'page' : undefined} onClick={() => navigate(item.id)} type="button"><Icon aria-hidden="true" size={20} /><span>{item.label}</span></button></li> })}</ul></nav>
+        <nav aria-label="Mobile Sideport navigation" className="spc-mobile-nav"><ul>{NAVIGATION.map((item) => { const Icon = item.icon; return <li key={item.id}><button aria-current={route === item.id ? 'page' : undefined} onClick={() => navigate(item.id)} type="button"><Icon aria-hidden="true" size={20} /><span>{item.label}</span></button></li> })}</ul></nav>
         <main className="spc-main"><div className="spc-preview-line"><ProposedBadge /><span>Storybook fixture · no live account, device, or app changes</span></div>{phoneTargetOpen ? <section className="spc-target-picker" aria-labelledby="phone-target-picker-title"><div><span className="spc-eyebrow">Add iPhone</span><h2 id="phone-target-picker-title" ref={phoneTargetHeadingRef} tabIndex={-1}>Who will use this iPhone?</h2><p>Sideport checks that person’s active membership and Apple device capacity before pairing starts.</p></div><div role="group" aria-label="iPhone member"><button className="spc-button secondary" onClick={() => choosePhoneTarget('Mara')} type="button"><CircleUserRound aria-hidden="true" size={17} /> Mara</button><button className="spc-button secondary" onClick={() => choosePhoneTarget('Alex')} type="button"><CircleUserRound aria-hidden="true" size={17} /> Alex</button><button aria-label="Cancel member choice" className="spc-icon-button" onClick={() => { setPhoneTargetOpen(false); phoneTargetTriggerRef.current?.focus() }} type="button"><X aria-hidden="true" size={18} /></button></div></section> : null}{renderPage()}</main>
       </div>
       {searchOpen ? <SearchDialog onClose={closeSearch} onNavigate={navigate} /> : null}

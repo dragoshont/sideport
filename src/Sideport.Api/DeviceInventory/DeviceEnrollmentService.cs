@@ -641,6 +641,17 @@ public sealed class DeviceEnrollmentService
             await ContinueRecoveryUntilTerminalAsync(pairingRecord, expiresAt, ct).ConfigureAwait(false);
             return;
         }
+        if (result.Disposition == DevicePairingDisposition.RepairRequired)
+        {
+            await FailAsync(
+                pairingRecord,
+                "recovery-required",
+                "verify-lockdown",
+                PairingRepairIssue(),
+                retryable: false,
+                ct: ct).ConfigureAwait(false);
+            return;
+        }
         if (trustState == "locked")
         {
             await MarkRecoveryWaitingAsync(
@@ -652,7 +663,7 @@ public sealed class DeviceEnrollmentService
         }
         if (trustState == "untrusted")
         {
-            if (IsExplicitTrustDenial(result.TrustReason))
+            if (result.Disposition == DevicePairingDisposition.Denied)
             {
                 await FailAsync(
                     pairingRecord,
@@ -665,7 +676,9 @@ public sealed class DeviceEnrollmentService
             }
             await MarkRecoveryWaitingAsync(
                 pairingRecord,
-                "Tap Trust on the iPhone if asked. Sideport will continue automatically.",
+                result.Disposition == DevicePairingDisposition.HostManaged
+                    ? "Pairing is managed by the host. Keep the iPhone connected and approve Trust if asked."
+                    : "Tap Trust on the iPhone if asked. Sideport will continue automatically.",
                 ct).ConfigureAwait(false);
             await ContinueRecoveryUntilTerminalAsync(pairingRecord, expiresAt, ct).ConfigureAwait(false);
             return;
@@ -733,7 +746,7 @@ public sealed class DeviceEnrollmentService
         DeviceInfo? selected;
         try
         {
-            IReadOnlyList<DeviceInfo> reachable = await RunBoundedAsync(token => _devices.ListDevicesAsync(token), expiresAt, ct).ConfigureAwait(false);
+            IReadOnlyList<DeviceInfo> reachable = await RunBoundedAsync(token => _devices.ListConnectedDevicesAsync(token), expiresAt, ct).ConfigureAwait(false);
             selected = reachable.FirstOrDefault(device => SameUdid(device.Udid, udid) && device.Connection == DeviceConnection.Usb);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -775,6 +788,17 @@ public sealed class DeviceEnrollmentService
         }
 
         string trustState = NormalizeTrustState(probe.TrustState);
+        if (probe.Disposition == DevicePairingDisposition.RepairRequired)
+        {
+            await FailAsync(
+                record,
+                "recovery-required",
+                "verify-lockdown",
+                PairingRepairIssue(),
+                retryable: false,
+                ct: ct).ConfigureAwait(false);
+            return true;
+        }
         if (trustState == "locked")
         {
             await MarkRecoveryWaitingAsync(record, "Unlock the iPhone. Sideport will continue automatically.", ct).ConfigureAwait(false);
@@ -782,7 +806,7 @@ public sealed class DeviceEnrollmentService
         }
         if (trustState == "untrusted")
         {
-            if (IsExplicitTrustDenial(probe.TrustReason))
+            if (probe.Disposition == DevicePairingDisposition.Denied)
             {
                 await FailAsync(
                     record,
@@ -884,6 +908,17 @@ public sealed class DeviceEnrollmentService
         }
 
         string trustState = NormalizeTrustState(probe.TrustState);
+        if (probe.Disposition == DevicePairingDisposition.RepairRequired)
+        {
+            await FailAsync(
+                verifying,
+                "recovery-required",
+                "verify-lockdown",
+                PairingRepairIssue(),
+                retryable: false,
+                ct: ct).ConfigureAwait(false);
+            return;
+        }
         if (trustState == "locked")
         {
             if (PairingWasRequested(verifying))
@@ -899,7 +934,7 @@ public sealed class DeviceEnrollmentService
         {
             bool afterPairRequest = PairingWasRequested(verifying);
             if (afterPairRequest &&
-                (trustState != "untrusted" || !IsExplicitTrustDenial(probe.TrustReason)))
+                (trustState != "untrusted" || probe.Disposition != DevicePairingDisposition.Denied))
             {
                 await MarkRecoveryWaitingAsync(
                     verifying,
@@ -1166,7 +1201,7 @@ public sealed class DeviceEnrollmentService
 
     private async Task<IReadOnlyList<DeviceInfo>> EligibleUsbCandidatesAsync(CancellationToken ct)
     {
-        IReadOnlyList<DeviceInfo> reachable = await _devices.ListDevicesAsync(ct).ConfigureAwait(false);
+        IReadOnlyList<DeviceInfo> reachable = await _devices.ListConnectedDevicesAsync(ct).ConfigureAwait(false);
         IReadOnlyList<KnownDeviceRecord> known = await _knownDevices.ListAsync(ct).ConfigureAwait(false);
         var accepted = known
             .Where(device => string.Equals(device.InventoryState, "accepted", StringComparison.Ordinal))
@@ -1281,10 +1316,10 @@ public sealed class DeviceEnrollmentService
     private static OperationIssueDto RecoveryIssue(string message) =>
         new("device-enrollment-recovery-required", message);
 
-    private static bool IsExplicitTrustDenial(string? reason) =>
-        !string.IsNullOrWhiteSpace(reason) &&
-        (reason.Contains("declined", StringComparison.OrdinalIgnoreCase) ||
-         reason.Contains("denied", StringComparison.OrdinalIgnoreCase));
+    private static OperationIssueDto PairingRepairIssue() =>
+        new(
+            "device-pairing-repair-required",
+            "Sideport found a damaged saved Trust record for this iPhone. Ask the Sideport owner to reset the saved Trust record, then reconnect the iPhone and approve Trust again.");
 
     private static string NormalizeTrustState(string? state) => state?.Trim().ToLowerInvariant() switch
     {
